@@ -45,3 +45,5 @@ docs/
 backend/internal/memory/go-api/server
 Argus/go-sensory/server
 
+# Large docs
+Rust 沙箱设计方案文档.md
