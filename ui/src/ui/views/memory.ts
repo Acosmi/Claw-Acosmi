@@ -282,7 +282,7 @@ function renderDistributionCard(stats: MemoryStats) {
   ];
 
   return html`
-    <div class="card">
+    <div class="card" style="height: 100%; margin-bottom: 0;">
       <div class="card__header">
         <h3>${t("memory.distribution")}</h3>
       </div>
@@ -293,19 +293,19 @@ function renderDistributionCard(stats: MemoryStats) {
           ${typeEntries.length > 0 ? html`
             <div style="display:flex; height:24px; border-radius:6px; overflow:hidden; background:#f0f0f0;">
               ${typeEntries.map(([tp, count]) => {
-                const pct = (count / typeTotal) * 100;
-                const color = TYPE_COLORS[tp] ?? "#adb5bd";
-                return html`<div style="width:${pct}%; background:${color}; min-width:2px;" title="${translateType(tp)}: ${count}"></div>`;
-              })}
+    const pct = (count / typeTotal) * 100;
+    const color = TYPE_COLORS[tp] ?? "#adb5bd";
+    return html`<div style="width:${pct}%; background:${color}; min-width:2px;" title="${translateType(tp)}: ${count}"></div>`;
+  })}
             </div>
             <div style="display:flex; gap:12px; margin-top:6px; flex-wrap:wrap;">
               ${typeEntries.map(([tp, count]) => {
-                const color = TYPE_COLORS[tp] ?? "#adb5bd";
-                return html`<span style="display:inline-flex; align-items:center; gap:4px; font-size:0.78rem; color:#495057">
+    const color = TYPE_COLORS[tp] ?? "#adb5bd";
+    return html`<span style="display:inline-flex; align-items:center; gap:4px; font-size:0.78rem; color:#495057">
                   <span style="width:10px; height:10px; border-radius:2px; background:${color}; display:inline-block"></span>
                   ${translateType(tp)}:${count}
                 </span>`;
-              })}
+  })}
             </div>
           ` : html`<p class="muted" style="font-size:0.82rem">-</p>`}
         </div>
@@ -315,13 +315,13 @@ function renderDistributionCard(stats: MemoryStats) {
           <div style="font-size:0.82rem; font-weight:600; margin-bottom:0.5rem; color:#495057">${t("memory.categoryDist")}</div>
           <div style="display:flex; gap:6px; flex-wrap:wrap;">
             ${catEntries.length > 0
-              ? catEntries.map(([cat, count]) => html`
+      ? catEntries.map(([cat, count]) => html`
                 <span style="
                   display:inline-flex; align-items:center; gap:4px;
                   padding:2px 10px; border-radius:12px;
                   background:#e9ecef; font-size:0.78rem; color:#495057;
                 ">${translateCategory(cat)}:${count}</span>`)
-              : html`<span class="muted" style="font-size:0.82rem">-</span>`}
+      : html`<span class="muted" style="font-size:0.82rem">-</span>`}
           </div>
         </div>
 
@@ -411,29 +411,30 @@ export function renderMemory(props: MemoryProps) {
   return html`
     <div class="page memory-page">
       ${props.error
-        ? html`<div class="alert alert--error">${props.error}</div>`
-        : nothing}
+      ? html`<div class="alert alert--error">${props.error}</div>`
+      : nothing}
 
-      <!-- Card 1: Status Overview -->
-      <div class="card">
-        <div class="card__header">
-          <h3>${t("memory.statusOverview")}</h3>
-          <div class="card__actions">
-            <button class="btn btn--sm" @click=${() => { props.onLoadStatus(); props.onLoadStats(); }}>
-              ${t("memory.refresh")}
-            </button>
-            <button
-              class="btn btn--sm btn--primary"
-              ?disabled=${props.importing}
-              @click=${props.onImportSkills}
-            >
-              ${props.importing ? t("memory.importing") : t("memory.importSkills")}
-            </button>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 24px; margin-bottom: 24px;">
+        <!-- Card 1: Status Overview -->
+        <div class="card" style="height: 100%; margin-bottom: 0;">
+          <div class="card__header">
+            <h3>${t("memory.statusOverview")}</h3>
+            <div class="card__actions">
+              <button class="btn btn--sm" @click=${() => { props.onLoadStatus(); props.onLoadStats(); }}>
+                ${t("memory.refresh")}
+              </button>
+              <button
+                class="btn btn--sm btn--primary"
+                ?disabled=${props.importing}
+                @click=${props.onImportSkills}
+              >
+                ${props.importing ? t("memory.importing") : t("memory.importSkills")}
+              </button>
+            </div>
           </div>
-        </div>
-        <div class="card__body">
+          <div class="card__body">
           ${props.status
-            ? html`
+      ? html`
                 <div class="stat-grid">
                   <div class="stat">
                     <span class="stat__label">${t("memory.status")}</span>
@@ -466,37 +467,42 @@ export function renderMemory(props: MemoryProps) {
                 <div style="margin-top:0.75rem; display:flex; align-items:center; gap:8px; font-size:0.85rem">
                   <span style="font-weight:600">${t("memory.llmModel")}:</span>
                   ${props.llmConfig
-                    ? props.llmConfig.provider
-                      ? html`${props.llmConfig.provider}/${props.llmConfig.model}`
-                      : html`<span class="muted">${t("memory.llmNotConfigured")}</span>`
-                    : "-"}
+          ? props.llmConfig.provider
+            ? html`${props.llmConfig.provider}/${props.llmConfig.model}`
+            : html`<span class="muted">${t("memory.llmNotConfigured")}</span>`
+          : "-"}
                   <button class="btn btn--xs" @click=${props.onLLMConfigToggle}>${t("memory.llmConfig")}</button>
                 </div>
                 ${props.llmConfigOpen ? renderLLMConfigPanel(props) : nothing}
               `
-            : html`<p class="muted">${t("common.loading")}</p>`}
+      : html`<p class="muted">${t("common.loading")}</p>`}
           ${props.importResult
-            ? html`
+      ? html`
                 <div class="alert alert--info" style="margin-top: 0.75rem">
                   ${t("memory.importResult")
-                    .replace("{imported}", String(props.importResult.imported))
-                    .replace("{skipped}", String(props.importResult.skipped))
-                    .replace("{updated}", String(props.importResult.updated))
-                    .replace("{failed}", String(props.importResult.failed))}
+          .replace("{imported}", String(props.importResult.imported))
+          .replace("{skipped}", String(props.importResult.skipped))
+          .replace("{updated}", String(props.importResult.updated))
+          .replace("{failed}", String(props.importResult.failed))}
                 </div>
               `
-            : nothing}
+      : nothing}
         </div>
-      </div>
+          </div>
+        </div>
 
-      <!-- Card 2: Distribution & Health -->
-      ${props.stats ? renderDistributionCard(props.stats) : nothing}
+        <!-- Card 2: Distribution & Health -->
+        ${props.stats
+      ? renderDistributionCard(props.stats)
+      : html`<div class="card" style="height: 100%; margin-bottom: 0; display: flex; align-items: center; justify-content: center;"><p class="muted">${t("common.loading")}</p></div>`
+    }
+      </div>
 
       <!-- Card 3: Memory List -->
       <div class="card">
-        <div class="card__header">
+        <div class="card__header" style="flex-wrap: wrap; gap: 12px;">
           <h3>${t("memory.list")} (${props.total})</h3>
-          <div class="card__actions">
+          <div class="card__actions" style="flex-wrap: wrap; gap: 8px;">
             <!-- Search bar -->
             <input class="input input--sm" style="width:180px"
               placeholder=${t("memory.searchPlaceholder")}
@@ -510,23 +516,23 @@ export function renderMemory(props: MemoryProps) {
               class="input input--sm"
               .value=${props.filterType}
               @change=${(e: Event) =>
-                props.onFilterType((e.target as HTMLSelectElement).value)}
+      props.onFilterType((e.target as HTMLSelectElement).value)}
             >
               <option value="">${t("memory.allTypes")}</option>
               ${MEMORY_TYPES.filter(Boolean).map(
-                (tp) => html`<option value=${tp}>${translateType(tp)}</option>`,
-              )}
+        (tp) => html`<option value=${tp}>${translateType(tp)}</option>`,
+      )}
             </select>
             <select
               class="input input--sm"
               .value=${props.filterCategory}
               @change=${(e: Event) =>
-                props.onFilterCategory((e.target as HTMLSelectElement).value)}
+      props.onFilterCategory((e.target as HTMLSelectElement).value)}
             >
               <option value="">${t("memory.allCategories")}</option>
               ${MEMORY_CATEGORIES.filter(Boolean).map(
-                (cat) => html`<option value=${cat}>${translateCategory(cat)}</option>`,
-              )}
+        (cat) => html`<option value=${cat}>${translateCategory(cat)}</option>`,
+      )}
             </select>
             <button class="btn btn--sm" @click=${props.onRefresh}>
               ${t("memory.refresh")}
@@ -535,8 +541,8 @@ export function renderMemory(props: MemoryProps) {
         </div>
         <div class="card__body">
           ${isSearchActive
-            ? renderSearchResults(props)
-            : renderMemoryTable(props, totalPages)}
+      ? renderSearchResults(props)
+      : renderMemoryTable(props, totalPages)}
         </div>
       </div>
 
@@ -597,11 +603,11 @@ function renderMemoryTable(props: MemoryProps, totalPages: number) {
       </thead>
       <tbody>
         ${props.list.map(
-          (mem) => html`
+    (mem) => html`
             <tr
               class="table__row--clickable ${props.detail?.id === mem.id
-                ? "table__row--active"
-                : ""}"
+        ? "table__row--active"
+        : ""}"
               @click=${() => props.onSelectMemory(mem.id, 0)}
             >
               <td>${truncateContent(mem.content)}</td>
@@ -614,18 +620,18 @@ function renderMemoryTable(props: MemoryProps, totalPages: number) {
                 <button
                   class="btn btn--sm btn--danger"
                   @click=${(e: Event) => {
-                    e.stopPropagation();
-                    if (confirm(t("memory.deleteConfirm"))) {
-                      props.onDeleteMemory(mem.id);
-                    }
-                  }}
+        e.stopPropagation();
+        if (confirm(t("memory.deleteConfirm"))) {
+          props.onDeleteMemory(mem.id);
+        }
+      }}
                 >
                   ${t("memory.delete")}
                 </button>
               </td>
             </tr>
           `,
-        )}
+  )}
       </tbody>
     </table>
     <!-- Pagination -->
@@ -641,8 +647,8 @@ function renderMemoryTable(props: MemoryProps, totalPages: number) {
             </button>
             <span class="pagination__info">
               ${t("memory.page")
-                .replace("{page}", String(props.page + 1))
-                .replace("{total}", String(totalPages))}
+          .replace("{page}", String(props.page + 1))
+          .replace("{total}", String(totalPages))}
             </span>
             <button
               class="btn btn--sm"
@@ -699,7 +705,7 @@ function renderDetailCard(props: MemoryProps) {
         <!-- Bottom: L0/L1/L2 Tabs -->
         <div class="tabs" style="margin-top: 0.5rem">
           ${[0, 1, 2].map(
-            (lvl) => html`
+    (lvl) => html`
               <button
                 class="tab ${props.detailLevel === lvl ? "tab--active" : ""}"
                 @click=${() => props.onDetailLevel(lvl)}
@@ -707,7 +713,7 @@ function renderDetailCard(props: MemoryProps) {
                 ${tierLabels[lvl]}
               </button>
             `,
-          )}
+  )}
         </div>
         <div class="code-block" style="margin-top: 0.5rem">
           <pre>${d.vfsContent || t("memory.noContent")}</pre>
