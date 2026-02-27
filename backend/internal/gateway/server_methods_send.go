@@ -8,10 +8,14 @@ package gateway
 // 隐藏依赖: inflightByContext 去重 (TS: WeakMap, Go: sync.Map)
 
 import (
+	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/anthropic/open-acosmi/internal/channels"
 )
 
 // ChannelOutboundSender DI 接口 — 频道消息发送。
@@ -121,6 +125,10 @@ func handleSend(ctx *MethodHandlerContext) {
 		mediaUrls = []string{mu}
 	}
 
+	// 解析 base64 媒体（Agent 生成的截图/图表，无公网 URL）
+	mediaBase64 := readString(ctx.Params, "mediaBase64")
+	mediaMimeType := readString(ctx.Params, "mediaMimeType")
+
 	// 生成消息 ID
 	msgId := fmt.Sprintf("msg_%d", time.Now().UnixNano())
 
@@ -129,9 +137,48 @@ func handleSend(ctx *MethodHandlerContext) {
 		"to", truncateStr(to, 40),
 		"text", truncateStr(message, 80),
 		"mediaUrls", len(mediaUrls),
+		"hasBase64Media", mediaBase64 != "",
 		"sessionKey", sessionKey,
 		"msgId", msgId,
 	)
+
+	// base64 媒体路径：解码后通过 ChannelMgr 直接发送到频道插件
+	if mediaBase64 != "" && ctx.Context.ChannelMgr != nil && channelID != "chat" {
+		const maxMediaBase64Size = 10 * 1024 * 1024 // 10 MB（匹配飞书 image API 限制）
+		mediaData, err := base64.StdEncoding.DecodeString(mediaBase64)
+		if err != nil {
+			ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "invalid mediaBase64: "+err.Error()))
+			return
+		}
+		if len(mediaData) > maxMediaBase64Size {
+			ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest,
+				fmt.Sprintf("mediaBase64 decoded size %d exceeds %d byte limit", len(mediaData), maxMediaBase64Size)))
+			return
+		}
+		result, err := ctx.Context.ChannelMgr.SendMessage(channels.ChannelID(channelID), channels.OutboundSendParams{
+			Ctx:           context.Background(),
+			To:            to,
+			Text:          message,
+			AccountID:     accountId,
+			MediaData:     mediaData,
+			MediaMimeType: mediaMimeType,
+		})
+		if err != nil {
+			slog.Warn("send: base64 media delivery failed", "error", err)
+			ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, err.Error()))
+			return
+		}
+		payload := map[string]interface{}{
+			"runId":     idempotencyKey,
+			"messageId": msgId,
+			"channel":   channelID,
+		}
+		if result != nil && result.ChatID != "" {
+			payload["chatId"] = result.ChatID
+		}
+		ctx.Respond(true, payload, nil)
+		return
+	}
 
 	// 优先使用 OutboundPipeline（完整管线）
 	if pipe := ctx.Context.OutboundPipe; pipe != nil {

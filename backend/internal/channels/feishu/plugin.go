@@ -271,6 +271,24 @@ func (p *FeishuPlugin) SendMessage(params channels.OutboundSendParams) (*channel
 		ctx = context.Background()
 	}
 
+	// 如有 MediaData（base64 解码的二进制），直接上传发送（跳过 HTTP 下载和 SSRF 校验）
+	if len(params.MediaData) > 0 && client != nil {
+		mediaErr := p.sendMediaData(ctx, client, sender, params.To, idType, params.MediaData, params.MediaMimeType)
+		if mediaErr != nil {
+			slog.Warn("feishu: binary media send failed, falling back to text",
+				"mimeType", params.MediaMimeType, "dataLen", len(params.MediaData), "error", mediaErr)
+			// fallthrough 到文字发送
+		} else {
+			if params.Text != "" {
+				_ = sender.SendText(ctx, params.To, idType, params.Text)
+			}
+			return &channels.OutboundSendResult{
+				Channel: string(channels.ChannelFeishu),
+				ChatID:  params.To,
+			}, nil
+		}
+	}
+
 	// 如有 MediaURL，尝试下载并发送多媒体消息
 	if params.MediaURL != "" && client != nil {
 		mediaErr := p.sendMediaMessage(ctx, client, sender, params.To, idType, params.MediaURL)
@@ -341,6 +359,44 @@ func (p *FeishuPlugin) sendMediaMessage(
 		// 文件类型
 		fileName := "file"
 		fileType := FeishuFileType(contentType, fileName)
+		fileKey, err := client.UploadFile(ctx, data, fileName, fileType, 0)
+		if err != nil {
+			return fmt.Errorf("upload file: %w", err)
+		}
+		return sender.SendFile(ctx, receiveID, idType, fileKey)
+	}
+}
+
+// sendMediaData 直接上传二进制媒体数据到飞书并发送（无 HTTP 下载，无 SSRF 校验）。
+// 用于 Agent 生成的截图/图表等场景。
+func (p *FeishuPlugin) sendMediaData(
+	ctx context.Context,
+	client *FeishuClient,
+	sender *FeishuSender,
+	receiveID, idType string,
+	data []byte,
+	mimeType string,
+) error {
+	mediaCategory := detectMediaCategory(mimeType, data)
+
+	switch mediaCategory {
+	case "image":
+		imageKey, err := client.UploadImage(ctx, data, "message")
+		if err != nil {
+			return fmt.Errorf("upload image: %w", err)
+		}
+		return sender.SendImage(ctx, receiveID, idType, imageKey)
+
+	case "audio":
+		fileKey, err := client.UploadFile(ctx, data, "audio.opus", "opus", 0)
+		if err != nil {
+			return fmt.Errorf("upload audio: %w", err)
+		}
+		return sender.SendAudio(ctx, receiveID, idType, fileKey)
+
+	default:
+		fileName := "file"
+		fileType := FeishuFileType(mimeType, fileName)
 		fileKey, err := client.UploadFile(ctx, data, fileName, fileType, 0)
 		if err != nil {
 			return fmt.Errorf("upload file: %w", err)

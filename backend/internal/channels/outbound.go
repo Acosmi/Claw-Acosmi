@@ -27,6 +27,12 @@ type OutboundSendParams struct {
 	AccountID string
 	ReplyToID string
 	ThreadID  string
+
+	// MediaData 二进制媒体内容（来自 base64 解码），优先于 MediaURL。
+	// 用于 Agent 生成的截图/图表等无公网 URL 的媒体。
+	MediaData []byte
+	// MediaMimeType 媒体 MIME 类型（如 "image/png"），配合 MediaData 使用。
+	MediaMimeType string
 }
 
 // OutboundSendResult 出站发送结果
