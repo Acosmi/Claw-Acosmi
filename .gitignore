@@ -38,3 +38,10 @@ temp/
 # Argus Build 
 Argus/build/
 
+# User requested ignoral
+docs/
+
+# Large compiled binaries
+backend/internal/memory/go-api/server
+Argus/go-sensory/server
+
