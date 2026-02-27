@@ -47,10 +47,8 @@ type ToolExecParams struct {
 	ArgusBridge ArgusBridgeForAgent
 	// Argus 审批模式: "none" / "medium_and_above" / "all"（默认 medium_and_above）
 	ArgusApprovalMode string
-	// Coder 编程子智能体（可选，nil = 不可用）
-	CoderBridge         CoderBridgeForAgent
-	CoderTimeoutSeconds int // Coder 工具调用超时秒数 (0 = 默认 120s)
-	// Coder 确认管理器（可选，nil = 不需要确认，直接执行）
+	// 命令审批门控（可选，nil = 不需要确认，直接执行）
+	// Pre-work 升级: 通用审批门控，供 Ask 规则和 Argus 审批使用
 	CoderConfirmation *CoderConfirmationManager
 	// MCP 远程工具（可选，nil = 不可用）
 	RemoteMCPBridge RemoteMCPBridgeForAgent
@@ -59,11 +57,15 @@ type ToolExecParams struct {
 	// 技能按需加载缓存: skill name → full SKILL.md content
 	SkillsCache map[string]string
 	// UHMS 记忆系统 Bridge（可选，nil = 不可用）
-	// 用于注入 context brief 到 coder/argus 工具调用
 	UHMSBridge UHMSBridgeForAgent
-	// cachedContextBrief caches BuildContextBrief result per attempt to avoid
-	// redundant calls on consecutive coder tool invocations (edit×10 etc.)
-	cachedContextBrief *string
+	// SpawnSubagent 子智能体生成回调（可选，nil = spawn_coder_agent 返回合约但不启动 session）
+	// 由 gateway/server.go 注入实现。
+	SpawnSubagent SpawnSubagentFunc
+	// 委托合约约束（可选，nil = 无合约约束）
+	DelegationContract *DelegationContract
+	// ScopePaths 合约允许的路径列表（从 DelegationContract.Scope 提取）。
+	// 非空时，工具路径校验使用此列表替代 WorkspaceDir 单根。
+	ScopePaths []string
 }
 
 // ExecuteToolCall 执行工具调用并返回文本结果。
@@ -103,8 +105,35 @@ func ExecuteToolCall(ctx context.Context, name string, inputJSON json.RawMessage
 							"rule", ruleResult.Rule.Pattern,
 							"ruleId", ruleResult.Rule.ID,
 						)
-						return fmt.Sprintf("[Command requires approval: %s] %s", ruleResult.Rule.Pattern, ruleResult.Reason), nil
-						// allow: 继续执行
+						// Fail-closed: 无审批门控时直接拒绝，不允许 LLM 忽略后继续执行
+						if params.CoderConfirmation == nil {
+							slog.Warn("ask rule triggered but no approval gate, fail-closed deny",
+								"command", bi.Command,
+								"rule", ruleResult.Rule.Pattern,
+							)
+							return fmt.Sprintf("[Command blocked: no approval gate available for rule %s] %s", ruleResult.Rule.Pattern, ruleResult.Reason), nil
+						}
+						// 真正阻塞：广播审批请求到前端，等待用户 allow/deny 或超时
+						approved, approvalErr := params.CoderConfirmation.RequestConfirmation(ctx, "bash", inputJSON)
+						if approvalErr != nil {
+							slog.Error("command approval request failed",
+								"command", bi.Command,
+								"error", approvalErr,
+							)
+							return fmt.Sprintf("[Command blocked: approval error] %v", approvalErr), nil
+						}
+						if !approved {
+							slog.Info("command denied by user approval",
+								"command", bi.Command,
+								"rule", ruleResult.Rule.Pattern,
+							)
+							return fmt.Sprintf("[Command denied by user: %s] %s", ruleResult.Rule.Pattern, ruleResult.Reason), nil
+						}
+						slog.Info("command approved by user",
+							"command", bi.Command,
+							"rule", ruleResult.Rule.Pattern,
+						)
+						// approved: fall through → 继续执行
 					}
 				}
 			}
@@ -139,6 +168,8 @@ func ExecuteToolCall(ctx context.Context, name string, inputJSON json.RawMessage
 		return executeGlob(inputJSON, params)
 	case "lookup_skill":
 		return executeLookupSkill(inputJSON, params)
+	case "spawn_coder_agent":
+		return executeSpawnCoderAgent(ctx, inputJSON, params)
 	case "notebook_edit":
 		return "[Tool notebook_edit is not yet implemented in Go runtime]", nil
 	case "mcp":
@@ -147,9 +178,7 @@ func ExecuteToolCall(ctx context.Context, name string, inputJSON json.RawMessage
 		if strings.HasPrefix(name, "argus_") && params.ArgusBridge != nil {
 			return executeArgusTool(ctx, name, inputJSON, params)
 		}
-		if strings.HasPrefix(name, "coder_") && params.CoderBridge != nil {
-			return executeCoderTool(ctx, name, inputJSON, params)
-		}
+		// (Phase 2A: coder_ 分发已删除 — 由 spawn_coder_agent 替代)
 		if strings.HasPrefix(name, "remote_") && params.RemoteMCPBridge != nil {
 			return executeRemoteTool(ctx, name, inputJSON, params)
 		}
@@ -454,8 +483,8 @@ func executeWriteFile(inputJSON json.RawMessage, params ToolExecParams) (string,
 
 	path := resolveToolPath(input.Path, params.WorkspaceDir)
 
-	// 路径安全验证
-	if err := validateToolPath(path, params.WorkspaceDir); err != nil {
+	// 路径安全验证（合约 scope 优先，fallback 到 workspace 单根）
+	if err := validateToolPathScoped(path, params.ScopePaths, params.WorkspaceDir); err != nil {
 		if params.OnPermissionDenied != nil {
 			params.OnPermissionDenied("write_file", input.Path)
 		}
@@ -708,66 +737,7 @@ func executeRemoteTool(ctx context.Context, name string, inputJSON json.RawMessa
 	return output, nil
 }
 
-// ---------- coder (编程子智能体) ----------
-
-// executeCoderTool 将 coder_ 前缀的工具调用转发给 Coder MCP Bridge。
-// 可确认工具 (edit/write/bash) 在 CoderConfirmation 非 nil 时会阻塞等待用户审批。
-// 当 UHMSBridge 可用时，注入 _context_brief 到工具参数，减少 inter-agent misalignment。
-func executeCoderTool(ctx context.Context, name string, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
-	mcpToolName := strings.TrimPrefix(name, "coder_")
-
-	slog.Debug("coder tool call", "tool", mcpToolName)
-
-	// 确认拦截: 仅当 CoderConfirmation 非 nil 且工具可确认时触发
-	if params.CoderConfirmation != nil && isCoderConfirmable(mcpToolName) {
-		approved, err := params.CoderConfirmation.RequestConfirmation(ctx, mcpToolName, inputJSON)
-		if err != nil {
-			return fmt.Sprintf("[Coder confirmation error: %s]", err), nil
-		}
-		if !approved {
-			return "[User denied coder operation]", nil
-		}
-	}
-
-	// 注入 context brief (L0 摘要) 到工具参数，帮助 coder 理解当前任务上下文。
-	// 使用 cachedContextBrief 避免连续 coder 调用时重复计算。
-	finalInput := inputJSON
-	if params.UHMSBridge != nil {
-		if params.cachedContextBrief == nil {
-			brief := params.UHMSBridge.BuildContextBrief(ctx)
-			params.cachedContextBrief = &brief
-		}
-		if *params.cachedContextBrief != "" {
-			finalInput = injectContextBrief(inputJSON, *params.cachedContextBrief)
-		}
-	}
-
-	timeout := 120 * time.Second // 默认 120s
-	if params.CoderTimeoutSeconds > 0 {
-		timeout = time.Duration(params.CoderTimeoutSeconds) * time.Second
-	}
-
-	output, err := params.CoderBridge.AgentCallTool(ctx, mcpToolName, finalInput, timeout)
-	if err != nil {
-		return fmt.Sprintf("[Coder tool error: %s]", err), nil
-	}
-	return output, nil
-}
-
-// injectContextBrief adds _context_brief field to JSON tool arguments.
-// Returns original JSON if injection fails (non-fatal).
-func injectContextBrief(inputJSON json.RawMessage, brief string) json.RawMessage {
-	var args map[string]interface{}
-	if err := json.Unmarshal(inputJSON, &args); err != nil {
-		return inputJSON
-	}
-	args["_context_brief"] = brief
-	result, err := json.Marshal(args)
-	if err != nil {
-		return inputJSON
-	}
-	return result
-}
+// (Phase 2A: executeCoderTool / injectContextBrief 已删除 — oa-coder 升级为 spawn_coder_agent)
 
 // validateToolPath 验证路径不会逃逸工作空间。
 // 所有文件/目录操作工具在执行前必须调用此函数。
@@ -790,6 +760,35 @@ func validateToolPath(path, workspaceDir string) error {
 	}
 	// 🚫 路径在工作空间外 — 拒绝访问
 	return fmt.Errorf("path %q is outside workspace %q — access denied", path, workspaceDir)
+}
+
+// validateToolPathScoped 合约多路径校验。
+// 当 ScopePaths 非空时使用此函数替代 validateToolPath（单根）。
+// 路径必须在至少一个 scope path 下才放行。
+func validateToolPathScoped(path string, scopePaths []string, workspaceDir string) error {
+	if len(scopePaths) == 0 {
+		// 无合约 scope → 回退到 workspace 单根校验
+		return validateToolPath(path, workspaceDir)
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("invalid path: %w", err)
+	}
+	for _, sp := range scopePaths {
+		// scope path 可能是相对路径，基于 workspace 解析
+		absSP := sp
+		if !filepath.IsAbs(sp) && workspaceDir != "" {
+			absSP = filepath.Join(workspaceDir, sp)
+		}
+		absSP, err = filepath.Abs(absSP)
+		if err != nil {
+			continue
+		}
+		if absPath == absSP || strings.HasPrefix(absPath, absSP+string(filepath.Separator)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("path %q is outside contract scope — access denied", path)
 }
 
 // permissionDeniedPrefix 权限拒绝提示的固定前缀，用于检测。

@@ -166,6 +166,9 @@ func (m *EscalationManager) RequestEscalation(id, level, reason, runID, sessionI
 	// Phase 8: 启动审批超时定时器
 	m.startApprovalTimeoutLocked(time.Duration(ttlMinutes) * time.Minute)
 
+	// Phase 4.1: 持久化到磁盘（best-effort，错误仅 warn）
+	m.persistPendingLocked()
+
 	return nil
 }
 
@@ -184,6 +187,9 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 
 	req := m.pending
 	m.pending = nil
+
+	// Phase 4.1: 清除磁盘持久化（best-effort）
+	m.clearPersistedPending()
 
 	// Phase 8: 清除审批超时定时器
 	m.stopApprovalTimeoutLocked()
@@ -407,6 +413,25 @@ func (m *EscalationManager) GetEffectiveLevel() string {
 	return readBaseSecurityLevel()
 }
 
+// Reset 清除所有内存状态（pending + active），停止定时器。用于运行时重置。
+func (m *EscalationManager) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pending = nil
+	m.active = nil
+	// Phase 4.1: 清除磁盘持久化
+	m.clearPersistedPending()
+	if m.deescalateTimer != nil {
+		m.deescalateTimer.Stop()
+		m.deescalateTimer = nil
+	}
+	if m.approvalTimeout != nil {
+		m.approvalTimeout.Stop()
+		m.approvalTimeout = nil
+	}
+	m.log.Info("escalation manager reset")
+}
+
 // Close 关闭管理器，停止所有定时器。
 func (m *EscalationManager) Close() {
 	m.mu.Lock()
@@ -443,6 +468,101 @@ func (m *EscalationManager) stopApprovalTimeoutLocked() {
 	if m.approvalTimeout != nil {
 		m.approvalTimeout.Stop()
 		m.approvalTimeout = nil
+	}
+}
+
+// ---------- Phase 4.1: 磁盘持久化 ----------
+
+// persistPendingLocked 将当前 pending 请求持久化到磁盘。
+// 必须在持有 m.mu 时调用。错误仅 warn 日志，不阻塞业务流程。
+func (m *EscalationManager) persistPendingLocked() {
+	if m.pending == nil {
+		return
+	}
+	req := &infra.PersistedEscalationRequest{
+		ID:             m.pending.ID,
+		RequestedLevel: m.pending.RequestedLevel,
+		Reason:         m.pending.Reason,
+		RunID:          m.pending.RunID,
+		SessionID:      m.pending.SessionID,
+		RequestedAtMs:  m.pending.RequestedAt.UnixMilli(),
+		TTLMinutes:     m.pending.TTLMinutes,
+	}
+	if err := infra.SaveEscalationPending(req); err != nil {
+		m.log.Warn("failed to persist escalation request to disk", "id", m.pending.ID, "error", err)
+	}
+}
+
+// clearPersistedPending 从磁盘移除持久化的 pending 请求（best-effort）。
+func (m *EscalationManager) clearPersistedPending() {
+	if err := infra.ClearEscalationPending(); err != nil {
+		m.log.Warn("failed to clear persisted escalation from disk", "error", err)
+	}
+}
+
+// RestoreFromDisk 在 gateway 启动时从磁盘恢复未过期的 pending 审批请求。
+// TTL 过期的请求不恢复（直接从磁盘清除）。
+// 文件读写错误不阻塞启动（warn 日志即可）。
+func (m *EscalationManager) RestoreFromDisk() {
+	persisted := infra.ReadEscalationPending()
+	if persisted == nil {
+		return
+	}
+
+	requestedAt := time.UnixMilli(persisted.RequestedAtMs)
+	expiresAt := requestedAt.Add(time.Duration(persisted.TTLMinutes) * time.Minute)
+
+	// TTL 过期 → 丢弃并清理磁盘
+	if time.Now().After(expiresAt) {
+		m.log.Info("discarding expired persisted escalation",
+			"id", persisted.ID,
+			"requestedAt", requestedAt.Format(time.RFC3339),
+			"expiredAt", expiresAt.Format(time.RFC3339),
+		)
+		m.clearPersistedPending()
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// 不覆盖已有内存状态
+	if m.pending != nil || m.active != nil {
+		return
+	}
+
+	m.pending = &PendingEscalationRequest{
+		ID:             persisted.ID,
+		RequestedLevel: persisted.RequestedLevel,
+		Reason:         persisted.Reason,
+		RunID:          persisted.RunID,
+		SessionID:      persisted.SessionID,
+		RequestedAt:    requestedAt,
+		TTLMinutes:     persisted.TTLMinutes,
+	}
+
+	// 用剩余时间重启审批超时定时器
+	remaining := time.Until(expiresAt)
+	m.startApprovalTimeoutLocked(remaining)
+
+	m.log.Info("restored pending escalation from disk",
+		"id", persisted.ID,
+		"level", persisted.RequestedLevel,
+		"remaining", remaining.String(),
+	)
+
+	// 广播给前端（如果有已连接的客户端）
+	if m.broadcaster != nil {
+		m.broadcaster.Broadcast("exec.approval.requested", map[string]interface{}{
+			"id":             persisted.ID,
+			"requestedLevel": persisted.RequestedLevel,
+			"reason":         persisted.Reason,
+			"runId":          persisted.RunID,
+			"sessionId":      persisted.SessionID,
+			"requestedAt":    persisted.RequestedAtMs,
+			"ttlMinutes":     persisted.TTLMinutes,
+			"restored":       true,
+		}, nil)
 	}
 }
 

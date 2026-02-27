@@ -206,6 +206,16 @@ func RunSubagentAnnounceFlow(params RunSubagentAnnounceParams, deps RunSubagentA
 		}
 	}
 
+	// 4.5 尝试解析 ThoughtResult JSON（向后兼容：失败保持纯文本行为）
+	var thought *ThoughtResult
+	if trimmedReply := strings.TrimSpace(reply); trimmedReply != "" {
+		thought = ParseThoughtResult(trimmedReply)
+		if thought != nil {
+			log.Info("子 agent 返回结构化 ThoughtResult",
+				"status", thought.Status, "contractID", thought.ContractID)
+		}
+	}
+
 	// 5. 如果仍无回复且子运行活跃，跳过
 	if strings.TrimSpace(reply) == "" && childSessionID != "" &&
 		deps.RunTracker != nil && deps.RunTracker.IsActive(childSessionID) {
@@ -215,6 +225,25 @@ func RunSubagentAnnounceFlow(params RunSubagentAnnounceParams, deps RunSubagentA
 
 	if outcome == nil {
 		outcome = &SubagentRunOutcome{Status: "unknown"}
+	}
+
+	// 5.5 将 ThoughtResult 附加到 outcome 并映射状态
+	if thought != nil {
+		outcome.ThoughtResult = thought
+		switch thought.Status {
+		case ThoughtCompleted:
+			outcome.Status = "ok"
+		case ThoughtFailed:
+			outcome.Status = "error"
+		case ThoughtTimeout:
+			outcome.Status = "timeout"
+		case ThoughtNeedsAuth, ThoughtBlocked, ThoughtPartial:
+			outcome.Status = "ok" // 正常终止，需后续动作
+		}
+		// 用 ThoughtResult.Result（人类可读）替代原始 JSON blob
+		if thought.Result != "" {
+			reply = thought.Result
+		}
 	}
 
 	// 6. 构建统计行

@@ -41,12 +41,7 @@ type ArgusBridgeForAgent interface {
 	AgentCallTool(ctx context.Context, name string, args json.RawMessage, timeout time.Duration) (string, error)
 }
 
-// CoderBridgeForAgent 编程子智能体接口。
-// 复用 ArgusToolDef 类型（结构相同：Name + Description + InputSchema）。
-type CoderBridgeForAgent interface {
-	AgentTools() []ArgusToolDef
-	AgentCallTool(ctx context.Context, name string, args json.RawMessage, timeout time.Duration) (string, error)
-}
+// (Phase 2A: CoderBridgeForAgent 已删除 — oa-coder 升级为 spawn_coder_agent)
 
 // ---------- MCP 远程工具接口（agent 侧） ----------
 
@@ -92,7 +87,7 @@ type EmbeddedAttemptRunner struct {
 	Config            *types.OpenAcosmiConfig
 	AuthStore         AuthProfileStore
 	ArgusBridge       ArgusBridgeForAgent       // 可选，nil = Argus 不可用
-	CoderBridge       CoderBridgeForAgent       // 可选，nil = Coder 不可用
+	// (Phase 2A: CoderBridge 已删除 — oa-coder 升级为 spawn_coder_agent)
 	RemoteMCPBridge   RemoteMCPBridgeForAgent   // 可选，nil = 远程 MCP 工具不可用
 	NativeSandbox     NativeSandboxForAgent     // 可选，nil = 使用 Docker fallback
 	UHMSBridge        UHMSBridgeForAgent        // 可选，nil = UHMS 记忆系统不可用
@@ -286,8 +281,7 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 				SecurityLevel:       secLvl,
 				OnPermissionDenied:  params.OnPermissionDenied,
 				ArgusBridge:         r.ArgusBridge,
-				CoderBridge:         r.CoderBridge,
-				CoderTimeoutSeconds: resolveCoderTimeoutSeconds(r.Config),
+				// (Phase 2A: CoderBridge/CoderTimeoutSeconds 已删除)
 				CoderConfirmation:   r.CoderConfirmation,
 				RemoteMCPBridge:     r.RemoteMCPBridge,
 				NativeSandbox:       r.NativeSandbox,
@@ -372,8 +366,7 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 							SecurityLevel:       secLvl,
 							OnPermissionDenied:  params.OnPermissionDenied,
 							ArgusBridge:         r.ArgusBridge,
-							CoderBridge:         r.CoderBridge,
-							CoderTimeoutSeconds: resolveCoderTimeoutSeconds(r.Config),
+							// (Phase 2A: CoderBridge/CoderTimeoutSeconds 已删除)
 							CoderConfirmation:   r.CoderConfirmation,
 							RemoteMCPBridge:     r.RemoteMCPBridge,
 							NativeSandbox:       r.NativeSandbox,
@@ -646,16 +639,8 @@ func (r *EmbeddedAttemptRunner) buildToolDefinitions() []llmclient.ToolDef {
 		}
 	}
 
-	// 追加 Coder 编程工具（前缀 coder_ 以区分）
-	if r.CoderBridge != nil {
-		for _, t := range r.CoderBridge.AgentTools() {
-			tools = append(tools, llmclient.ToolDef{
-				Name:        "coder_" + t.Name,
-				Description: "[Coder 编程] " + t.Description,
-				InputSchema: t.InputSchema,
-			})
-		}
-	}
+	// spawn_coder_agent: 委托合约驱动的编程子智能体生成工具
+	tools = append(tools, SpawnCoderAgentToolDef())
 
 	// 追加远程 MCP 工具（前缀 remote_ 以区分）
 	if r.RemoteMCPBridge != nil {
@@ -794,22 +779,7 @@ func resolveSecurityLevel(cfg *types.OpenAcosmiConfig) string {
 	}
 }
 
-// resolveCoderTimeoutSeconds 从 config 安全提取 coder 超时秒数。
-// 返回 0 表示使用默认值（executeCoderTool 内默认 120s）。
-func resolveCoderTimeoutSeconds(cfg *types.OpenAcosmiConfig) int {
-	if cfg == nil || cfg.Agents == nil || cfg.Agents.Defaults == nil ||
-		cfg.Agents.Defaults.Coder == nil || cfg.Agents.Defaults.Coder.TimeoutSeconds == nil {
-		return 0
-	}
-	v := *cfg.Agents.Defaults.Coder.TimeoutSeconds
-	if v < 10 {
-		return 10 // 最低 10s 防止过短
-	}
-	if v > 600 {
-		return 600 // 最高 600s (10 分钟)
-	}
-	return v
-}
+// (Phase 2A: resolveCoderTimeoutSeconds 已删除 — Coder MCP 模式不再使用)
 
 // ---------- 命令规则解析 (P3) ----------
 

@@ -89,8 +89,7 @@ func (rt *GatewayRuntime) Close(reason string) error {
 	// 停止 Argus 视觉子智能体
 	rt.State.StopArgus()
 
-	// 停止 Coder 编程子智能体
-	rt.State.StopCoder()
+	// (Phase 2A: Coder Bridge 已删除 — oa-coder 升级为 spawn_coder_agent)
 
 	// 停止 MCP 远程工具 Bridge
 	rt.State.StopRemoteMCP()
@@ -156,48 +155,7 @@ func (a *argusBridgeAdapter) AgentCallTool(ctx context.Context, name string, arg
 	return sb.String(), nil
 }
 
-// ---------- Coder Bridge → Agent 适配器 ----------
-
-// coderBridgeAdapter 将 *argus.Bridge（oa-coder MCP 子进程）适配为 runner.CoderBridgeForAgent 接口。
-// 复用 argus.Bridge 的 MCP stdio 管理，仅更改错误前缀标识。
-type coderBridgeAdapter struct {
-	bridge *argus.Bridge
-}
-
-func (a *coderBridgeAdapter) AgentTools() []runner.ArgusToolDef {
-	tools := a.bridge.Tools()
-	result := make([]runner.ArgusToolDef, len(tools))
-	for i, t := range tools {
-		result[i] = runner.ArgusToolDef{
-			Name:        t.Name,
-			Description: t.Description,
-			InputSchema: t.InputSchema,
-		}
-	}
-	return result
-}
-
-func (a *coderBridgeAdapter) AgentCallTool(ctx context.Context, name string, args json.RawMessage, timeout time.Duration) (string, error) {
-	result, err := a.bridge.CallTool(ctx, name, args, timeout)
-	if err != nil {
-		return "", err
-	}
-	// 提取 MCP content → 纯文本
-	var sb strings.Builder
-	for _, c := range result.Content {
-		switch c.Type {
-		case "text":
-			if sb.Len() > 0 {
-				sb.WriteString("\n")
-			}
-			sb.WriteString(c.Text)
-		}
-	}
-	if result.IsError {
-		return fmt.Sprintf("[Coder error] %s", sb.String()), nil
-	}
-	return sb.String(), nil
-}
+// (Phase 2A: coderBridgeAdapter 已删除 — oa-coder 升级为 spawn_coder_agent)
 
 // ---------- Native Sandbox Bridge → Agent 适配器 ----------
 
@@ -588,6 +546,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	registry.RegisterAll(ChannelsHandlers())
 	registry.RegisterAll(LogsHandlers())
 	registry.RegisterAll(SystemHandlers())
+	registry.RegisterAll(SystemResetHandlers())
 
 	// 注册 Batch D-W1 方法 (cron/tts/skills/node/device/voicewake/update/browser/talk/web)
 	registry.RegisterAll(CronHandlers())
@@ -691,11 +650,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		argusBridgeForAgent = &argusBridgeAdapter{bridge: ab}
 	}
 
-	// 构建 Coder Bridge 适配器（nil-safe: bridge 不可用时 adapter 也为 nil）
-	var coderBridgeForAgent runner.CoderBridgeForAgent
-	if cb := state.CoderBridge(); cb != nil {
-		coderBridgeForAgent = &coderBridgeAdapter{bridge: cb}
-	}
+	// (Phase 2A: Coder Bridge adapter 已删除 — oa-coder 升级为 spawn_coder_agent)
 
 	// 构建 NativeSandbox 适配器（nil-safe: bridge 不可用时 adapter 也为 nil）
 	var nativeSandboxForAgent runner.NativeSandboxForAgent
@@ -748,7 +703,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		Config:            loadedCfg,               // 初始值，dispatch 时会被热更新
 		AuthStore:         nil,                     // Phase 10 暂不集成，回退到环境变量
 		ArgusBridge:       argusBridgeForAgent,     // Argus 视觉工具注入
-		CoderBridge:       coderBridgeForAgent,     // Coder 编程工具注入
+		// (Phase 2A: CoderBridge 已删除 — oa-coder 升级为 spawn_coder_agent)
 		NativeSandbox:     nativeSandboxForAgent,   // 原生沙箱 Worker 注入
 		UHMSBridge:        uhmsBridgeForAgent,      // UHMS 记忆系统注入
 		CoderConfirmation: state.CoderConfirmMgr(), // Coder 确认流注入

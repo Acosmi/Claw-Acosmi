@@ -167,8 +167,9 @@ type DeliveryContext struct {
 
 // SubagentRunOutcome 子 Agent 运行结果状态。
 type SubagentRunOutcome struct {
-	Status string `json:"status"` // "ok" | "error" | "timeout" | "unknown"
-	Error  string `json:"error,omitempty"`
+	Status        string         `json:"status"` // "ok" | "error" | "timeout" | "unknown"
+	Error         string         `json:"error,omitempty"`
+	ThoughtResult *ThoughtResult `json:"thoughtResult,omitempty"` // 结构化子 agent 返回（可选）
 }
 
 // SubagentAnnounceType 子 Agent 通告类型。

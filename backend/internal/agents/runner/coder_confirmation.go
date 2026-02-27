@@ -159,15 +159,7 @@ func (m *CoderConfirmationManager) ResolveConfirmation(id, decision string) erro
 	return nil
 }
 
-// isCoderConfirmable 判断工具是否需要确认。
-func isCoderConfirmable(mcpToolName string) bool {
-	switch mcpToolName {
-	case "edit", "write", "bash":
-		return true
-	default:
-		return false
-	}
-}
+// (Phase 2A: isCoderConfirmable 已删除 — 审批逻辑移至 Ask 规则和 Argus 审批)
 
 // extractCoderPreview 从工具参数中提取预览数据。
 func extractCoderPreview(toolName string, args json.RawMessage) *CoderConfirmPreview {

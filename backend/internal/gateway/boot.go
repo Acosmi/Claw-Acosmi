@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -49,8 +48,7 @@ type GatewayState struct {
 	// Argus 视觉子智能体（可选 — 仅二进制可用时初始化）
 	argusBridge *argus.Bridge
 
-	// Coder 编程子智能体（可选 — 仅 CLI 二进制可用时初始化）
-	coderBridge *argus.Bridge
+	// (Phase 2A 已删除: Coder Bridge MCP 桥接 → spawn_coder_agent 替代)
 
 	// MCP 远程工具 Bridge（可选 — 仅配置启用时初始化）
 	remoteMCPBridge *mcpremote.RemoteBridge
@@ -88,7 +86,7 @@ func NewGatewayState() *GatewayState {
 		toolReg:                NewToolRegistry(),
 		eventDisp:              NewNodeEventDispatcher(),
 		escalationMgr:          NewEscalationManager(bc, auditLogger, remoteNotifier),
-		remoteApprovalNotifier: remoteNotifier,
+		remoteApprovalNotifier: remoteNotifier, // Phase 4.1: RestoreFromDisk 在 NewGatewayState 末尾调用
 		taskPresetMgr:          NewTaskPresetManager(),
 		channelMgr:             channels.NewManager(),
 	}
@@ -169,47 +167,18 @@ func NewGatewayState() *GatewayState {
 		slog.Info("gateway: Argus binary not available, visual agent disabled")
 	}
 
-	// ── Coder 编程子智能体 ──────────────────────────────────────
-	// 复用 argus.Bridge（通用 MCP stdio 子进程管理器），指向 "openacosmi coder start"
-	coderBinaryPath := resolveCoderBinaryPath()
-	if coderBinaryPath != "" {
-		coderCfg := argus.BridgeConfig{
-			BinaryPath:     coderBinaryPath,
-			Args:           []string{"coder", "start", "--workspace", "."},
-			HealthInterval: 30 * time.Second,
-			OnStateChange: func(state argus.BridgeState, reason string) {
-				if bc := s.broadcaster; bc != nil {
-					bc.Broadcast("coder.status.changed", map[string]interface{}{
-						"state":  string(state),
-						"reason": reason,
-						"ts":     time.Now().UnixMilli(),
-					}, nil)
-				}
-			},
-		}
-		coderBridge := argus.NewBridge(coderCfg)
-		if err := coderBridge.Start(); err != nil {
-			slog.Warn("gateway: coder bridge start failed (non-fatal)", "error", err)
-		} else {
-			s.coderBridge = coderBridge
-		}
-	} else {
-		slog.Info("gateway: Coder binary not available, coding agent disabled")
-	}
+	// (Phase 2A: Coder Bridge MCP 启动已删除 — oa-coder 升级为独立 LLM Agent Session)
 
-	// ── Coder 确认管理器 ──────────────────────────────────────
-	// TODO(coder-terminal): 可视化（工具卡片+确认弹窗）待重新设计为终端式 UI。
-	// 当前跳过确认管理器初始化 → CoderConfirmation == nil → edit/write/bash 直接执行，无审批弹窗。
-	// 前端可视化代码全部保留 (coder-confirm.ts, coder-tool-cards.ts, app-tool-stream.ts 等)。
-	// 恢复: 取消下方注释即可。见 docs/claude/deferred/oa-coder.md
-	/*
-	if s.coderBridge != nil {
-		s.coderConfirmMgr = runner.NewCoderConfirmationManager(func(event string, payload interface{}) {
-			bc.Broadcast(event, payload, nil)
-		}, 60*time.Second)
-		slog.Info("gateway: coder confirmation manager initialized")
-	}
-	*/
+	// ── 命令审批门控（Ask 规则 + Coder 确认） ──────────────────
+	// 无条件初始化：bash Ask 规则需要真正阻塞审批（fail-closed 安全策略），
+	// 不依赖 Coder Bridge 是否存在。前端通过 coder.confirm.* 事件处理。
+	s.coderConfirmMgr = runner.NewCoderConfirmationManager(func(event string, payload interface{}) {
+		bc.Broadcast(event, payload, nil)
+	}, 60*time.Second)
+	slog.Info("gateway: command approval gate initialized")
+
+	// Phase 4.1: 从磁盘恢复未过期的 pending 审批请求
+	s.escalationMgr.RestoreFromDisk()
 
 	// 可选：初始化 UHMS 记忆系统（仅配置启用时）
 	// 注意：此处不传 LLMProvider（需要由 server.go 在运行时注入），
@@ -306,15 +275,7 @@ func (s *GatewayState) StopArgus() {
 	}
 }
 
-// CoderBridge 返回 Coder 编程子智能体 Bridge（可能为 nil）。
-func (s *GatewayState) CoderBridge() *argus.Bridge { return s.coderBridge }
-
-// StopCoder 优雅关闭 Coder 编程子智能体。
-func (s *GatewayState) StopCoder() {
-	if s.coderBridge != nil {
-		s.coderBridge.Stop()
-	}
-}
+// (Phase 2A: CoderBridge/StopCoder 已删除 — oa-coder 升级为 spawn_coder_agent)
 
 // RemoteMCPBridge 返回 MCP 远程工具 Bridge（可能为 nil）。
 func (s *GatewayState) RemoteMCPBridge() *mcpremote.RemoteBridge { return s.remoteMCPBridge }
@@ -421,39 +382,7 @@ func resolveNativeSandboxBinaryPath() string {
 	return "openacosmi"
 }
 
-// resolveCoderBinaryPath 解析 Coder 编程子智能体二进制路径。
-//
-// 复用与 NativeSandbox 相同的 CLI 二进制（openacosmi coder start）。
-// 优先级:
-//  1. $OA_CODER_BINARY（测试/开发覆盖）
-//  2. $OA_CLI_BINARY（共享 CLI 路径）
-//  3. ~/.openacosmi/bin/openacosmi（用户级安装）
-//  4. openacosmi（PATH 查找）
-//  5. "" 如果均不可用
-func resolveCoderBinaryPath() string {
-	if v := os.Getenv("OA_CODER_BINARY"); v != "" {
-		if _, err := os.Stat(v); err == nil {
-			return v
-		}
-	}
-	if v := os.Getenv("OA_CLI_BINARY"); v != "" {
-		if _, err := os.Stat(v); err == nil {
-			return v
-		}
-	}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		candidate := home + "/.openacosmi/bin/openacosmi"
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	// PATH 查找
-	if p, err := exec.LookPath("openacosmi"); err == nil {
-		return p
-	}
-	return ""
-}
+// (Phase 2A: resolveCoderBinaryPath 已删除 — Coder MCP 进程不再由 Go 启动)
 
 // ---------- 健康检查 ----------
 

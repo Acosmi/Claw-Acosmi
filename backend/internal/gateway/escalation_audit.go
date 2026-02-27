@@ -63,6 +63,11 @@ func NewEscalationAuditLogger() *EscalationAuditLogger {
 	}
 }
 
+// FilePath 返回审计日志文件路径。
+func (l *EscalationAuditLogger) FilePath() string {
+	return l.filePath
+}
+
 // Log 追加一条审计日志。
 func (l *EscalationAuditLogger) Log(entry EscalationAuditEntry) {
 	l.mu.Lock()

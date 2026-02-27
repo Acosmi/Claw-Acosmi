@@ -125,12 +125,26 @@ type ExecApprovalsSocket struct {
 	Token string `json:"token,omitempty"`
 }
 
+// PersistedEscalationRequest 持久化的待审批提权请求（磁盘表示）。
+// 用于 gateway 重启后恢复未过期的审批请求。
+// 定义在 infra 包避免与 gateway 包循环依赖。
+type PersistedEscalationRequest struct {
+	ID             string `json:"id"`
+	RequestedLevel string `json:"requestedLevel"` // "allowlist" | "full"
+	Reason         string `json:"reason"`
+	RunID          string `json:"runId,omitempty"`
+	SessionID      string `json:"sessionId,omitempty"`
+	RequestedAtMs  int64  `json:"requestedAtMs"` // Unix 毫秒
+	TTLMinutes     int    `json:"ttlMinutes"`
+}
+
 // ExecApprovalsFile 审批配置文件结构。
 type ExecApprovalsFile struct {
-	Version  int                            `json:"version"`
-	Socket   *ExecApprovalsSocket           `json:"socket,omitempty"`
-	Defaults *ExecApprovalsDefaults         `json:"defaults,omitempty"`
-	Agents   map[string]*ExecApprovalsAgent `json:"agents,omitempty"`
+	Version           int                          `json:"version"`
+	Socket            *ExecApprovalsSocket         `json:"socket,omitempty"`
+	Defaults          *ExecApprovalsDefaults       `json:"defaults,omitempty"`
+	Agents            map[string]*ExecApprovalsAgent `json:"agents,omitempty"`
+	PendingEscalation *PersistedEscalationRequest  `json:"pendingEscalation,omitempty"`
 }
 
 // ExecApprovalsSnapshot 配置快照（含 hash 用于 OCC）。
@@ -286,6 +300,41 @@ func newDefaultExecApprovalsFile() *ExecApprovalsFile {
 		Version: 1,
 		Agents:  make(map[string]*ExecApprovalsAgent),
 	}
+}
+
+// ---------- 提权请求持久化辅助 ----------
+
+// SaveEscalationPending 将待审批提权请求持久化到 exec-approvals.json。
+// 采用 read-modify-write 模式，保留文件中已有的规则和配置。
+func SaveEscalationPending(req *PersistedEscalationRequest) error {
+	snapshot := ReadExecApprovalsSnapshot()
+	file := snapshot.File
+	if file == nil {
+		file = newDefaultExecApprovalsFile()
+	}
+	file.PendingEscalation = req
+	return SaveExecApprovals(file)
+}
+
+// ClearEscalationPending 从 exec-approvals.json 中移除持久化的提权请求。
+func ClearEscalationPending() error {
+	snapshot := ReadExecApprovalsSnapshot()
+	file := snapshot.File
+	if file == nil || file.PendingEscalation == nil {
+		return nil // 无需清理
+	}
+	file.PendingEscalation = nil
+	return SaveExecApprovals(file)
+}
+
+// ReadEscalationPending 从 exec-approvals.json 读取持久化的提权请求。
+// 文件不存在或无持久化请求时返回 nil。
+func ReadEscalationPending() *PersistedEscalationRequest {
+	snapshot := ReadExecApprovalsSnapshot()
+	if snapshot.File == nil {
+		return nil
+	}
+	return snapshot.File.PendingEscalation
 }
 
 // ParseExecApprovalsFileFromMap 将 map[string]any 反序列化为 *ExecApprovalsFile。

@@ -124,6 +124,8 @@ type SubagentSystemPromptParams struct {
 	ChildSessionKey     string
 	Label               string
 	Task                string
+	// Contract 委托合约（可选，非 nil 时追加合约段到系统提示词）。
+	Contract *DelegationContract
 }
 
 // BuildSubagentSystemPrompt 构建子 Agent 系统提示词。
@@ -177,6 +179,11 @@ func BuildSubagentSystemPrompt(p SubagentSystemPromptParams) string {
 	}
 	lines = append(lines, fmt.Sprintf("- Your session: %s.", p.ChildSessionKey))
 	lines = append(lines, "")
+
+	// 合约段：有委托合约时追加结构化约束到系统提示词
+	if p.Contract != nil {
+		lines = append(lines, p.Contract.FormatForSystemPrompt())
+	}
 
 	return strings.Join(lines, "\n")
 }
