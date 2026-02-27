@@ -1,0 +1,297 @@
+/* Notification Bell Target Area */
+.notification-bell {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    transition: background var(--duration-fast) ease, transform 0.1s ease;
+    padding: 0;
+}
+
+.notification-bell:hover {
+    background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+}
+
+.notification-bell:active {
+    transform: scale(0.95);
+}
+
+.notification-bell svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Badge count indicator */
+.notification-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    transform: translate(30%, -30%);
+    min-width: 14px;
+    height: 14px;
+    padding: 0 4px;
+    border-radius: 10px;
+    background: #ff3b30;
+    /* macOS red */
+    color: white;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+    text-align: center;
+    border: 2px solid var(--bg);
+    /* create cutout effect */
+    box-sizing: content-box;
+    animation: bounce-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* Overlay for outside click tracking */
+.notification-center-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    background: transparent;
+}
+
+/* Apple-style Mac dropdown */
+.notification-center-dropdown {
+    position: absolute;
+    top: calc(100% + 12px);
+    right: -10px;
+    width: 340px;
+    max-width: calc(100vw - 32px);
+    max-height: 480px;
+    display: flex;
+    flex-direction: column;
+    z-index: 950;
+
+    /* macOS frosted glass */
+    background: rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 0.5px solid rgba(0, 0, 0, 0.1);
+    border-radius: 14px;
+
+    /* Layered shadow */
+    box-shadow:
+        0 4px 12px rgba(0, 0, 0, 0.05),
+        0 12px 24px rgba(0, 0, 0, 0.08),
+        0 24px 48px rgba(0, 0, 0, 0.06);
+
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+    animation: slide-down-fade 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transform-origin: top right;
+}
+
+@media (prefers-color-scheme: dark) {
+    .notification-center-dropdown {
+        background: rgba(40, 40, 40, 0.65);
+        border: 0.5px solid rgba(255, 255, 255, 0.15);
+        box-shadow:
+            0 4px 12px rgba(0, 0, 0, 0.2),
+            0 12px 24px rgba(0, 0, 0, 0.25),
+            0 24px 48px rgba(0, 0, 0, 0.3);
+    }
+}
+
+.notification-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 0.5px solid rgba(128, 128, 128, 0.2);
+    flex-shrink: 0;
+}
+
+.notification-header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-strong, inherit);
+}
+
+.clear-all-btn {
+    background: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 500;
+    color: #007aff;
+    /* macOS blue */
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: background 0.15s ease;
+}
+
+.clear-all-btn:hover {
+    background: rgba(0, 122, 255, 0.1);
+}
+
+.notification-body {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* Scrollbar tweaks */
+.notification-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.notification-body::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.notification-body::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.3);
+    border-radius: 10px;
+}
+
+.notification-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    color: var(--muted, rgba(128, 128, 128, 0.8));
+    gap: 12px;
+}
+
+.notification-empty svg {
+    width: 32px;
+    height: 32px;
+    opacity: 0.5;
+}
+
+.notification-empty p {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+/* Individual Notification Items */
+.notification-item {
+    display: flex;
+    align-items: flex-start;
+    padding: 12px;
+    border-radius: 10px;
+    gap: 12px;
+    background: transparent;
+    transition: background 0.15s ease;
+    cursor: default;
+    position: relative;
+}
+
+.notification-item:hover {
+    background: rgba(128, 128, 128, 0.1);
+}
+
+.notification-item.unread {
+    background: rgba(0, 122, 255, 0.05);
+}
+
+.notification-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    background: rgba(128, 128, 128, 0.1);
+}
+
+.notification-item.error .notification-icon {
+    background: rgba(255, 59, 48, 0.15);
+    color: #ff3b30;
+}
+
+.notification-item.success .notification-icon {
+    background: rgba(52, 199, 89, 0.15);
+    color: #34c759;
+}
+
+.notification-item.info .notification-icon {
+    background: rgba(0, 122, 255, 0.15);
+    color: #007aff;
+}
+
+.notification-icon svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 2.5;
+}
+
+.notification-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.notification-message {
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--text, inherit);
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.notification-time {
+    font-size: 11px;
+    color: var(--muted, rgba(128, 128, 128, 0.8));
+    font-weight: 500;
+}
+
+.notification-unread-dot {
+    position: absolute;
+    top: 18px;
+    right: 12px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #007aff;
+    box-shadow: 0 0 0 2px var(--bg, transparent);
+}
+
+/* Animations */
+@keyframes bounce-in {
+    0% {
+        transform: scale(0.3);
+        opacity: 0;
+    }
+
+    50% {
+        transform: scale(1.1);
+    }
+
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes slide-down-fade {
+    0% {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.97);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}

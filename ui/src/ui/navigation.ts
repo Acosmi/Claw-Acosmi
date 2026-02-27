@@ -165,7 +165,7 @@ export function iconForTab(tab: Tab): IconName {
     case "logs":
       return "scrollText";
     case "subagents":
-      return "brain";
+      return "monitor";
     default:
       return "folder";
   }

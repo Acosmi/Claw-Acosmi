@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -841,12 +840,6 @@ func extractBriefSections(summary string) string {
 // VFS returns the underlying LocalVFS instance.
 func (m *DefaultManager) VFS() *LocalVFS { return m.vfs }
 
-// VectorIdx returns the underlying VectorIndex (nil when VectorMode == off).
-func (m *DefaultManager) VectorIdx() VectorIndex { return m.vectorIndex }
-
-// BootFilePath returns the boot file path from config.
-func (m *DefaultManager) BootFilePath() string { return m.cfg.ResolvedBootFilePath() }
-
 // ============================================================================
 // Close
 // ============================================================================
@@ -913,164 +906,6 @@ func (m *DefaultManager) SearchSystemEntries(ctx context.Context, collection, qu
 	}
 
 	return nil, fmt.Errorf("uhms: vector index does not support payload search")
-}
-
-// SearchSystem searches a system collection by keyword.
-// Tries SearchSystemEntries (Qdrant payload search) first; falls back to VFS meta.json scan.
-func (m *DefaultManager) SearchSystem(ctx context.Context, collection, query string, topK int) ([]SystemHit, error) {
-	// First try Qdrant payload search if available
-	hits, err := m.SearchSystemEntries(ctx, collection, query, topK)
-	if err == nil {
-		return payloadHitsToSystemHits(hits), nil
-	}
-
-	// Do not fall through to VFS scan if the context was cancelled.
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-
-	// Fallback: scan VFS meta.json for the namespace derived from collection name
-	// collection "sys_skills" → namespace "skills", etc.
-	namespace := collectionToNamespace(collection)
-	if namespace == "" {
-		return nil, fmt.Errorf("uhms: unknown system collection %q", collection)
-	}
-	return m.searchSystemVFSFallback(namespace, query, topK)
-}
-
-// searchSystemVFSFallback scans VFS meta.json entries for keyword matches.
-func (m *DefaultManager) searchSystemVFSFallback(namespace, query string, topK int) ([]SystemHit, error) {
-	cats, err := m.vfs.ListSystemCategories(namespace)
-	if err != nil {
-		return nil, fmt.Errorf("uhms: list system categories: %w", err)
-	}
-
-	queryLower := strings.ToLower(query)
-	var hits []SystemHit
-	for _, cat := range cats {
-		refs, err := m.vfs.ListSystemEntries(namespace, cat)
-		if err != nil {
-			continue
-		}
-		for _, ref := range refs {
-			meta, err := m.vfs.ReadSystemMeta(namespace, ref.Category, ref.ID)
-			if err != nil || meta == nil {
-				continue
-			}
-			name, _ := meta["name"].(string)
-			desc, _ := meta["description"].(string)
-			tags, _ := meta["tags"].(string)
-			vfsPath, _ := meta["vfs_path"].(string)
-			if vfsPath == "" {
-				vfsPath = filepath.Join("_system", namespace, ref.Category, ref.ID)
-			}
-
-			// Simple keyword match across name + description + tags
-			score := keywordScore(queryLower, name, desc, tags)
-			if score > 0 {
-				hits = append(hits, SystemHit{
-					ID:          ref.ID,
-					Name:        name,
-					Category:    ref.Category,
-					Description: desc,
-					Tags:        tags,
-					VFSPath:     vfsPath,
-					Score:       score,
-				})
-			}
-		}
-	}
-
-	// Sort by score desc
-	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
-	if len(hits) > topK {
-		hits = hits[:topK]
-	}
-	return hits, nil
-}
-
-// ReadSystemL0 reads the L0 abstract for a system entry by VFS relative path.
-func (m *DefaultManager) ReadSystemL0(vfsPath string) (string, error) {
-	return m.vfs.ReadByVFSPath(vfsPath, 0)
-}
-
-// ReadSystemL1 reads the L1 overview for a system entry by VFS relative path.
-func (m *DefaultManager) ReadSystemL1(vfsPath string) (string, error) {
-	return m.vfs.ReadByVFSPath(vfsPath, 1)
-}
-
-// ReadSystemL2 reads the L2 full content for a system entry by VFS relative path.
-func (m *DefaultManager) ReadSystemL2(vfsPath string) (string, error) {
-	return m.vfs.ReadByVFSPath(vfsPath, 2)
-}
-
-// SystemDistributionStatus returns the distribution status for a system collection.
-func (m *DefaultManager) SystemDistributionStatus(collection string) SystemDistStatus {
-	namespace := collectionToNamespace(collection)
-	if namespace == "" {
-		return SystemDistStatus{Collection: collection}
-	}
-	cats, _ := m.vfs.ListSystemCategories(namespace)
-	total := 0
-	for _, cat := range cats {
-		refs, _ := m.vfs.ListSystemEntries(namespace, cat)
-		total += len(refs)
-	}
-	return SystemDistStatus{
-		Collection:   collection,
-		TotalEntries: total,
-		Indexed:      total > 0,
-	}
-}
-
-// --- helpers ---
-
-func payloadHitsToSystemHits(hits []PayloadHit) []SystemHit {
-	out := make([]SystemHit, 0, len(hits))
-	for _, h := range hits {
-		name, _ := h.Payload["name"].(string)
-		cat, _ := h.Payload["category"].(string)
-		desc, _ := h.Payload["description"].(string)
-		tags, _ := h.Payload["tags"].(string)
-		vp := h.VFSPath
-		if vp == "" {
-			vp, _ = h.Payload["vfs_path"].(string)
-		}
-		out = append(out, SystemHit{
-			ID: h.ID, Name: name, Category: cat,
-			Description: desc, Tags: tags, VFSPath: vp, Score: h.Score,
-		})
-	}
-	return out
-}
-
-func collectionToNamespace(collection string) string {
-	switch collection {
-	case "sys_skills":
-		return "skills"
-	case "sys_plugins":
-		return "plugins"
-	case "sys_sessions":
-		return "sessions"
-	}
-	return ""
-}
-
-func keywordScore(query, name, desc, tags string) float64 {
-	var score float64
-	nameLower := strings.ToLower(name)
-	descLower := strings.ToLower(desc)
-	tagsLower := strings.ToLower(tags)
-	if strings.Contains(nameLower, query) {
-		score += 3.0
-	}
-	if strings.Contains(tagsLower, query) {
-		score += 2.0
-	}
-	if strings.Contains(descLower, query) {
-		score += 1.0
-	}
-	return score
 }
 
 // DeleteSystemEntry removes an entry from a system collection.

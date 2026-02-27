@@ -13,6 +13,11 @@
  */
 
 export const zhMessages: Record<string, string> = {
+  // ── 通告中心 ──
+  "notifications.title": "通知",
+  "notifications.clearAll": "全部清除",
+  "notifications.empty": "暂无新通知",
+
   // ── 侧边栏分组 ──
   "nav.group.chat": "聊天",
   "nav.group.control": "控制台",
@@ -54,7 +59,7 @@ export const zhMessages: Record<string, string> = {
   "nav.sub.debug": "网关快照、事件和手动 RPC 调用。",
   "nav.sub.logs": "网关文件日志的实时尾行。",
   "nav.sub.security": "管理智能体执行权限和安全级别。",
-  "nav.sub.subagents": "管理视觉和编程子智能体。",
+  "nav.sub.subagents": "监控和控制视觉观察器和编程子智能体。",
 
   // ── 记忆 sub-tab ──
   "memory.tab.sessions": "会话",
@@ -79,24 +84,6 @@ export const zhMessages: Record<string, string> = {
 
   // ── 语言切换 ──
   "locale.label": "语言",
-
-  // ── 子智能体管理 ──
-  "subagents.title": "子智能体管理",
-  "subagents.sub": "控制视觉和编程子智能体的启用、频率和模型。",
-  "subagents.enable": "启用",
-  "subagents.interval": "截图频率",
-  "subagents.vlaModel": "VLA 模型",
-  "subagents.frames": "已捕获帧",
-  "subagents.lastFrame": "最后一帧",
-  "subagents.model.none": "无（仅截图）",
-  "subagents.vision.title": "视觉智能体 (Argus)",
-  "subagents.coder.title": "编程智能体 (oa-coder)",
-  "subagents.status.running": "运行中",
-  "subagents.status.paused": "已暂停",
-  "subagents.status.stopped": "已停止",
-  "subagents.status.error": "错误",
-  "subagents.status.connected": "已连接",
-  "subagents.status.disconnected": "未连接",
 
   // ── 聊天控制 ──
   "chat.refreshData": "刷新聊天数据",
@@ -1351,4 +1338,18 @@ export const zhMessages: Record<string, string> = {
   "voice.transcribeFailed": "转录失败",
   "voice.notSupported": "浏览器不支持录音",
   "voice.permissionDenied": "麦克风权限被拒绝",
+
+  // ── 子智能体 ──
+  "subagents.title": "子智能体",
+  "subagents.subtitle": "监控和控制视觉观察器和编程子智能体。",
+  "subagents.empty": "无已注册的子智能体。",
+  "subagents.enable": "启用",
+  "subagents.disable": "停用",
+  "subagents.model": "VLA 模型",
+  "subagents.interval": "截图间隔",
+  "subagents.goal": "任务目标",
+  "subagents.goalPlaceholder": "输入视觉智能体的当前任务目标…",
+  "subagents.status.running": "运行中",
+  "subagents.status.stopped": "已停止",
+  "subagents.status.error": "错误",
 };

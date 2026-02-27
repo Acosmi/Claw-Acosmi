@@ -50,9 +50,6 @@ func (v *LocalVFS) Root() string { return v.root }
 
 // WriteMemory writes a memory's L0/L1/L2 content to the file system.
 func (v *LocalVFS) WriteMemory(userID string, m *Memory, l0Abstract, l1Overview, l2Detail string) error {
-	if userID == "_system" {
-		return fmt.Errorf("uhms/vfs: userID '_system' is reserved")
-	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -99,9 +96,6 @@ func (v *LocalVFS) WriteMemory(userID string, m *Memory, l0Abstract, l1Overview,
 // WriteArchive writes a session archive's L0/L1/L2 to the file system.
 // l2Transcript is the full conversation text; truncated to maxArchiveL2Bytes if too large.
 func (v *LocalVFS) WriteArchive(userID, sessionKey, l0Summary, l1Overview, l2Transcript string) (string, error) {
-	if userID == "_system" {
-		return "", fmt.Errorf("uhms/vfs: userID '_system' is reserved")
-	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -533,22 +527,6 @@ func (v *LocalVFS) SystemEntryExists(namespace, category, id string) bool {
 	return err == nil
 }
 
-// SystemEntryHash returns the content_hash stored in a system entry's meta.json.
-// Returns "" if the entry does not exist or has no hash.
-func (v *LocalVFS) SystemEntryHash(namespace, category, id string) string {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-
-	meta := readMeta(filepath.Join(v.systemDir(namespace, category, id), "meta.json"))
-	if meta == nil {
-		return ""
-	}
-	if h, ok := meta["content_hash"].(string); ok {
-		return h
-	}
-	return ""
-}
-
 // ============================================================================
 // Path Helpers
 // ============================================================================
@@ -563,10 +541,6 @@ func (v *LocalVFS) memoryDir(userID, memoryType, category, memoryID string) stri
 
 func (v *LocalVFS) archiveDir(userID, sessionKey string) string {
 	return filepath.Join(v.root, userID, "archives", sessionKey)
-}
-
-func (v *LocalVFS) relativeSystemPath(namespace, category, id string) string {
-	return filepath.Join("_system", namespace, category, id)
 }
 
 func (v *LocalVFS) relativeMemoryPath(userID, memoryType, category, memoryID string) string {

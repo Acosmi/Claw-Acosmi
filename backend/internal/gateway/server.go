@@ -314,201 +314,6 @@ func (a *uhmsBridgeAdapter) BuildContextBrief(ctx context.Context) string {
 	return a.mgr.BuildContextBrief(ctx, "default")
 }
 
-// ---------- Skill VFS Bridge → Agent 适配器 ----------
-
-// skillVFSBridgeAdapter 将 *uhms.DefaultManager 适配为 runner.SkillVFSBridgeForAgent 接口。
-// 提供 Boot 模式下技能 VFS 检索能力。
-type skillVFSBridgeAdapter struct {
-	mgr *uhms.DefaultManager
-}
-
-func (a *skillVFSBridgeAdapter) IsReady() bool {
-	status := a.mgr.SystemDistributionStatus("sys_skills")
-	return status.Indexed && status.TotalEntries > 0
-}
-
-func (a *skillVFSBridgeAdapter) SearchSkills(ctx context.Context, query string, topK int) ([]runner.SkillSearchHit, error) {
-	hits, err := a.mgr.SearchSystem(ctx, "sys_skills", query, topK)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]runner.SkillSearchHit, 0, len(hits))
-	for _, h := range hits {
-		l0 := ""
-		if h.VFSPath != "" {
-			l0, _ = a.mgr.ReadSystemL0(h.VFSPath)
-		}
-		result = append(result, runner.SkillSearchHit{
-			Name:        h.Name,
-			Category:    h.Category,
-			Description: h.Description,
-			L0:          l0,
-		})
-	}
-	return result, nil
-}
-
-func (a *skillVFSBridgeAdapter) ReadSkillL1(category, name string) (string, error) {
-	vfs := a.mgr.VFS()
-	if vfs == nil {
-		return "", fmt.Errorf("VFS not available")
-	}
-	return vfs.ReadSystemL1("skills", category, name)
-}
-
-func (a *skillVFSBridgeAdapter) ReadSkillL2(category, name string) (string, error) {
-	vfs := a.mgr.VFS()
-	if vfs == nil {
-		return "", fmt.Errorf("VFS not available")
-	}
-	return vfs.ReadSystemL2("skills", category, name)
-}
-
-func (a *skillVFSBridgeAdapter) ReadSkillMeta(category, name string) (map[string]interface{}, error) {
-	vfs := a.mgr.VFS()
-	if vfs == nil {
-		return nil, fmt.Errorf("VFS not available")
-	}
-	return vfs.ReadSystemMeta("skills", category, name)
-}
-
-func (a *skillVFSBridgeAdapter) AllSkillL0Summaries() []runner.SkillSearchHit {
-	vfs := a.mgr.VFS()
-	if vfs == nil {
-		return nil
-	}
-	cats, err := vfs.ListSystemCategories("skills")
-	if err != nil {
-		return nil
-	}
-	var result []runner.SkillSearchHit
-	for _, cat := range cats {
-		refs, err := vfs.ListSystemEntries("skills", cat)
-		if err != nil {
-			continue
-		}
-		for _, ref := range refs {
-			l0, _ := vfs.ReadSystemL0("skills", ref.Category, ref.ID)
-			desc := ""
-			if meta, _ := vfs.ReadSystemMeta("skills", ref.Category, ref.ID); meta != nil {
-				desc, _ = meta["description"].(string)
-			}
-			result = append(result, runner.SkillSearchHit{
-				Name:        ref.ID,
-				Category:    ref.Category,
-				Description: desc,
-				L0:          l0,
-			})
-		}
-	}
-	return result
-}
-
-// channelVFSBridgeAdapter 将 *uhms.DefaultManager 适配为 runner.ChannelVFSBridgeForAgent。
-type channelVFSBridgeAdapter struct {
-	mgr *uhms.DefaultManager
-}
-
-func (a *channelVFSBridgeAdapter) SearchChannels(_ context.Context, query string, topK int) ([]runner.ChannelSearchHit, error) {
-	hits, err := a.mgr.SearchSystem(context.Background(), "sys_plugins", query, topK)
-	if err != nil {
-		// 降级: 从 VFS 扫描
-		return a.searchChannelsVFS(query, topK)
-	}
-	result := make([]runner.ChannelSearchHit, 0, len(hits))
-	for _, h := range hits {
-		l0 := ""
-		if h.VFSPath != "" {
-			l0, _ = a.mgr.ReadSystemL0(h.VFSPath)
-		}
-		result = append(result, runner.ChannelSearchHit{
-			Name:  h.Name,
-			Label: h.Description,
-			L0:    l0,
-		})
-	}
-	if len(result) == 0 {
-		return a.searchChannelsVFS(query, topK)
-	}
-	return result, nil
-}
-
-func (a *channelVFSBridgeAdapter) searchChannelsVFS(query string, topK int) ([]runner.ChannelSearchHit, error) {
-	vfs := a.mgr.VFS()
-	if vfs == nil {
-		return nil, fmt.Errorf("VFS not available")
-	}
-	refs, err := vfs.ListSystemEntries("plugins", "channels")
-	if err != nil {
-		return nil, err
-	}
-	queryLower := strings.ToLower(query)
-	var result []runner.ChannelSearchHit
-	for _, ref := range refs {
-		l0, _ := vfs.ReadSystemL0("plugins", ref.Category, ref.ID)
-		if l0 != "" && strings.Contains(strings.ToLower(l0), queryLower) {
-			result = append(result, runner.ChannelSearchHit{
-				Name: ref.ID,
-				L0:   l0,
-			})
-			if len(result) >= topK {
-				break
-			}
-		}
-	}
-	return result, nil
-}
-
-func (a *channelVFSBridgeAdapter) ReadChannelL1(channelID string) (string, error) {
-	vfs := a.mgr.VFS()
-	if vfs == nil {
-		return "", fmt.Errorf("VFS not available")
-	}
-	return vfs.ReadSystemL1("plugins", "channels", channelID)
-}
-
-// sessionArchiveBridgeAdapter 将 *uhms.DefaultManager 适配为 runner.SessionArchiveBridgeForAgent。
-type sessionArchiveBridgeAdapter struct {
-	mgr *uhms.DefaultManager
-}
-
-func (a *sessionArchiveBridgeAdapter) SearchSessions(_ context.Context, query string, topK int) ([]runner.SessionSearchHit, error) {
-	// 从 VFS 归档列表中搜索（按 L0 摘要关键词匹配）
-	vfs := a.mgr.VFS()
-	if vfs == nil {
-		return nil, fmt.Errorf("VFS not available")
-	}
-	archives, err := vfs.ListArchives("default")
-	if err != nil {
-		return nil, err
-	}
-	queryLower := strings.ToLower(query)
-	var result []runner.SessionSearchHit
-	for _, arc := range archives {
-		if arc.L0Summary != "" && strings.Contains(strings.ToLower(arc.L0Summary), queryLower) {
-			result = append(result, runner.SessionSearchHit{
-				SessionKey: arc.SessionKey,
-				L0Summary:  arc.L0Summary,
-				CreatedAt:  fmt.Sprintf("%d", arc.CreatedAt),
-			})
-			if len(result) >= topK {
-				break
-			}
-		}
-	}
-	return result, nil
-}
-
-func (a *sessionArchiveBridgeAdapter) ReadSessionL1(userID, sessionKey string) (string, error) {
-	vfs := a.mgr.VFS()
-	if vfs == nil {
-		return "", fmt.Errorf("VFS not available")
-	}
-	// 会话归档路径: {userID}/archives/{sessionKey}/l1.txt
-	archivePath := fmt.Sprintf("%s/archives/%s", userID, sessionKey)
-	return vfs.ReadByVFSPath(archivePath, 1)
-}
-
 // chatMessagesToUHMS converts llmclient.ChatMessage slice to uhms.Message slice.
 // Extracts text content from ContentBlock arrays.
 func chatMessagesToUHMS(messages []llmclient.ChatMessage) []uhms.Message {
@@ -901,14 +706,8 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	// 构建 UHMS Bridge 适配器（nil-safe: manager 不可用时 adapter 也为 nil）
 	// 如果 UHMS 配置启用但 boot 时未传 LLM，在此处注入 LLM adapter
 	var uhmsBridgeForAgent runner.UHMSBridgeForAgent
-	var skillVFSBridgeForAgent runner.SkillVFSBridgeForAgent
-	var channelVFSBridgeForAgent runner.ChannelVFSBridgeForAgent
-	var sessionArchiveBridgeForAgent runner.SessionArchiveBridgeForAgent
 	if mgr := state.UHMSManager(); mgr != nil {
 		uhmsBridgeForAgent = &uhmsBridgeAdapter{mgr: mgr, broadcaster: state.Broadcaster()}
-		skillVFSBridgeForAgent = &skillVFSBridgeAdapter{mgr: mgr}
-		channelVFSBridgeForAgent = &channelVFSBridgeAdapter{mgr: mgr}
-		sessionArchiveBridgeForAgent = &sessionArchiveBridgeAdapter{mgr: mgr}
 	} else if loadedCfg != nil && loadedCfg.Memory != nil && loadedCfg.Memory.UHMS != nil && loadedCfg.Memory.UHMS.Enabled {
 		// boot.go 使用 DefaultUHMSConfig 初始化（默认 disabled），
 		// 这里从真实配置读取并重新初始化
@@ -932,9 +731,6 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			}
 			state.SetUHMSManager(mgr)
 			uhmsBridgeForAgent = &uhmsBridgeAdapter{mgr: mgr, broadcaster: state.Broadcaster()}
-			skillVFSBridgeForAgent = &skillVFSBridgeAdapter{mgr: mgr}
-			channelVFSBridgeForAgent = &channelVFSBridgeAdapter{mgr: mgr}
-			sessionArchiveBridgeForAgent = &sessionArchiveBridgeAdapter{mgr: mgr}
 
 			// Inject vector backend when VectorMode != off.
 			if uhmsCfg.VectorMode != uhms.VectorOff {
@@ -955,10 +751,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		CoderBridge:       coderBridgeForAgent,     // Coder 编程工具注入
 		NativeSandbox:     nativeSandboxForAgent,   // 原生沙箱 Worker 注入
 		UHMSBridge:        uhmsBridgeForAgent,      // UHMS 记忆系统注入
-		SkillVFSBridge:       skillVFSBridgeForAgent,       // VFS 技能检索注入 (Boot 模式)
-		ChannelVFSBridge:     channelVFSBridgeForAgent,    // 频道 VFS 检索注入 (Boot 模式)
-		SessionArchiveBridge: sessionArchiveBridgeForAgent, // 会话归档检索注入
-		CoderConfirmation:    state.CoderConfirmMgr(),      // Coder 确认流注入
+		CoderConfirmation: state.CoderConfirmMgr(), // Coder 确认流注入
 		// RemoteMCPBridge 在 4h 节之后注入
 	}
 

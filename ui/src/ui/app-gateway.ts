@@ -173,12 +173,22 @@ export function connectGateway(host: GatewayHost) {
       host.connected = false;
       // Code 1012 = Service Restart (expected during config saves, don't show as error)
       if (code !== 1012) {
-        host.lastError = `disconnected (${code}): ${reason || "no reason"}`;
+        const msg = `disconnected (${code}): ${reason || "no reason"}`;
+        host.lastError = msg;
+        const app = host as unknown as OpenAcosmiApp;
+        if (typeof app.addNotification === "function") {
+          app.addNotification(msg, "error");
+        }
       }
     },
     onEvent: (evt) => handleGatewayEvent(host, evt),
     onGap: ({ expected, received }) => {
-      host.lastError = `event gap detected (expected seq ${expected}, got ${received}); refresh recommended`;
+      const msg = `event gap detected (expected seq ${expected}, got ${received}); refresh recommended`;
+      host.lastError = msg;
+      const app = host as unknown as OpenAcosmiApp;
+      if (typeof app.addNotification === "function") {
+        app.addNotification(msg, "error");
+      }
     },
   });
   host.client.start();
@@ -307,14 +317,11 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     } | undefined;
     if (payload?.sessionKey && payload?.text) {
       const app = host as unknown as OpenAcosmiApp;
-      app.channelNotification = {
-        sessionKey: payload.sessionKey,
-        channel: payload.channel ?? "",
-        text: payload.text,
-        from: payload.from ?? "",
-        label: payload.label ?? payload.channel ?? "",
-        ts: payload.ts ?? Date.now(),
-      };
+      const fromStr = payload.from ? `[${payload.from}] ` : "";
+      const msg = `${fromStr}${payload.text}`;
+      if (typeof app.addNotification === "function") {
+        app.addNotification(msg, "info");
+      }
       if (typeof app.requestUpdate === "function") {
         app.requestUpdate();
       }
@@ -331,10 +338,30 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (payload?.state === "stopped") {
       const app = host as unknown as OpenAcosmiApp;
       const reason = payload.reason ?? "unknown error";
-      app.lastError = `[Argus] Visual agent stopped: ${reason}. Use argus.restart to recover.`;
+      const msg = `[Argus] Visual agent stopped: ${reason}. Use argus.restart to recover.`;
+      app.lastError = msg;
+      if (typeof app.addNotification === "function") {
+        app.addNotification(msg, "error");
+      }
       if (typeof app.requestUpdate === "function") {
         app.requestUpdate();
       }
+    }
+    return;
+  }
+
+  // Argus 熔断崩溃通知
+  if (evt.event === "argus.crash.notify") {
+    const payload = evt.payload as { reason?: string } | undefined;
+    const app = host as unknown as OpenAcosmiApp;
+    const reason = payload?.reason ?? "rapid crash detected";
+    const msg = `[Argus] Visual agent stopped due to crash: ${reason}. Send 'argus restart' to recover.`;
+    app.lastError = msg;
+    if (typeof app.addNotification === "function") {
+      app.addNotification(msg, "error");
+    }
+    if (typeof app.requestUpdate === "function") {
+      app.requestUpdate();
     }
     return;
   }

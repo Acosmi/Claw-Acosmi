@@ -24,6 +24,7 @@ import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 import { loadSkills } from "./controllers/skills.ts";
+import { loadSubAgents } from "./controllers/subagents.ts";
 import {
   inferBasePathFromPathname,
   normalizeBasePath,
@@ -199,6 +200,9 @@ export async function refreshActiveTab(host: SettingsHost) {
   if (host.tab === "skills") {
     await loadSkills(host as unknown as OpenAcosmiApp);
   }
+  if (host.tab === "subagents") {
+    await loadSubAgents(host as any);
+  }
   if (host.tab === "agents") {
     await loadAgents(host as unknown as OpenAcosmiApp);
     await loadConfig(host as unknown as OpenAcosmiApp);
@@ -258,10 +262,6 @@ export async function refreshActiveTab(host: SettingsHost) {
     host.logsAtBottom = true;
     await loadLogs(host as unknown as OpenAcosmiApp, { reset: true });
     scheduleLogsScroll(host as unknown as Parameters<typeof scheduleLogsScroll>[0], true);
-  }
-  if (host.tab === "subagents") {
-    const { loadSubAgents } = await import("./views/subagents.ts");
-    loadSubAgents(host as unknown as OpenAcosmiApp);
   }
 }
 

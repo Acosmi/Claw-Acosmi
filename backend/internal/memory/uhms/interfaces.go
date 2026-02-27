@@ -27,7 +27,7 @@ type MemoryStore interface {
 type VFS interface {
 	// --- User Memory Operations ---
 	WriteMemory(userID string, m *Memory, l0, l1, l2 string) error
-	WriteArchive(userID, sessionKey, l0, l1, l2 string) (string, error)
+	WriteArchive(userID, sessionKey, l0, l1 string) (string, error)
 	DeleteMemory(userID, memoryType, category, memoryID string) error
 
 	ReadL0(userID, memoryType, category, memoryID string) (string, error)
@@ -134,20 +134,6 @@ type Manager interface {
 
 	// Status returns current UHMS subsystem status.
 	Status() ManagerStatus
-
-	// SearchSystem searches a system collection by keyword, returning structured hits.
-	// collection: "sys_skills" | "sys_plugins" | "sys_sessions"
-	// Falls back to VFS meta.json scan if vector index is unavailable.
-	SearchSystem(ctx context.Context, collection, query string, topK int) ([]SystemHit, error)
-
-	// ReadSystemL0 reads the L0 abstract for a system entry by VFS relative path.
-	ReadSystemL0(vfsPath string) (string, error)
-
-	// ReadSystemL1 reads the L1 overview for a system entry by VFS relative path.
-	ReadSystemL1(vfsPath string) (string, error)
-
-	// ReadSystemL2 reads the L2 full content for a system entry by VFS relative path.
-	ReadSystemL2(vfsPath string) (string, error)
 
 	// Close releases all resources.
 	Close() error

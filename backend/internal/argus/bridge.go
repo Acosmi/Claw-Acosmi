@@ -89,8 +89,6 @@ type Bridge struct {
 	lastRTT    time.Duration
 	crashTimes []time.Time // 快速崩溃熔断: 记录崩溃时间戳
 
-	observer *ScreenObserver // 视觉观察者（方案 C）
-
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -141,24 +139,6 @@ func (b *Bridge) LastPing() (time.Time, time.Duration) {
 	return b.lastPing, b.lastRTT
 }
 
-// Observer 返回关联的 ScreenObserver（可能为 nil）。
-func (b *Bridge) Observer() *ScreenObserver {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.observer
-}
-
-// ObservationBuffer 返回观察缓冲区（Observer 未初始化时返回 nil）。
-func (b *Bridge) ObservationBuffer() *ObservationBuffer {
-	b.mu.RLock()
-	obs := b.observer
-	b.mu.RUnlock()
-	if obs == nil {
-		return nil
-	}
-	return obs.Buffer()
-}
-
 // Start 启动 Argus 子进程并完成 MCP 握手。
 func (b *Bridge) Start() error {
 	b.mu.Lock()
@@ -186,29 +166,6 @@ func (b *Bridge) Start() error {
 
 	go b.healthLoop(ctx)
 	go b.processMonitor(ctx)
-
-	// 启动 ScreenObserver（方案 C: 独立截图循环）
-	obsCfg := ScreenObserverConfig{
-		BaseInterval:    time.Second, // 默认 1fps
-		ChangeThreshold: 0.02,
-		MaxBufferFrames: 500,
-		CaptureFunc: func(ctx context.Context) ([]byte, int, int, error) {
-			// 通过 MCP 调用 capture_screen 工具获取截图
-			result, err := b.CallTool(ctx, "capture_screen", json.RawMessage(`{}`), 10*time.Second)
-			if err != nil {
-				return nil, 0, 0, fmt.Errorf("capture_screen: %w", err)
-			}
-			// TODO: 从 result 中解析 PNG 数据和分辨率
-			_ = result
-			return nil, 0, 0, fmt.Errorf("capture_screen: result parsing not yet implemented")
-		},
-	}
-	obs := NewScreenObserver(obsCfg)
-	obs.Start()
-	b.mu.Lock()
-	b.observer = obs
-	b.mu.Unlock()
-	slog.Info("argus: screen observer started")
 
 	return nil
 }
@@ -451,15 +408,6 @@ func (b *Bridge) Stop() {
 		cancel()
 	}
 
-	// 先停 ScreenObserver
-	b.mu.RLock()
-	obs := b.observer
-	b.mu.RUnlock()
-	if obs != nil {
-		obs.Stop()
-		slog.Info("argus: screen observer stopped")
-	}
-
 	// 关闭 stdin（通知子进程退出）
 	if client != nil {
 		client.Close()
@@ -487,7 +435,6 @@ func (b *Bridge) Stop() {
 	b.client = nil
 	b.cmd = nil
 	b.pid = 0
-	b.observer = nil
 	b.mu.Unlock()
 }
 

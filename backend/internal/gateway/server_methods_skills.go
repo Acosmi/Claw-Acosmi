@@ -14,9 +14,7 @@ package gateway
 //   routing: NormalizeAgentID
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -24,7 +22,6 @@ import (
 	"github.com/anthropic/open-acosmi/internal/agents/scope"
 	"github.com/anthropic/open-acosmi/internal/agents/skills"
 	"github.com/anthropic/open-acosmi/internal/argus"
-	"github.com/anthropic/open-acosmi/internal/memory/uhms"
 	"github.com/anthropic/open-acosmi/internal/routing"
 	"github.com/anthropic/open-acosmi/pkg/types"
 )
@@ -409,88 +406,6 @@ func handleSkillsUpdate(ctx *MethodHandlerContext) {
 		"ok":       true,
 		"skillKey": skillKey,
 		"config":   current,
-	}, nil)
-}
-
-// ---------- skills.distribute ----------
-// 将本地技能分级写入 VFS _system/skills/ 并建立 Qdrant 索引。
-
-func handleSkillsDistribute(ctx *MethodHandlerContext) {
-	loader := ctx.Context.ConfigLoader
-	if loader == nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "config not available"))
-		return
-	}
-	cfg, err := loader.LoadConfig()
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to load config: "+err.Error()))
-		return
-	}
-
-	// UHMS VFS 必须可用
-	vfs := ctx.Context.UHMSVFS()
-	if vfs == nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeServiceUnavailable, "UHMS memory system not available"))
-		return
-	}
-
-	// 解析 agentId
-	agentIDRaw, _ := ctx.Params["agentId"].(string)
-	agentIDRaw = strings.TrimSpace(agentIDRaw)
-	agentID := ""
-	if agentIDRaw != "" {
-		agentID = routing.NormalizeAgentID(agentIDRaw)
-	} else {
-		agentID = scope.ResolveDefaultAgentId(cfg)
-	}
-
-	workspaceDir := scope.ResolveAgentWorkspaceDir(cfg, agentID)
-	bundledDir := skills.ResolveBundledSkillsDir("")
-	entries := skills.LoadSkillEntries(workspaceDir, "", bundledDir, cfg)
-
-	if len(entries) == 0 {
-		ctx.Respond(true, map[string]interface{}{
-			"indexed": 0, "skipped": 0, "errors": []string{},
-		}, nil)
-		return
-	}
-
-	// 获取可选的 VectorIndex（用于 Qdrant 索引）
-	var vectorIndex uhms.VectorIndex
-	if mgr := ctx.Context.UHMSManager; mgr != nil {
-		vectorIndex = mgr.VectorIdx()
-	}
-
-	result, err := skills.DistributeSkills(context.Background(), vfs, vectorIndex, entries)
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "distribute failed: "+err.Error()))
-		return
-	}
-
-	// 更新 Boot 文件: 标记技能已分级
-	if mgr := ctx.Context.UHMSManager; mgr != nil {
-		bootPath := mgr.BootFilePath()
-		if bootPath != "" {
-			categories := skills.CollectDistributedCategories(entries)
-			bootInfo := uhms.BootSkillsInfo{
-				SourceDir:        "docs/skills/",
-				VFSDir:           "_system/skills/",
-				Categories:       categories,
-				TotalCount:       result.Indexed + result.Skipped,
-				Indexed:          true,
-				QdrantCollection: "sys_skills",
-			}
-			if updateErr := uhms.UpdateBootSkillsInfo(bootPath, bootInfo); updateErr != nil {
-				slog.Warn("skills.distribute: failed to update boot file (non-fatal)", "error", updateErr)
-			}
-		}
-	}
-
-	ctx.Respond(true, map[string]interface{}{
-		"indexed":  result.Indexed,
-		"skipped":  result.Skipped,
-		"errors":   result.Errors,
-		"duration": result.Duration.String(),
 	}, nil)
 }
 

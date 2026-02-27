@@ -1,231 +1,160 @@
-/**
- * subagents.ts — 子智能体管理视图
- *
- * 提供视觉智能体（Argus Screen Observer）和编程智能体（oa-coder）的
- * 前端管理界面：开关、频率、VLA 模型选择、状态显示。
- */
-import { html, type TemplateResult } from "lit";
-import type { OpenAcosmiApp } from "../app.ts";
+import { html, nothing } from "lit";
 import { t } from "../i18n.ts";
+import type { SubAgentEntry, SubAgentsState } from "../controllers/subagents.ts";
 
-// ---------- 类型 ----------
+// ---------- SubAgents View ----------
 
-interface SubAgentState {
-    screenObserver: {
-        enabled: boolean;
-        intervalMs: number;
-        vlaModel: string;
-        status: "running" | "paused" | "error" | "stopped";
-        frameCount: number;
-        lastFrameAgo: string;
-    };
-    coder: {
-        enabled: boolean;
-        status: "connected" | "disconnected" | "error";
-    };
-}
-
-// ---------- 默认状态 ----------
-
-const defaultState: SubAgentState = {
-    screenObserver: {
-        enabled: false,
-        intervalMs: 1000,
-        vlaModel: "none",
-        status: "stopped",
-        frameCount: 0,
-        lastFrameAgo: "-",
-    },
-    coder: {
-        enabled: false,
-        status: "disconnected",
-    },
+export type SubAgentsProps = {
+    loading: boolean;
+    agents: SubAgentEntry[];
+    error: string | null;
+    busyKey: string | null;
+    onToggle: (agentId: string, enabled: boolean) => void;
+    onSetInterval: (agentId: string, ms: number) => void;
+    onSetGoal: (agentId: string, goal: string) => void;
+    onSetModel: (agentId: string, model: string) => void;
+    onRefresh: () => void;
 };
 
-// 频率选项
-const intervalOptions = [
-    { label: "0.2s (5fps)", value: 200 },
-    { label: "0.5s (2fps)", value: 500 },
-    { label: "1s (1fps)", value: 1000 },
-    { label: "2s", value: 2000 },
-    { label: "5s", value: 5000 },
+const VLA_MODELS = [
+    { value: "none", label: "None (Screenshot Only)" },
+    { value: "anthropic", label: "Claude Vision" },
+    { value: "gemini", label: "Gemini Flash" },
+    { value: "qwen", label: "Qwen VL" },
+    { value: "ollama", label: "Ollama (Local)" },
 ];
 
-// VLA 模型选项
-const vlaModelOptions = [
-    { label: t("subagents.model.none"), value: "none" },
-    { label: "Anthropic Vision", value: "anthropic" },
-    { label: "ShowUI-2B", value: "showui-2b" },
-    { label: "OpenCUA-7B", value: "opencua-7b" },
-];
-
-// ---------- 渲染 ----------
-
-export function renderSubAgents(app: OpenAcosmiApp): TemplateResult {
-    const state = (app as any)._subAgentState ?? defaultState;
-
+export function renderSubAgents(props: SubAgentsProps) {
     return html`
-    <div class="view-container subagents-view">
-      <div class="view-header">
-        <h2>${t("subagents.title")}</h2>
-        <p class="view-subtitle">${t("subagents.sub")}</p>
+    <section class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div>
+          <div class="card-title">${t("subagents.title")}</div>
+          <div class="card-sub">${t("subagents.subtitle")}</div>
+        </div>
+        <div class="row" style="gap: 8px;">
+          <button class="btn" ?disabled=${props.loading} @click=${props.onRefresh}>
+            ${props.loading ? t("common.loading") : t("common.refresh")}
+          </button>
+        </div>
       </div>
 
-      <div class="subagents-grid">
-        ${renderScreenObserver(app, state.screenObserver)}
-        ${renderCoder(app, state.coder)}
+      ${props.error
+            ? html`<div class="callout danger" style="margin-top: 12px;">${props.error}</div>`
+            : nothing}
+
+      <div class="subagents-list" style="margin-top: 16px;">
+        ${props.agents.length === 0
+            ? html`<div class="muted">${t("subagents.empty")}</div>`
+            : props.agents.map((agent) => renderSubAgentCard(agent, props))}
       </div>
-    </div>
+    </section>
   `;
 }
 
-function renderScreenObserver(
-    app: OpenAcosmiApp,
-    obs: SubAgentState["screenObserver"],
-): TemplateResult {
-    const statusColor =
-        obs.status === "running"
-            ? "var(--color-success)"
-            : obs.status === "error"
-                ? "var(--color-error)"
-                : "var(--color-muted)";
+function renderSubAgentCard(agent: SubAgentEntry, props: SubAgentsProps) {
+    const busy = props.busyKey === agent.id;
+    const statusClass =
+        agent.status === "running"
+            ? "chip-ok"
+            : agent.status === "error"
+                ? "chip-danger"
+                : "chip-muted";
+    const statusLabel =
+        agent.status === "running"
+            ? t("subagents.status.running")
+            : agent.status === "error"
+                ? t("subagents.status.error")
+                : t("subagents.status.stopped");
 
     return html`
     <div class="subagent-card">
-      <div class="subagent-card__header">
-        <span class="subagent-card__indicator" style="background:${statusColor}"></span>
-        <h3>${t("subagents.vision.title")}</h3>
-        <span class="subagent-card__status">${t(`subagents.status.${obs.status}`)}</span>
+      <div class="subagent-header">
+        <div class="subagent-info">
+          <span class="subagent-icon">${agent.id === "argus-screen" ? "👁" : "🔧"}</span>
+          <div>
+            <div class="subagent-name">${agent.label}</div>
+            <div class="subagent-id muted">${agent.id}</div>
+          </div>
+        </div>
+        <div class="row" style="gap: 8px; align-items: center;">
+          <span class="chip ${statusClass}">${statusLabel}</span>
+          <button
+            class="btn ${agent.enabled ? "" : "primary"}"
+            ?disabled=${busy}
+            @click=${() => props.onToggle(agent.id, !agent.enabled)}
+          >
+            ${busy
+            ? t("common.loading")
+            : agent.enabled
+                ? t("subagents.disable")
+                : t("subagents.enable")}
+          </button>
+        </div>
       </div>
 
-      <div class="subagent-card__body">
-        <!-- 开关 -->
-        <div class="subagent-row">
-          <label>${t("subagents.enable")}</label>
-          <label class="toggle">
-            <input
-              type="checkbox"
-              .checked=${obs.enabled}
-              @change=${(e: Event) => {
-            const checked = (e.target as HTMLInputElement).checked;
-            sendSubAgentCtl(app, "argus-screen", "set_enabled", checked);
-        }}
-            />
-            <span class="toggle__slider"></span>
-          </label>
-        </div>
+      ${agent.id === "argus-screen"
+            ? html`
+            <div class="subagent-controls">
+              <label class="field">
+                <span>${t("subagents.model")}</span>
+                <select
+                  .value=${agent.model}
+                  @change=${(e: Event) =>
+                    props.onSetModel(agent.id, (e.target as HTMLSelectElement).value)}
+                  ?disabled=${busy}
+                >
+                  ${VLA_MODELS.map(
+                        (m) => html`
+                      <option value=${m.value} ?selected=${m.value === agent.model}>
+                        ${m.label}
+                      </option>
+                    `,
+                    )}
+                </select>
+              </label>
 
-        <!-- 频率 -->
-        <div class="subagent-row">
-          <label>${t("subagents.interval")}</label>
-          <select
-            @change=${(e: Event) => {
-            const val = parseInt((e.target as HTMLSelectElement).value, 10);
-            sendSubAgentCtl(app, "argus-screen", "set_interval_ms", val);
-        }}
-          >
-            ${intervalOptions.map(
-            (opt) => html`
-                <option value=${opt.value} ?selected=${opt.value === obs.intervalMs}>
-                  ${opt.label}
-                </option>
-              `,
-        )}
-          </select>
-        </div>
+              <label class="field">
+                <span>${t("subagents.interval")}</span>
+                <div class="row" style="gap: 8px; align-items: center;">
+                  <input
+                    type="range"
+                    min="200"
+                    max="5000"
+                    step="100"
+                    .value=${String(agent.intervalMs)}
+                    @change=${(e: Event) =>
+                    props.onSetInterval(
+                        agent.id,
+                        parseInt((e.target as HTMLInputElement).value, 10),
+                    )}
+                    ?disabled=${busy}
+                    style="flex: 1;"
+                  />
+                  <span class="muted" style="min-width: 50px; text-align: right;"
+                    >${agent.intervalMs}ms</span
+                  >
+                </div>
+              </label>
 
-        <!-- VLA 模型 -->
-        <div class="subagent-row">
-          <label>${t("subagents.vlaModel")}</label>
-          <select
-            @change=${(e: Event) => {
-            const val = (e.target as HTMLSelectElement).value;
-            sendSubAgentCtl(app, "argus-screen", "set_vla_model", val);
-        }}
-          >
-            ${vlaModelOptions.map(
-            (opt) => html`
-                <option value=${opt.value} ?selected=${opt.value === obs.vlaModel}>
-                  ${opt.label}
-                </option>
-              `,
-        )}
-          </select>
-        </div>
+              <label class="field">
+                <span>${t("subagents.goal")}</span>
+                <input
+                  type="text"
+                  .value=${agent.goal}
+                  @change=${(e: Event) =>
+                    props.onSetGoal(agent.id, (e.target as HTMLInputElement).value)}
+                  ?disabled=${busy}
+                  placeholder=${t("subagents.goalPlaceholder")}
+                />
+              </label>
+            </div>
+          `
+            : nothing}
 
-        <!-- 统计 -->
-        <div class="subagent-row subagent-row--stats">
-          <span>${t("subagents.frames")}: ${obs.frameCount}</span>
-          <span>${t("subagents.lastFrame")}: ${obs.lastFrameAgo}</span>
-        </div>
-      </div>
+      ${agent.error
+            ? html`<div class="callout danger" style="margin-top: 8px;">${agent.error}</div>`
+            : nothing}
     </div>
   `;
-}
-
-function renderCoder(
-    app: OpenAcosmiApp,
-    coder: SubAgentState["coder"],
-): TemplateResult {
-    const statusColor =
-        coder.status === "connected"
-            ? "var(--color-success)"
-            : coder.status === "error"
-                ? "var(--color-error)"
-                : "var(--color-muted)";
-
-    return html`
-    <div class="subagent-card">
-      <div class="subagent-card__header">
-        <span class="subagent-card__indicator" style="background:${statusColor}"></span>
-        <h3>${t("subagents.coder.title")}</h3>
-        <span class="subagent-card__status">${t(`subagents.status.${coder.status}`)}</span>
-      </div>
-
-      <div class="subagent-card__body">
-        <div class="subagent-row">
-          <label>${t("subagents.enable")}</label>
-          <label class="toggle">
-            <input
-              type="checkbox"
-              .checked=${coder.enabled}
-              @change=${(e: Event) => {
-            const checked = (e.target as HTMLInputElement).checked;
-            sendSubAgentCtl(app, "oa-coder", "set_enabled", checked);
-        }}
-            />
-            <span class="toggle__slider"></span>
-          </label>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-// ---------- WS 控制命令 ----------
-
-function sendSubAgentCtl(
-    app: OpenAcosmiApp,
-    agentId: string,
-    action: string,
-    value: unknown,
-): void {
-    const gw = (app as any).gateway;
-    if (gw?.send) {
-        gw.send(
-            JSON.stringify({
-                type: "subagent_ctl",
-                payload: { agent_id: agentId, action, value },
-            }),
-        );
-    }
-}
-
-// ---------- 加载 ----------
-
-export function loadSubAgents(app: OpenAcosmiApp): void {
-    // 初始状态（后续通过 WS 事件实时更新）
-    if (!(app as any)._subAgentState) {
-        (app as any)._subAgentState = { ...defaultState };
-    }
 }

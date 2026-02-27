@@ -3,12 +3,11 @@ package gateway
 // server_methods_uhms.go — memory.uhms.* RPC 方法
 //
 // 静态方法:
-//   memory.uhms.status          — UHMS 子系统状态
-//   memory.uhms.search          — 手动搜索记忆
-//   memory.uhms.add             — 手动添加记忆
-//   memory.uhms.llm.get         — 获取 UHMS LLM 配置
-//   memory.uhms.llm.set         — 设置 UHMS 独立 LLM 配置
-//   skills.distribution.status  — 技能分级状态查询
+//   memory.uhms.status    — UHMS 子系统状态
+//   memory.uhms.search    — 手动搜索记忆
+//   memory.uhms.add       — 手动添加记忆
+//   memory.uhms.llm.get   — 获取 UHMS LLM 配置
+//   memory.uhms.llm.set   — 设置 UHMS 独立 LLM 配置
 
 import (
 	"context"
@@ -19,15 +18,14 @@ import (
 	"github.com/anthropic/open-acosmi/pkg/types"
 )
 
-// UHMSHandlers 返回 memory.uhms.* 和 skills.distribution.status 方法映射。
+// UHMSHandlers 返回 memory.uhms.* 静态方法映射。
 func UHMSHandlers() map[string]GatewayMethodHandler {
 	return map[string]GatewayMethodHandler{
-		"memory.uhms.status":         handleUHMSStatus,
-		"memory.uhms.search":         handleUHMSSearch,
-		"memory.uhms.add":            handleUHMSAdd,
-		"memory.uhms.llm.get":        handleUHMSLLMGet,
-		"memory.uhms.llm.set":        handleUHMSLLMSet,
-		"skills.distribution.status": handleSkillsDistributionStatus,
+		"memory.uhms.status":  handleUHMSStatus,
+		"memory.uhms.search":  handleUHMSSearch,
+		"memory.uhms.add":     handleUHMSAdd,
+		"memory.uhms.llm.get": handleUHMSLLMGet,
+		"memory.uhms.llm.set": handleUHMSLLMSet,
 	}
 }
 
@@ -390,46 +388,5 @@ func handleUHMSLLMSet(ctx *MethodHandlerContext) {
 		"saved":    true,
 		"provider": finalProvider,
 		"model":    finalModel,
-	}, nil)
-}
-
-// ---------- skills.distribution.status ----------
-
-// handleSkillsDistributionStatus 返回当前技能分级状态。
-func handleSkillsDistributionStatus(ctx *MethodHandlerContext) {
-	mgr := ctx.Context.UHMSManager
-	if mgr == nil {
-		ctx.Respond(true, map[string]interface{}{
-			"enabled": false,
-			"indexed": false,
-		}, nil)
-		return
-	}
-
-	status := mgr.SystemDistributionStatus("sys_skills")
-	var lastIndexedAt string
-	var totalCount int
-
-	// 从 boot.json 读取更精确的状态（如果 BootManager 可用）
-	if bp := mgr.BootFilePath(); bp != "" {
-		bootMgr := uhms.NewBootManager(bp)
-		if boot, ok := bootMgr.Load(); ok {
-			if boot.SystemMap.Skills.Indexed {
-				lastIndexedAt = boot.SystemMap.Skills.LastIndexedAt.Format("2006-01-02T15:04:05Z07:00")
-				totalCount = boot.SystemMap.Skills.TotalCount
-			}
-		}
-	}
-	if totalCount == 0 {
-		totalCount = status.TotalEntries
-	}
-
-	ctx.Respond(true, map[string]interface{}{
-		"enabled":       true,
-		"indexed":       status.Indexed,
-		"totalCount":    totalCount,
-		"lastIndexedAt": lastIndexedAt,
-		"vfsDir":        "_system/skills/",
-		"collection":    "sys_skills",
 	}, nil)
 }

@@ -1,29 +1,11 @@
 ---
 document_type: Tracking
-status: Auditing
+status: In Progress
 created: 2026-02-27
 last_updated: 2026-02-27
-audit_report: docs/claude/audit/audit-2026-02-27-global-boot-skill-vfs.md
-skill5_verified: true
+audit_report: Pending
+skill5_verified: false
 ---
-
-## 实施进度摘要（2026-02-27）
-
-| 阶段 | 状态 | 说明 |
-|------|------|------|
-| P0.1 VFS `_system/` 命名空间 | ✅ 已完成 | 大部分已有实现；补充了 `SystemEntryHash`、`relativeSystemPath`、`_system` 保护 |
-| P0.2 BootManager | ✅ 已完成（预有） | `boot.go` + `BootManager` 全部方法均已存在 |
-| P0.3 Config 扩展 | ✅ 已完成（预有） | `BootFilePath`、`SkillsVFSDistribution`、`ResolvedBootFilePath` 均已存在 |
-| P0.4 Manager 系统检索接口 | ✅ 已完成 | 新增 `SystemHit`、`SystemDistStatus` 类型；实现 `SearchSystem`（带 VFS 回退）、`ReadSystemL0/L1/L2`、`SystemDistributionStatus` |
-| P0.5 VectorAdapter sys_* collections | ✅ 已完成（预有） | `UpsertPayload`、`SearchByPayload`、`sys_skills/plugins/sessions` 均已实现 |
-| P1.1 SkillDistributor | ✅ 已完成（预有+扩展） | 预有实现；补充 `SkillDistributor` 类型（含 BootManager 集成）、`Updated`/`Failed` 字段 |
-| P1.2 skills.distribute RPC | ✅ 已完成（预有） | `server_methods_skills.go` 已有完整实现；新增 `skills.distribution.status` RPC |
-| P1.3 attempt_runner Boot 模式 | ✅ 已完成（预有） | `SkillVFSBridgeForAgent`、`SkillVFSBridge`、Boot 模式分支均已存在 |
-| P1.4 workspace_skills Boot 分支 | ⬜ 预留 | 当前无 Boot 模式加载（`SkillVFSBridge` 已在 runner 层实现，此项优先级降低） |
-| P1.5 types.ts SkillStatusEntry | ✅ 已完成（预有） | `distributed`、`distributedAt` 字段已存在 |
-| P1.6 views/skills.ts UI | ✅ 已完成（预有） | 分级按钮、角标、distributeLoading/Result 均已实现 |
-| P1.7 controllers/skills.ts | ✅ 已完成（预有） | `distributeSkills()`、状态字段均已实现 |
-| Phase 2/3 | ⬜ 待实施 | 插件/会话收录（延后） |
 
 # 全局 Boot 启动 + Qdrant 按需检索提取 + VFS 分级按需加载 — 实施跟踪
 
@@ -180,11 +162,11 @@ if userID == "_system" {
 }
 ```
 
-- [x] 实现 `WriteSystemEntry`（预有）
-- [x] 实现 `ListSystemEntries`（预有，返回 `[]SystemEntryRef`）
-- [x] 实现 `SystemEntryExists`（预有）
-- [x] 实现 `SystemEntryHash`（新增）
-- [x] 在 `WriteMemory`/`WriteArchive` 入口加 `_system` 保护（新增）
+- [ ] 实现 `WriteSystemEntry`
+- [ ] 实现 `ListSystemEntries`
+- [ ] 实现 `SystemEntryExists`（读 meta.json 判断）
+- [ ] 实现 `SystemEntryHash`（读 meta.json content_hash）
+- [ ] 在 `WriteMemory`/`WriteArchive` 入口加 `_system` 保护
 - [ ] 单元测试: 写入/读取/列举 _system 条目
 
 ---
@@ -340,11 +322,11 @@ func defaultBootFilePath() string {
 }
 ```
 
-- [x] 添加 `BootFilePath` 字段（预有）
-- [x] 添加 `SkillsVFSDistribution` 字段（预有）
-- [x] 实现 `ResolvedBootFilePath()`（预有）
-- [x] 实现 `defaultBootFilePath()`（预有）
-- [x] 更新 `DefaultUHMSConfig()` 默认值（预有）
+- [ ] 添加 `BootFilePath` 字段
+- [ ] 添加 `SkillsVFSDistribution` 字段
+- [ ] 实现 `ResolvedBootFilePath()`
+- [ ] 实现 `defaultBootFilePath()`
+- [ ] 更新 `DefaultUHMSConfig()` 默认值
 
 ---
 
@@ -419,11 +401,11 @@ func (m *DefaultManager) SystemDistributionStatus(collection string) SystemDistS
   3. VFS meta.json 扫描（兜底，O(n) 但只有 69-500 条）
 ```
 
-- [x] 定义 `SystemHit`/`SystemDistStatus` 类型（新增；`IndexSystemEntry` 预有）
-- [x] 实现 `IndexSystemEntry`（预有，via UpsertPayload 接口）
-- [x] 实现 `SearchSystem`（新增，Qdrant + VFS meta.json 双重降级）
-- [x] 实现 `ReadSystemL0/L1/L2`（新增，复用 `vfs.ReadByVFSPath`）
-- [x] 实现 `SystemDistributionStatus`（新增）
+- [ ] 定义 `SystemHit`/`SystemIndexEntry` 类型
+- [ ] 实现 `IndexSystemEntry`
+- [ ] 实现 `SearchSystem`（三级降级策略）
+- [ ] 实现 `ReadSystemL0/L1/L2`（复用 `vfs.ReadByVFSPath`）
+- [ ] 实现 `SystemDistributionStatus`
 - [ ] 单元测试: IndexSystemEntry + SearchSystem 关键词匹配
 
 ---

@@ -16,7 +16,6 @@ import { initCodeBlockCopyListeners } from "../chat/code-block-actions.ts";
 import { icons } from "../icons.ts";
 import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
 import { renderPermissionPopup, type PermissionPopupCallbacks } from "./permission-popup.ts";
-import { renderErrorToast } from "./error-toast.ts";
 import "../components/resizable-divider.ts";
 
 export type CompactionIndicatorStatus = {
@@ -390,14 +389,6 @@ export function renderChat(props: ChatProps) {
   return html`
     <section class="card chat">
       ${props.disabledReason ? html`<div class="callout">${props.disabledReason}</div>` : nothing}
-
-
-
-      ${renderErrorToast(
-    props.error,
-    () => props.onDismissError?.(),
-    props.requestUpdate,
-  )}
 
       ${props.focusMode
       ? html`

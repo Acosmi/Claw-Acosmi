@@ -23,10 +23,9 @@ type ChannelLogoutFunc func(channelID, accountID string) (map[string]interface{}
 // ChannelsHandlers 返回 channels.* 方法处理器映射。
 func ChannelsHandlers() map[string]GatewayMethodHandler {
 	return map[string]GatewayMethodHandler{
-		"channels.status":     handleChannelsStatus,
-		"channels.logout":     handleChannelsLogout,
-		"channels.save":       handleChannelsSave,
-		"channels.distribute": handleChannelsDistribute,
+		"channels.status": handleChannelsStatus,
+		"channels.logout": handleChannelsLogout,
+		"channels.save":   handleChannelsSave,
 	}
 }
 
@@ -321,29 +320,6 @@ func handleChannelsLogout(ctx *MethodHandlerContext) {
 	}
 
 	ctx.Respond(true, payload, nil)
-}
-
-// ---------- channels.distribute ----------
-// 将所有频道元数据写入 VFS _system/plugins/ 命名空间。
-
-func handleChannelsDistribute(ctx *MethodHandlerContext) {
-	vfs := ctx.Context.UHMSVFS()
-	if vfs == nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeServiceUnavailable, "UHMS VFS not available"))
-		return
-	}
-
-	result, err := channels.DistributeChannels(vfs)
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "channel distribute failed: "+err.Error()))
-		return
-	}
-
-	ctx.Respond(true, map[string]interface{}{
-		"indexed":  result.Indexed,
-		"skipped":  result.Skipped,
-		"duration": result.Duration.String(),
-	}, nil)
 }
 
 // normalizeChannelID 规范化频道 ID。

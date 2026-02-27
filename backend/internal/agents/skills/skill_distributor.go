@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,70 +20,9 @@ import (
 // SkillDistributeResult 技能分级结果。
 type SkillDistributeResult struct {
 	Indexed  int           `json:"indexed"`
-	Updated  int           `json:"updated"`
 	Skipped  int           `json:"skipped"`
-	Failed   int           `json:"failed"`
 	Errors   []string      `json:"errors,omitempty"`
 	Duration time.Duration `json:"duration"`
-}
-
-// ============================================================================
-// SkillDistributor — 带 BootManager 的高层分级器
-// ============================================================================
-
-// SkillDistributor 将技能条目写入 VFS _system/skills/ 并更新 boot.json。
-type SkillDistributor struct {
-	vfs         uhms.VFS
-	manager     *uhms.DefaultManager // 可选, 用于 sys_skills payload 索引
-	bootManager *uhms.BootManager    // 可选, 用于更新 boot.json
-}
-
-// NewSkillDistributor 创建 SkillDistributor。
-// manager 和 bootManager 均可为 nil（降级为纯 VFS 写入）。
-func NewSkillDistributor(vfs uhms.VFS, mgr *uhms.DefaultManager, boot *uhms.BootManager) *SkillDistributor {
-	return &SkillDistributor{vfs: vfs, manager: mgr, bootManager: boot}
-}
-
-// Distribute 执行分级并更新 boot.json。
-func (d *SkillDistributor) Distribute(ctx context.Context, entries []SkillEntry) (*SkillDistributeResult, error) {
-	var vi uhms.VectorIndex
-	result, err := DistributeSkills(ctx, d.vfs, vi, entries)
-	if err != nil {
-		return result, err
-	}
-
-	// 使用 DefaultManager.IndexSystemEntry 建立 payload 索引（UpsertPayload 路径，正确零向量）
-	if d.manager != nil {
-		for _, entry := range entries {
-			if err := ctx.Err(); err != nil {
-				break
-			}
-			category := ResolveSkillCategory(entry)
-			name := entry.Skill.Name
-			tags := extractTags(entry.Skill.Content)
-			vfsPath := filepath.Join("_system", "skills", category, name)
-			payload := map[string]interface{}{
-				"name":        name,
-				"category":    category,
-				"description": entry.Skill.Description,
-				"tags":        tags,
-				"vfs_path":    vfsPath,
-			}
-			if ierr := d.manager.IndexSystemEntry(ctx, "sys_skills", deterministicSkillID(name), payload); ierr != nil {
-				slog.Debug("skills/distributor: payload index skipped", "name", name, "err", ierr)
-			}
-		}
-	}
-
-	// 更新 boot.json
-	if d.bootManager != nil {
-		total := result.Indexed + result.Updated + result.Skipped
-		if merr := d.bootManager.MarkSkillsIndexed(total); merr != nil {
-			slog.Warn("skills/distributor: failed to mark skills indexed", "err", merr)
-		}
-	}
-
-	return result, nil
 }
 
 // DistributeSkills 将技能解析为 L0/L1/L2 写入 VFS，并在 Qdrant 中建立索引。

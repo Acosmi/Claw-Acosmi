@@ -39,11 +39,6 @@ type ArgusToolDef struct {
 type ArgusBridgeForAgent interface {
 	AgentTools() []ArgusToolDef
 	AgentCallTool(ctx context.Context, name string, args json.RawMessage, timeout time.Duration) (string, error)
-	// ObservationBuffer 返回视觉观察缓冲区（方案 C）。
-	// 返回 interface{} 以避免 runner→argus 的直接包依赖。
-	// 调用方使用类型断言获取 *argus.ObservationBuffer。
-	// 未初始化时返回 nil。
-	ObservationBuffer() interface{}
 }
 
 // CoderBridgeForAgent 编程子智能体接口。
@@ -78,69 +73,6 @@ const (
 	maxConsecutivePermDeniedRounds = 3
 )
 
-// SkillVFSBridgeForAgent 技能 VFS 检索接口（agent 侧）。
-// 使用 runner 本地类型避免 uhms 包直接依赖。
-// Boot 模式下代替 skillsCache，通过 Qdrant/VFS 按需加载技能。
-type SkillVFSBridgeForAgent interface {
-	// IsReady 返回技能是否已分级入库（VFS _system/skills/ 可用）。
-	IsReady() bool
-
-	// SearchSkills 检索匹配 query 的技能 L0 摘要列表。
-	// 返回格式: []SkillSearchHit{ Name, Category, Description, L0 }
-	SearchSkills(ctx context.Context, query string, topK int) ([]SkillSearchHit, error)
-
-	// ReadSkillL1 读取技能 L1 概览 (~2K tokens)。
-	ReadSkillL1(category, name string) (string, error)
-
-	// ReadSkillL2 读取技能 L2 完整内容。
-	ReadSkillL2(category, name string) (string, error)
-
-	// ReadSkillMeta 读取技能元数据。
-	ReadSkillMeta(category, name string) (map[string]interface{}, error)
-
-	// AllSkillL0Summaries 返回所有已分级技能的 L0 摘要（用于 search guide 构建）。
-	AllSkillL0Summaries() []SkillSearchHit
-}
-
-// SkillSearchHit 技能搜索结果。
-type SkillSearchHit struct {
-	Name        string `json:"name"`
-	Category    string `json:"category"`
-	Description string `json:"description"`
-	L0          string `json:"l0"`
-}
-
-// SessionArchiveBridgeForAgent 会话归档检索接口（agent 侧）。
-// Boot 模式下使用 Qdrant/VFS 检索历史会话摘要。
-type SessionArchiveBridgeForAgent interface {
-	// SearchSessions 检索匹配 query 的历史会话摘要。
-	SearchSessions(ctx context.Context, query string, topK int) ([]SessionSearchHit, error)
-	// ReadSessionL1 读取会话 L1 概览。
-	ReadSessionL1(userID, sessionKey string) (string, error)
-}
-
-// SessionSearchHit 会话搜索结果。
-type SessionSearchHit struct {
-	SessionKey string `json:"session_key"`
-	L0Summary  string `json:"l0_summary"`
-	CreatedAt  string `json:"created_at,omitempty"`
-}
-
-// ChannelSearchHit 频道/插件搜索结果。
-type ChannelSearchHit struct {
-	Name  string `json:"name"`
-	Label string `json:"label"`
-	L0    string `json:"l0"`
-}
-
-// ChannelVFSBridgeForAgent 频道/插件 VFS 检索接口（agent 侧）。
-type ChannelVFSBridgeForAgent interface {
-	// SearchChannels 检索匹配 query 的频道 L0 摘要。
-	SearchChannels(ctx context.Context, query string, topK int) ([]ChannelSearchHit, error)
-	// ReadChannelL1 读取频道 L1 概览。
-	ReadChannelL1(channelID string) (string, error)
-}
-
 // UHMSBridgeForAgent UHMS 记忆系统接口（agent 侧）。
 // 使用 runner 本地类型避免 uhms 包直接依赖。
 type UHMSBridgeForAgent interface {
@@ -157,23 +89,18 @@ type UHMSBridgeForAgent interface {
 // EmbeddedAttemptRunner 真实的 AttemptRunner 实现。
 // 负责构建消息、调用 LLM API、执行工具循环、返回结果。
 type EmbeddedAttemptRunner struct {
-	Config               *types.OpenAcosmiConfig
-	AuthStore            AuthProfileStore
-	ArgusBridge          ArgusBridgeForAgent          // 可选，nil = Argus 不可用
-	CoderBridge          CoderBridgeForAgent          // 可选，nil = Coder 不可用
-	RemoteMCPBridge      RemoteMCPBridgeForAgent      // 可选，nil = 远程 MCP 工具不可用
-	NativeSandbox        NativeSandboxForAgent        // 可选，nil = 使用 Docker fallback
-	UHMSBridge           UHMSBridgeForAgent           // 可选，nil = UHMS 记忆系统不可用
-	SkillVFSBridge       SkillVFSBridgeForAgent       // 可选，nil = VFS 技能检索不可用
-	ChannelVFSBridge     ChannelVFSBridgeForAgent     // 可选，nil = 频道 VFS 检索不可用
-	SessionArchiveBridge SessionArchiveBridgeForAgent // 可选，nil = 会话归档检索不可用
-	CoderConfirmation    *CoderConfirmationManager    // 可选，nil = coder 工具不需要确认
+	Config            *types.OpenAcosmiConfig
+	AuthStore         AuthProfileStore
+	ArgusBridge       ArgusBridgeForAgent       // 可选，nil = Argus 不可用
+	CoderBridge       CoderBridgeForAgent       // 可选，nil = Coder 不可用
+	RemoteMCPBridge   RemoteMCPBridgeForAgent   // 可选，nil = 远程 MCP 工具不可用
+	NativeSandbox     NativeSandboxForAgent     // 可选，nil = 使用 Docker fallback
+	UHMSBridge        UHMSBridgeForAgent        // 可选，nil = UHMS 记忆系统不可用
+	CoderConfirmation *CoderConfirmationManager // 可选，nil = coder 工具不需要确认
 
 	// skillsCache 按需加载缓存: skill name → full SKILL.md content
 	// 在 buildSystemPrompt 中填充，在 lookup_skill 工具调用时读取
 	skillsCache map[string]string
-	// bootMode 标记是否使用 VFS Boot 模式（技能已分级入库）
-	bootMode bool
 }
 
 // RunAttempt 实现 AttemptRunner 接口。
@@ -350,25 +277,22 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 			}
 
 			output, toolErr := ExecuteToolCall(ctx, tc.Name, tc.Input, ToolExecParams{
-				WorkspaceDir:         params.WorkspaceDir,
-				TimeoutMs:            params.TimeoutMs,
-				AllowWrite:           secLvl == "full" || secLvl == "allowlist", // L1 沙箱内允许写入
-				AllowExec:            secLvl == "full" || secLvl == "allowlist",
-				SandboxMode:          secLvl == "allowlist",
-				Rules:                resolveCommandRules(),
-				SecurityLevel:        secLvl,
-				OnPermissionDenied:   params.OnPermissionDenied,
-				ArgusBridge:          r.ArgusBridge,
-				CoderBridge:          r.CoderBridge,
-				CoderTimeoutSeconds:  resolveCoderTimeoutSeconds(r.Config),
-				CoderConfirmation:    r.CoderConfirmation,
-				RemoteMCPBridge:      r.RemoteMCPBridge,
-				NativeSandbox:        r.NativeSandbox,
-				SkillsCache:          r.skillsCache,
-				SkillVFSBridge:       r.SkillVFSBridge,
-				ChannelVFSBridge:     r.ChannelVFSBridge,
-				SessionArchiveBridge: r.SessionArchiveBridge,
-				UHMSBridge:           r.UHMSBridge,
+				WorkspaceDir:        params.WorkspaceDir,
+				TimeoutMs:           params.TimeoutMs,
+				AllowWrite:          secLvl == "full" || secLvl == "allowlist", // L1 沙箱内允许写入
+				AllowExec:           secLvl == "full" || secLvl == "allowlist",
+				SandboxMode:         secLvl == "allowlist",
+				Rules:               resolveCommandRules(),
+				SecurityLevel:       secLvl,
+				OnPermissionDenied:  params.OnPermissionDenied,
+				ArgusBridge:         r.ArgusBridge,
+				CoderBridge:         r.CoderBridge,
+				CoderTimeoutSeconds: resolveCoderTimeoutSeconds(r.Config),
+				CoderConfirmation:   r.CoderConfirmation,
+				RemoteMCPBridge:     r.RemoteMCPBridge,
+				NativeSandbox:       r.NativeSandbox,
+				SkillsCache:         r.skillsCache,
+				UHMSBridge:          r.UHMSBridge,
 			})
 
 			isError := false
@@ -439,25 +363,22 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 							secLvl = params.SecurityLevelFunc()
 						}
 						output, toolErr := ExecuteToolCall(ctx, tc.Name, tc.Input, ToolExecParams{
-							WorkspaceDir:         params.WorkspaceDir,
-							TimeoutMs:            params.TimeoutMs,
-							AllowWrite:           secLvl == "full" || secLvl == "allowlist", // L1 沙箱内允许写入
-							AllowExec:            secLvl == "full" || secLvl == "allowlist",
-							SandboxMode:          secLvl == "allowlist",
-							Rules:                resolveCommandRules(),
-							SecurityLevel:        secLvl,
-							OnPermissionDenied:   params.OnPermissionDenied,
-							ArgusBridge:          r.ArgusBridge,
-							CoderBridge:          r.CoderBridge,
-							CoderTimeoutSeconds:  resolveCoderTimeoutSeconds(r.Config),
-							CoderConfirmation:    r.CoderConfirmation,
-							RemoteMCPBridge:      r.RemoteMCPBridge,
-							NativeSandbox:        r.NativeSandbox,
-							SkillsCache:          r.skillsCache,
-							SkillVFSBridge:       r.SkillVFSBridge,
-							ChannelVFSBridge:     r.ChannelVFSBridge,
-							SessionArchiveBridge: r.SessionArchiveBridge,
-							UHMSBridge:           r.UHMSBridge,
+							WorkspaceDir:        params.WorkspaceDir,
+							TimeoutMs:           params.TimeoutMs,
+							AllowWrite:          secLvl == "full" || secLvl == "allowlist", // L1 沙箱内允许写入
+							AllowExec:           secLvl == "full" || secLvl == "allowlist",
+							SandboxMode:         secLvl == "allowlist",
+							Rules:               resolveCommandRules(),
+							SecurityLevel:       secLvl,
+							OnPermissionDenied:  params.OnPermissionDenied,
+							ArgusBridge:         r.ArgusBridge,
+							CoderBridge:         r.CoderBridge,
+							CoderTimeoutSeconds: resolveCoderTimeoutSeconds(r.Config),
+							CoderConfirmation:   r.CoderConfirmation,
+							RemoteMCPBridge:     r.RemoteMCPBridge,
+							NativeSandbox:       r.NativeSandbox,
+							SkillsCache:         r.skillsCache,
+							UHMSBridge:          r.UHMSBridge,
 						})
 						isError := false
 						if toolErr != nil {
@@ -645,21 +566,9 @@ func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams) string {
 	rt := prompt.DefaultRuntimeInfo()
 	rt.Model = params.Provider + "/" + params.ModelID
 
-	// 构建技能快照 — Boot 模式 vs 传统模式
+	// 构建技能快照 → 按需加载模式: prompt 只放索引，LLM 通过 lookup_skill 获取完整内容
 	skillsPrompt := ""
-	r.bootMode = false
-
-	// Boot 模式: 技能已 VFS 分级入库，用 search_skills + lookup_skill 按需检索
-	if r.SkillVFSBridge != nil && r.SkillVFSBridge.IsReady() {
-		r.bootMode = true
-		r.skillsCache = nil // Boot 模式不需要全量缓存
-
-		hasPlugins := r.ChannelVFSBridge != nil
-		hasSessions := r.SessionArchiveBridge != nil
-		skillsPrompt = buildBootModeSkillsPrompt(hasPlugins, hasSessions)
-		slog.Info("attempt-runner: using Boot mode (VFS skill retrieval)")
-	} else if params.WorkspaceDir != "" {
-		// 传统模式: 全量扫描 + skillsCache
+	if params.WorkspaceDir != "" {
 		bundledDir := skills.ResolveBundledSkillsDir("")
 		snap := skills.BuildWorkspaceSkillSnapshot(skills.BuildSnapshotParams{
 			WorkspaceDir: params.WorkspaceDir,
@@ -693,44 +602,6 @@ func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams) string {
 	return prompt.BuildAgentSystemPrompt(bp)
 }
 
-// buildBootModeSkillsPrompt 生成 Boot 模式的技能提示（固定 ~300 tokens）。
-// 替代全量技能索引，引导 LLM 使用 search_skills + lookup_skill 按需检索。
-func buildBootModeSkillsPrompt(hasPlugins, hasSessions bool) string {
-	base := `<available_skills mode="search">
-Skills are available via on-demand retrieval. Use these tools to find and load skills:
-
-1. search_skills(query) — Search for relevant skills by keyword or task description. Returns skill name + brief summary.
-2. lookup_skill(name, level) — Load skill details. level="overview" for ~2K token summary, level="full" for complete instructions.
-
-Workflow:
-- When a task might benefit from a skill, call search_skills first.
-- Review the summaries, then call lookup_skill on the most relevant one.
-- Follow the skill instructions to complete the task.
-
-Do NOT guess skill names — always search first.`
-
-	if hasPlugins {
-		base += `
-
-3. search_plugins(query) — Search available channel/plugin integrations.`
-	}
-	if hasSessions {
-		base += `
-
-` + fmt.Sprintf("%d", 3+boolToInt(hasPlugins)) + `. search_sessions(query) — Search past conversation archives for context.`
-	}
-
-	base += "\n</available_skills>"
-	return base
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 func (r *EmbeddedAttemptRunner) buildToolDefinitions() []llmclient.ToolDef {
 	tools := []llmclient.ToolDef{
 		{
@@ -755,37 +626,8 @@ func (r *EmbeddedAttemptRunner) buildToolDefinitions() []llmclient.ToolDef {
 		},
 	}
 
-	// 技能工具 — Boot 模式 vs 传统模式
-	if r.bootMode {
-		// Boot 模式: search_skills 检索 + lookup_skill VFS 读取
-		tools = append(tools, llmclient.ToolDef{
-			Name:        "search_skills",
-			Description: "Search available skills by keyword or description. Returns matching skill summaries. Use this to find relevant skills for the current task.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query (keyword, skill name, or task description)"},"top_k":{"type":"number","description":"Max results to return (default 10)"}},"required":["query"]}`),
-		})
-		tools = append(tools, llmclient.ToolDef{
-			Name:        "lookup_skill",
-			Description: "Look up the detailed content of a skill by name. Use after search_skills to get full skill instructions.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"Skill name from search_skills results"},"level":{"type":"string","description":"Detail level: 'overview' (~2K tokens) or 'full' (complete). Default: overview","enum":["overview","full"]}},"required":["name"]}`),
-		})
-		// Boot 模式: search_plugins 频道检索
-		if r.ChannelVFSBridge != nil {
-			tools = append(tools, llmclient.ToolDef{
-				Name:        "search_plugins",
-				Description: "Search available channel/plugin integrations by keyword. Returns matching channel summaries with names and descriptions.",
-				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query (channel name, type, or description)"},"top_k":{"type":"number","description":"Max results (default 10)"}},"required":["query"]}`),
-			})
-		}
-		// Boot 模式: search_sessions 会话归档检索
-		if r.SessionArchiveBridge != nil {
-			tools = append(tools, llmclient.ToolDef{
-				Name:        "search_sessions",
-				Description: "Search past conversation archives by topic or keyword. Returns session summaries with timestamps.",
-				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query (topic, keyword, or question about past conversations)"},"top_k":{"type":"number","description":"Max results (default 5)"}},"required":["query"]}`),
-			})
-		}
-	} else if len(r.skillsCache) > 0 {
-		// 传统模式: 仅 lookup_skill 从内存缓存读取
+	// 技能按需加载工具
+	if len(r.skillsCache) > 0 {
 		tools = append(tools, llmclient.ToolDef{
 			Name:        "lookup_skill",
 			Description: "Look up the full content of a skill by name. Use this when a skill from <available_skills> applies to the current task.",

@@ -209,25 +209,6 @@ type SystemL0Entry struct {
 	Meta     map[string]interface{} `json:"meta,omitempty"`
 }
 
-// SystemHit is a structured search result for system collections (skills, plugins, sessions).
-// Derived from PayloadHit with named fields for convenience.
-type SystemHit struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Category    string  `json:"category"`
-	Description string  `json:"description"`
-	Tags        string  `json:"tags"`
-	VFSPath     string  `json:"vfs_path"`
-	Score       float64 `json:"score"`
-}
-
-// SystemDistStatus reports the distribution status of a system collection.
-type SystemDistStatus struct {
-	Collection   string `json:"collection"`
-	TotalEntries int    `json:"total_entries"`
-	Indexed      bool   `json:"indexed"`
-}
-
 // ============================================================================
 // List Options
 // ============================================================================

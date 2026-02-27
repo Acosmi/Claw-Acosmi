@@ -135,8 +135,18 @@ export type AppViewState = {
   whatsappBusy: boolean;
   nostrProfileFormState: NostrProfileFormState | null;
   nostrProfileAccountId: string | null;
-  channelNotification: import("./views/channel-notification-toast.ts").ChannelNotification | null;
   configFormDirty: boolean;
+
+  // Custom added: Notification Center state
+  notifications: Array<{
+    id: string;
+    message: string;
+    timestamp: number;
+    read: boolean;
+    type: "error" | "info" | "success";
+  }>;
+  notificationsOpen: boolean;
+
   presenceLoading: boolean;
   presenceEntries: PresenceEntry[];
   presenceError: string | null;
@@ -217,6 +227,11 @@ export type AppViewState = {
   skillsBusyKey: string | null;
   distributeLoading: boolean;
   distributeResult: string | null;
+  // Sub-Agents (方案 C+D)
+  subagentsLoading: boolean;
+  subagentsList: import("./controllers/subagents.js").SubAgentEntry[];
+  subagentsError: string | null;
+  subagentsBusyKey: string | null;
   debugLoading: boolean;
   debugStatus: StatusSummary | null;
   debugHealth: HealthSnapshot | null;

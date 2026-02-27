@@ -118,14 +118,6 @@ type GatewayMethodContext struct {
 	CoderConfirmMgr *runner.CoderConfirmationManager
 }
 
-// UHMSVFS 返回 UHMS VFS 实例（可能为 nil）。
-func (c *GatewayMethodContext) UHMSVFS() *uhms.LocalVFS {
-	if c.UHMSManager == nil {
-		return nil
-	}
-	return c.UHMSManager.VFS()
-}
-
 // ---------- 权限常量 ----------
 // scopeAdmin, scopeApprovals, scopePairing 已在 broadcast.go 中声明。
 
@@ -192,7 +184,7 @@ var (
 	adminMethodPrefixes = []string{"exec.approvals."}
 
 	adminExactMethods = newStringSet(
-		"channels.logout", "channels.save", "channels.distribute", "agents.create", "agents.update", "agents.delete",
+		"channels.logout", "channels.save", "agents.create", "agents.update", "agents.delete",
 		"skills.install", "skills.update", "skills.distribute", "skills.store.pull",
 		"cron.add", "cron.update", "cron.remove", "cron.run",
 		"sessions.patch", "sessions.reset", "sessions.delete", "sessions.compact",

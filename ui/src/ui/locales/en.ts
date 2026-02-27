@@ -13,6 +13,11 @@
  */
 
 export const enMessages: Record<string, string> = {
+  // ── Notifications ──
+  "notifications.title": "Notifications",
+  "notifications.clearAll": "Clear All",
+  "notifications.empty": "No new notifications",
+
   // ── Sidebar groups ──
   "nav.group.chat": "Chat",
   "nav.group.control": "Control",
@@ -54,7 +59,7 @@ export const enMessages: Record<string, string> = {
   "nav.sub.debug": "Gateway snapshots, events, and manual RPC calls.",
   "nav.sub.logs": "Live tail of the gateway file logs.",
   "nav.sub.security": "Manage agent execution permissions and security levels.",
-  "nav.sub.subagents": "Manage vision and coding sub-agents.",
+  "nav.sub.subagents": "Monitor and control vision and coding sub-agents.",
 
   // ── Memory sub-tabs ──
   "memory.tab.sessions": "Sessions",
@@ -396,24 +401,6 @@ export const enMessages: Record<string, string> = {
   "skills.bundled": "bundled",
   "skills.apiKey": "API key",
   "skills.saveKey": "Save key",
-
-  // ── Sub-Agents view ──
-  "subagents.title": "Sub-Agent Management",
-  "subagents.sub": "Control vision and coding sub-agents: enable, frequency, and model.",
-  "subagents.enable": "Enable",
-  "subagents.interval": "Screenshot Frequency",
-  "subagents.vlaModel": "VLA Model",
-  "subagents.frames": "Captured Frames",
-  "subagents.lastFrame": "Last Frame",
-  "subagents.model.none": "None (screenshot only)",
-  "subagents.vision.title": "Vision Agent (Argus)",
-  "subagents.coder.title": "Coding Agent (oa-coder)",
-  "subagents.status.running": "Running",
-  "subagents.status.paused": "Paused",
-  "subagents.status.stopped": "Stopped",
-  "subagents.status.error": "Error",
-  "subagents.status.connected": "Connected",
-  "subagents.status.disconnected": "Disconnected",
 
   // ── Config view ──
   "config.settings": "Settings",
@@ -1351,4 +1338,18 @@ export const enMessages: Record<string, string> = {
   "voice.transcribeFailed": "Transcription failed",
   "voice.notSupported": "Browser does not support recording",
   "voice.permissionDenied": "Microphone permission denied",
+
+  // ── Sub-Agents ──
+  "subagents.title": "Sub-Agents",
+  "subagents.subtitle": "Monitor and control vision observer and coding sub-agents.",
+  "subagents.empty": "No sub-agents registered.",
+  "subagents.enable": "Enable",
+  "subagents.disable": "Disable",
+  "subagents.model": "VLA Model",
+  "subagents.interval": "Capture Interval",
+  "subagents.goal": "Task Goal",
+  "subagents.goalPlaceholder": "Enter the current task objective for the vision agent…",
+  "subagents.status.running": "Running",
+  "subagents.status.stopped": "Stopped",
+  "subagents.status.error": "Error",
 };

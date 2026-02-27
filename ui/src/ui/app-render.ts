@@ -84,7 +84,6 @@ import { showPermissionPopup, hidePermissionPopup } from "./views/permission-pop
 import { renderConfig } from "./views/config.ts";
 import { renderCron } from "./views/cron.ts";
 import { renderDebug } from "./views/debug.ts";
-import { renderChannelNotificationToast } from "./views/channel-notification-toast.ts";
 import { renderCoderConfirmPrompt } from "./views/coder-confirm.ts";
 import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
@@ -96,10 +95,11 @@ import { renderSecurity } from "./views/security.ts";
 import { renderMemory, renderMemoryTypeCapsules, resetLLMDraft } from "./views/memory.ts";
 import { renderSessions } from "./views/sessions.ts";
 import { renderSkills } from "./views/skills.ts";
-import { renderSubAgents, loadSubAgents } from "./views/subagents.ts";
+import { renderSubAgents } from "./views/subagents.ts";
 import { renderUsage } from "./views/usage.ts";
 import { renderWizard } from "./views/wizard.ts";
 import { renderChannelWizard, openChannelWizard } from "./views/wizard-channel.ts";
+import { renderNotificationCenter } from "./views/notification-center.ts";
 
 const AVATAR_DATA_RE = /^data:/i;
 const AVATAR_HTTP_RE = /^https?:\/\//i;
@@ -171,26 +171,52 @@ export function renderApp(state: AppViewState) {
             <span>${t("topbar.health")}</span>
             <span class="mono">${state.connected ? t("topbar.ok") : t("topbar.offline")}</span>
           </div>
+          
           ${renderLocaleSwitch(state)}
             ${renderThemeToggle(state)}
+
+          <!-- Notification Bell and Dropdown Container -->
+          <div class="notification-container" style="position: relative;">
+            <button
+              class="notification-bell"
+              @click=${(e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      state.notificationsOpen = !state.notificationsOpen;
+      (state as any).requestUpdate?.();
+    }}
+              title="Notifications"
+              aria-label="Notifications"
+            >
+              ${icons.bell}
+              ${(() => {
+      const unreadCount = state.notifications?.filter((n) => !n.read).length || 0;
+      if (unreadCount > 0) {
+        return html`<span class="notification-badge">${unreadCount > 99 ? '99+' : unreadCount}</span>`;
+      }
+      return nothing;
+    })()}
+            </button>
+            ${renderNotificationCenter(state)}
+          </div>
         </div>
       </header>
       <aside class="nav ${state.settings.navCollapsed ? "nav--collapsed" : ""}">
         ${getTabGroups().map((group) => {
-        const isGroupCollapsed = state.settings.navGroupsCollapsed[group.label] ?? false;
-        const hasActiveTab = group.tabs.some((tab) => tab === state.tab);
-        return html`
+      const isGroupCollapsed = state.settings.navGroupsCollapsed[group.label] ?? false;
+      const hasActiveTab = group.tabs.some((tab) => tab === state.tab);
+      return html`
             <div class="nav-group ${isGroupCollapsed && !hasActiveTab ? "nav-group--collapsed" : ""}">
               <button
                 class="nav-label"
                 @click=${() => {
-            const next = { ...state.settings.navGroupsCollapsed };
-            next[group.label] = !isGroupCollapsed;
-            state.applySettings({
-              ...state.settings,
-              navGroupsCollapsed: next,
-            });
-          }}
+          const next = { ...state.settings.navGroupsCollapsed };
+          next[group.label] = !isGroupCollapsed;
+          state.applySettings({
+            ...state.settings,
+            navGroupsCollapsed: next,
+          });
+        }}
                 aria-expanded=${!isGroupCollapsed}
               >
                 <span class="nav-label__text">${group.label}</span>
@@ -201,7 +227,7 @@ export function renderApp(state: AppViewState) {
               </div>
             </div>
           `;
-      })}
+    })}
         <div class="nav-group nav-group--links">
           <div class="nav-label nav-label--static">
             <span class="nav-label__text">${t("nav.group.resources")}</span>
@@ -988,7 +1014,37 @@ export function renderApp(state: AppViewState) {
     }
 
         ${state.tab === "subagents"
-      ? renderSubAgents(state as any)
+      ? renderSubAgents({
+        loading: state.subagentsLoading,
+        agents: state.subagentsList ?? [],
+        error: state.subagentsError ?? null,
+        busyKey: state.subagentsBusyKey ?? null,
+        onToggle: (agentId, enabled) => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.toggleSubAgent(state as any, agentId, enabled),
+          );
+        },
+        onSetInterval: (agentId, ms) => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.setSubAgentInterval(state as any, agentId, ms),
+          );
+        },
+        onSetGoal: (agentId, goal) => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.setSubAgentGoal(state as any, agentId, goal),
+          );
+        },
+        onSetModel: (agentId, model) => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.setSubAgentModel(state as any, agentId, model),
+          );
+        },
+        onRefresh: () => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.loadSubAgents(state as any),
+          );
+        },
+      })
       : nothing
     }
 
@@ -1170,31 +1226,6 @@ export function renderApp(state: AppViewState) {
 
         ${state.tab === "chat"
       ? html`
-        ${renderChannelNotificationToast(
-        state.channelNotification,
-        state.sessionKey,
-        (sessionKey) => {
-          state.channelNotification = null;
-          state.sessionKey = sessionKey;
-          state.chatMessage = "";
-          state.chatAttachments = [];
-          state.chatStream = null;
-          state.chatStreamStartedAt = null;
-          state.chatRunId = null;
-          state.chatQueue = [];
-          state.resetToolStream();
-          state.resetChatScroll();
-          state.applySettings({
-            ...state.settings,
-            sessionKey,
-            lastActiveSessionKey: sessionKey,
-          });
-          void state.loadAssistantIdentity();
-          void loadChatHistory(state);
-          void refreshChatAvatar(state);
-        },
-        () => { state.channelNotification = null; },
-      )}
         ${renderChat({
         sessionKey: state.sessionKey,
         onSessionKeyChange: (next) => {

@@ -224,12 +224,33 @@ export class OpenAcosmiApp extends LitElement {
   @state() whatsappBusy = false;
   @state() nostrProfileFormState: NostrProfileFormState | null = null;
   @state() nostrProfileAccountId: string | null = null;
-  @state() channelNotification: import("./views/channel-notification-toast.ts").ChannelNotification | null = null;
+
+  // Custom added: Notification Center state
+  @state() notifications: Array<{
+    id: string;
+    message: string;
+    timestamp: number;
+    read: boolean;
+    type: "error" | "info" | "success";
+  }> = [];
+  @state() notificationsOpen = false;
 
   @state() presenceLoading = false;
   @state() presenceEntries: PresenceEntry[] = [];
   @state() presenceError: string | null = null;
   @state() presenceStatus: string | null = null;
+
+  // Custom added: Helper for notifications
+  addNotification(message: string, type: "error" | "info" | "success" = "info") {
+    const fresh = {
+      id: `notify-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      message,
+      timestamp: Date.now(),
+      read: false,
+      type
+    };
+    this.notifications = [fresh, ...this.notifications].slice(0, 50); // Keep last 50
+  }
 
   @state() agentsLoading = false;
   @state() agentsList: AgentsListResult | null = null;

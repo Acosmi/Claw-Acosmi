@@ -56,14 +56,8 @@ type ToolExecParams struct {
 	RemoteMCPBridge RemoteMCPBridgeForAgent
 	// 原生沙箱 Worker（可选，nil = 使用 Docker fallback）
 	NativeSandbox NativeSandboxForAgent
-	// 技能按需加载缓存: skill name → full SKILL.md content（传统模式）
+	// 技能按需加载缓存: skill name → full SKILL.md content
 	SkillsCache map[string]string
-	// 技能 VFS 检索 Bridge（Boot 模式，可选，nil = 不可用）
-	SkillVFSBridge SkillVFSBridgeForAgent
-	// 频道/插件 VFS 检索 Bridge（Boot 模式，可选，nil = 不可用）
-	ChannelVFSBridge ChannelVFSBridgeForAgent
-	// 会话归档检索 Bridge（Boot 模式，可选，nil = 不可用）
-	SessionArchiveBridge SessionArchiveBridgeForAgent
 	// UHMS 记忆系统 Bridge（可选，nil = 不可用）
 	// 用于注入 context brief 到 coder/argus 工具调用
 	UHMSBridge UHMSBridgeForAgent
@@ -144,13 +138,7 @@ func ExecuteToolCall(ctx context.Context, name string, inputJSON json.RawMessage
 	case "glob":
 		return executeGlob(inputJSON, params)
 	case "lookup_skill":
-		return executeLookupSkill(ctx, inputJSON, params)
-	case "search_skills":
-		return executeSearchSkills(ctx, inputJSON, params)
-	case "search_plugins":
-		return executeSearchPlugins(ctx, inputJSON, params)
-	case "search_sessions":
-		return executeSearchSessions(ctx, inputJSON, params)
+		return executeLookupSkill(inputJSON, params)
 	case "notebook_edit":
 		return "[Tool notebook_edit is not yet implemented in Go runtime]", nil
 	case "mcp":
@@ -627,15 +615,11 @@ func executeGlob(inputJSON json.RawMessage, params ToolExecParams) (string, erro
 // ---------- lookup_skill ----------
 
 type lookupSkillInput struct {
-	Name  string `json:"name"`
-	Level string `json:"level,omitempty"` // "overview" or "full" (Boot 模式)
+	Name string `json:"name"`
 }
 
-// executeLookupSkill 返回技能内容。
-// Boot 模式: 从 VFS 读取 L1/L2（按 level 参数）。
-// 传统模式: 从 skillsCache 读取完整内容。
-// 降级: VFS 失败时回退到 skillsCache（如果存在）。
-func executeLookupSkill(_ context.Context, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
+// executeLookupSkill 从缓存返回完整 SKILL.md 内容。
+func executeLookupSkill(inputJSON json.RawMessage, params ToolExecParams) (string, error) {
 	var input lookupSkillInput
 	if err := json.Unmarshal(inputJSON, &input); err != nil {
 		return "", fmt.Errorf("invalid lookup_skill input: %w", err)
@@ -644,36 +628,13 @@ func executeLookupSkill(_ context.Context, inputJSON json.RawMessage, params Too
 		return "", fmt.Errorf("lookup_skill: skill name is required")
 	}
 
-	// Boot 模式: 从 VFS 读取
-	if params.SkillVFSBridge != nil && params.SkillVFSBridge.IsReady() {
-		// 先尝试搜索获取 category
-		hits, err := params.SkillVFSBridge.SearchSkills(context.Background(), input.Name, 1)
-		if err == nil && len(hits) > 0 && hits[0].Name == input.Name {
-			cat := hits[0].Category
-			if input.Level == "full" {
-				content, readErr := params.SkillVFSBridge.ReadSkillL2(cat, input.Name)
-				if readErr == nil {
-					return content, nil
-				}
-				slog.Warn("lookup_skill: VFS L2 read failed, trying L1", "name", input.Name, "error", readErr)
-			}
-			// 默认 overview (L1)
-			content, readErr := params.SkillVFSBridge.ReadSkillL1(cat, input.Name)
-			if readErr == nil {
-				return content, nil
-			}
-			slog.Warn("lookup_skill: VFS L1 read failed", "name", input.Name, "error", readErr)
-		}
-		// VFS 查找失败 → 降级到 skillsCache
-	}
-
-	// 传统模式 / 降级: 从内存缓存读取
 	if params.SkillsCache == nil {
 		return fmt.Sprintf("[Skill %q not found: no skills loaded]", input.Name), nil
 	}
 
 	content, ok := params.SkillsCache[input.Name]
 	if !ok {
+		// 列出可用技能帮助 LLM 修正
 		var available []string
 		for name := range params.SkillsCache {
 			available = append(available, name)
@@ -682,153 +643,6 @@ func executeLookupSkill(_ context.Context, inputJSON json.RawMessage, params Too
 	}
 
 	return content, nil
-}
-
-// ---------- search_skills ----------
-
-type searchSkillsInput struct {
-	Query string  `json:"query"`
-	TopK  float64 `json:"top_k,omitempty"`
-}
-
-// executeSearchSkills 通过 Qdrant/VFS 检索技能 L0 摘要。
-// 仅在 Boot 模式下可用。
-func executeSearchSkills(ctx context.Context, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
-	var input searchSkillsInput
-	if err := json.Unmarshal(inputJSON, &input); err != nil {
-		return "", fmt.Errorf("invalid search_skills input: %w", err)
-	}
-	if input.Query == "" {
-		return "", fmt.Errorf("search_skills: query is required")
-	}
-
-	topK := 10
-	if input.TopK > 0 && input.TopK <= 50 {
-		topK = int(input.TopK)
-	}
-
-	if params.SkillVFSBridge == nil || !params.SkillVFSBridge.IsReady() {
-		return "[search_skills: skill index not available. Use lookup_skill with a known skill name instead.]", nil
-	}
-
-	hits, err := params.SkillVFSBridge.SearchSkills(ctx, input.Query, topK)
-	if err != nil {
-		slog.Warn("search_skills: search failed", "query", input.Query, "error", err)
-		return fmt.Sprintf("[search_skills: search failed: %s]", err.Error()), nil
-	}
-
-	if len(hits) == 0 {
-		return fmt.Sprintf("[No skills found matching %q]", input.Query), nil
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Found %d skill(s) matching %q:\n\n", len(hits), input.Query))
-	for i, h := range hits {
-		sb.WriteString(fmt.Sprintf("[%d] %s", i+1, h.L0))
-		if h.L0 == "" {
-			sb.WriteString(fmt.Sprintf("%s: %s", h.Name, h.Description))
-		}
-		sb.WriteByte('\n')
-	}
-	sb.WriteString("\nUse lookup_skill(name) to get detailed instructions for a skill.")
-	return sb.String(), nil
-}
-
-// ---------- search_plugins ----------
-
-type searchPluginsInput struct {
-	Query string  `json:"query"`
-	TopK  float64 `json:"top_k,omitempty"`
-}
-
-// executeSearchPlugins 检索频道/插件 L0 摘要。
-func executeSearchPlugins(ctx context.Context, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
-	var input searchPluginsInput
-	if err := json.Unmarshal(inputJSON, &input); err != nil {
-		return "", fmt.Errorf("invalid search_plugins input: %w", err)
-	}
-	if input.Query == "" {
-		return "", fmt.Errorf("search_plugins: query is required")
-	}
-
-	topK := 10
-	if input.TopK > 0 && input.TopK <= 50 {
-		topK = int(input.TopK)
-	}
-
-	if params.ChannelVFSBridge == nil {
-		return "[search_plugins: plugin index not available]", nil
-	}
-
-	hits, err := params.ChannelVFSBridge.SearchChannels(ctx, input.Query, topK)
-	if err != nil {
-		slog.Warn("search_plugins: search failed", "query", input.Query, "error", err)
-		return fmt.Sprintf("[search_plugins: search failed: %s]", err.Error()), nil
-	}
-
-	if len(hits) == 0 {
-		return fmt.Sprintf("[No plugins found matching %q]", input.Query), nil
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Found %d plugin(s) matching %q:\n\n", len(hits), input.Query))
-	for i, h := range hits {
-		if h.L0 != "" {
-			sb.WriteString(fmt.Sprintf("[%d] %s\n", i+1, h.L0))
-		} else {
-			sb.WriteString(fmt.Sprintf("[%d] %s: %s\n", i+1, h.Name, h.Label))
-		}
-	}
-	return sb.String(), nil
-}
-
-// ---------- search_sessions ----------
-
-type searchSessionsInput struct {
-	Query string  `json:"query"`
-	TopK  float64 `json:"top_k,omitempty"`
-}
-
-// executeSearchSessions 检索历史会话归档摘要。
-func executeSearchSessions(ctx context.Context, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
-	var input searchSessionsInput
-	if err := json.Unmarshal(inputJSON, &input); err != nil {
-		return "", fmt.Errorf("invalid search_sessions input: %w", err)
-	}
-	if input.Query == "" {
-		return "", fmt.Errorf("search_sessions: query is required")
-	}
-
-	topK := 5
-	if input.TopK > 0 && input.TopK <= 20 {
-		topK = int(input.TopK)
-	}
-
-	if params.SessionArchiveBridge == nil {
-		return "[search_sessions: session archive index not available]", nil
-	}
-
-	hits, err := params.SessionArchiveBridge.SearchSessions(ctx, input.Query, topK)
-	if err != nil {
-		slog.Warn("search_sessions: search failed", "query", input.Query, "error", err)
-		return fmt.Sprintf("[search_sessions: search failed: %s]", err.Error()), nil
-	}
-
-	if len(hits) == 0 {
-		return fmt.Sprintf("[No past sessions found matching %q]", input.Query), nil
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Found %d session(s) matching %q:\n\n", len(hits), input.Query))
-	for i, h := range hits {
-		sb.WriteString(fmt.Sprintf("[%d] %s", i+1, h.L0Summary))
-		if h.CreatedAt != "" {
-			sb.WriteString(fmt.Sprintf(" (at %s)", h.CreatedAt))
-		}
-		sb.WriteString(fmt.Sprintf(" [key: %s]\n", h.SessionKey))
-	}
-	sb.WriteString("\nTo get more details about a session, use lookup_skill or ask about the topic directly.")
-	return sb.String(), nil
 }
 
 // ---------- helpers ----------
