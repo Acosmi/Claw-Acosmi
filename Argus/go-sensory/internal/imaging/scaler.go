@@ -18,7 +18,9 @@ import (
 )
 
 // DefaultVLMMaxDim is the default maximum dimension (long edge) for VLM images.
-const DefaultVLMMaxDim = 1024
+// 768 balances token savings (~50% vs 1024) with acceptable detail for VLM tasks.
+// Override via VLM_IMAGE_MAX_DIM env var if needed.
+const DefaultVLMMaxDim = 768
 
 // DefaultVLMQuality is the default JPEG quality for VLM images.
 const DefaultVLMQuality = 50

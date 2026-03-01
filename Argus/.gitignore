@@ -31,3 +31,29 @@ chromadata/
 
 # Shared memory artifacts (macOS uses /tmp)
 /dev/shm/argus_*
+
+# Added for Sub-agent Context Blocking
+# git
+/.git/
+
+# build artifacts
+node_modules/
+dist/
+build/
+target/
+.build/
+.turbo/
+
+# docs
+/docs/
+
+# system skills
+/skills/
+/.claude/skills/
+/.agent/skills/
+/.gemini/skills/
+
+# agent config dirs
+/.claude/
+/.agent/
+/.gemini/

@@ -408,12 +408,14 @@ func runMCPServer(flags cliFlags) {
 		vlmProvider = vlmRouter.ActiveProvider()
 	}
 
-	// Initialize ApprovalGateway (privacy-first for MCP)
+	// Initialize ApprovalGateway for MCP mode.
+	// AutoMode=true: 主系统 (Claw Acismi gateway) 统一负责审批，
+	// Argus 作为 MCP 子进程只负责执行。Guardrails（硬拦截 sudo/rm/dd）仍然生效。
 	guardrails := input.NewActionGuardrails("")
 	gateway := input.NewApprovalGateway(input.GatewayConfig{
 		Guardrails: guardrails,
 		Enabled:    true,
-		AutoMode:   false, // privacy-first: require human confirmation
+		AutoMode:   true, // MCP mode: approval handled by main system
 	})
 
 	// Build registry and register all tools

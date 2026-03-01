@@ -31,3 +31,29 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Added for Sub-agent Context Blocking
+# git
+/.git/
+
+# build artifacts
+node_modules/
+dist/
+build/
+target/
+.build/
+.turbo/
+
+# docs
+/docs/
+
+# system skills
+/skills/
+/.claude/skills/
+/.agent/skills/
+/.gemini/skills/
+
+# agent config dirs
+/.claude/
+/.agent/
+/.gemini/
