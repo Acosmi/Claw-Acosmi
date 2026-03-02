@@ -105,6 +105,7 @@ import { renderSkills } from "./views/skills.ts";
 import { renderSubAgents } from "./views/subagents.ts";
 import { renderUsage } from "./views/usage.ts";
 import { renderWizard } from "./views/wizard.ts";
+import { renderWizardV2 } from "./views/wizard-v2.ts";
 import { renderChannelWizard, openChannelWizard } from "./views/wizard-channel.ts";
 import { renderNotificationCenter } from "./views/notification-center.ts";
 import { renderMediaConfig, loadMediaConfig } from "./views/media-config.ts";
@@ -313,6 +314,7 @@ export function renderApp(state: AppViewState) {
         onConnect: () => state.connect(),
         onRefresh: () => state.loadOverview(),
         onStartWizard: () => void state.handleStartWizard(),
+        onStartWizardV2: state.handleStartWizardV2 ? () => state.handleStartWizardV2!() : undefined,
       })
       : nothing
     }
@@ -1601,7 +1603,8 @@ export function renderApp(state: AppViewState) {
       onRespond: (id, response) => state.handleSubagentHelpRespond(id, response),
     })}
       ${renderGatewayUrlConfirmation(state)}
-      ${renderWizard(state)}
+        ${renderWizard(state)}
+        ${renderWizardV2(state)}
     </div>
   `;
 }

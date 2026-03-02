@@ -49,6 +49,7 @@ export type AppViewState = {
   tab: Tab;
   onboarding: boolean;
   wizardOpen: boolean;
+  wizardV2Open: boolean;
   wizardState: WizardState;
   basePath: string;
   connected: boolean;
@@ -368,6 +369,7 @@ export type AppViewState = {
   handleCloseSidebar: () => void;
   handleSplitRatioChange: (ratio: number) => void;
   handleStartWizard: () => Promise<void>;
+  handleStartWizardV2?: () => void;
   handleCancelWizard: () => Promise<void>;
   requestUpdate: () => void;
   // Phase C/D/E: STT/DocConv/Image wizard state

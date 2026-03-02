@@ -101,6 +101,7 @@ import {
   cancelWizard as cancelWizardInternal,
   type WizardState,
 } from "./views/wizard.ts";
+import { startWizardV2 as startWizardV2Internal } from "./views/wizard-v2.ts";
 
 declare global {
   interface Window {
@@ -130,6 +131,7 @@ export class OpenAcosmiApp extends LitElement {
   @state() tab: Tab = "chat";
   @state() onboarding = resolveOnboardingMode();
   @state() wizardOpen = false;
+  @state() wizardV2Open = false;
   @state() wizardState: WizardState = { ...WIZARD_INITIAL_STATE };
   @state() connected = false;
   @state() theme: ThemeMode = this.settings.theme ?? "system";
@@ -792,6 +794,10 @@ export class OpenAcosmiApp extends LitElement {
 
   async handleStartWizard() {
     await startWizardInternal(this as unknown as AppViewState);
+  }
+
+  handleStartWizardV2() {
+    startWizardV2Internal(this as unknown as AppViewState);
   }
 
   async handleCancelWizard() {
