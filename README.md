@@ -2,11 +2,25 @@
 
   <img src="./claw-crab-logo.png" alt="Claw Acosmi 创宇太虚架构图 / Architecture Diagram" width="160" />
   
-  # <span style="color: #c9ccc6;">Claw Acosmi (创宇太虚)</span>
+# <span style="color: #c9ccc6;">Claw Acosmi (创宇太虚)</span>
 
 **「在虚空中创建新秩序，构筑太虚之境」**<br>
 **"Creating new order in the void, building the realm of Acosmi"**<br><br>
-**🌐 官网 / Official Website: [Acosmi.com](https://acosmi.com)**
+
+> 🙏 **致敬 / Tribute**
+>
+> 本项目的诞生，离不开 [OpenClaw](https://github.com/openclaw) 原始开发者们的无私奉献与开源精神。是他们以卓越的工程才华与对技术自由的信仰，奠定了这一切的基石。我们在此向每一位 OpenClaw 的贡献者致以最崇高的敬意——你们点燃的火种，如今正在太虚之境中，燃烧成一片星海。
+>
+> *This project stands on the shoulders of the original [OpenClaw](https://github.com/openclaw) developers. Their selfless dedication and open-source spirit laid the foundation upon which this new architecture is built. We pay our deepest respects to every contributor — the spark you ignited now burns as a sea of stars in the realm of Acosmi.*
+
+<br>
+
+⚙️ **Rust + Go 深度混合架构 — 为极致性能与安全而生**<br>
+*Deep Hybrid Architecture of Rust + Go — Engineered for Ultimate Performance & Security*
+
+<br>
+
+**🌐 官网 / Official Website: [acosmi.ai](https://acosmi.ai)**
 
 [English](#english) | [中文](#中文)
 
@@ -59,6 +73,42 @@
 - **视觉感知智能体 (Argus)**：基于 Go+Rust 混合编译的视觉中枢，能够直视用户的桌面、感知屏幕的变化流，赋予系统真正的“视觉”与像素级多模态流解析能力。
 - **更多核心子智能体 (即将接入)**：如 Swabble、Acosmo-Code 等将陆续接入。各个子智能体将在由沙箱划定的安全通信隔离区内，进行大规模的并行工作、互相博弈与协同决策。
 - *【越维打击】*：从单一的大语言模型的纯文本处理，正式进化为具备**感知、推理、代码生成、视觉审查**的全能 Agent 兵团，在复杂的人效任务流中实现真正意义上的「分布式多核运作」。
+
+### 5. 🔐 铜墙铁壁：安全防护等级审批制度
+
+太虚引入了业界首创的 **L1 ~ L3 三级安全防护审批制度**，从根源上杜绝了 AI Agent 的"失控"风险。
+
+- **L1 (通知级)**：低风险操作自动放行，仅在消息流中做无感知记录。
+- **L2 (确认级)**：中风险操作（如文件写入、网络请求）需用户二次确认，确保人类始终在环 (Human-in-the-Loop)。
+- **L3 (审批级)**：高风险操作（如系统命令执行、敏感数据访问）需经过严格的审批流程，支持超时回退与永久锁定策略。
+- *【越维打击】*：每一步 Agent 动作都经过分级安全阀门的裁决，从制度层面实现了对 AI 行为的全谱精准管控——而非寄希望于模型的"自觉"。
+
+### 6. 🎖️ 三级指挥体系：用户 → 主智能体 → 子智能体
+
+太虚构建了清晰且严格的 **三级指挥链路 (Chain of Command)**，实现了从顶层意图到底层执行的精密传达。
+
+- **用户 (Commander)**：作为最终决策者，下达宏观目标与战略指令。
+- **主智能体 (General Agent)**：解析用户意图、制定执行方案、调度子智能体资源、汇报全局态势。
+- **子智能体 (Sub-Agents)**：在沙箱安全域内执行具体任务（视觉感知、代码生成、媒体处理等），并向主智能体反馈执行结果。
+- *【越维打击】*：告别了业界常见的"大模型直接执行一切"的扁平模式，建立了层级清晰、职责分明的军团化 Agent 协作体系。
+
+### 7. 📡 异步队列：主动进度汇报
+
+太虚实现了真正的 **异步任务执行 + 主动进度上报** 机制，让长链路任务不再"石沉大海"。
+
+- Agent 在执行耗时任务时，通过内置的 `report_progress` 工具向用户主动推送阶段性进展。
+- 基于异步消息队列 (Async Queue) 架构，确保进度消息不丢失、不阻塞主流程。
+- 用户可在任意时刻了解任务全貌——已完成什么、正在做什么、预计还需多久。
+- *【越维打击】*：从"发出指令后只能等待最终结果"进化为"全程透明可观测的实时指挥"。
+
+### 8. 🚀 一键部署启动
+
+太虚致力于 **零门槛、开箱即用** 的部署体验。
+
+- **跨平台一键启动**：macOS / Windows / Linux 均支持双击脚本或 `make start` 一键启动全部联邦服务。
+- **自动化依赖管理**：启动流程自动检测、安装、编译所有必需依赖，无需用户手动配置 Rust 工具链或 Go 环境。
+- **全联邦服务编排**：一个命令同时拉起 Gateway 网关、沙箱引擎、记忆系统、视觉中枢等全部微服务。
+- *【越维打击】*：将过去需要半天时间搭建的复杂 AI Agent 开发环境，压缩为**一个双击**。
 
 ---
 
@@ -128,6 +178,42 @@ Claw Acosmi is no longer a lone thinker.
 - **Visual Perception Agent (Argus)**: A visual nexus built on Go+Rust, capable of staring directly at the user's desktop and perceiving the stream of screen changes, granting the system true "vision" and pixel-level multi-modal stream parsing abilities.
 - **More Core Sub-Agents (Incoming)**: Agents like Swabble and Acosmo-Code will be connected sequentially. Within secure communication zones delineated by the sandbox, these sub-agents perform large-scale parallel work, mutual gaming, and collaborative decision-making.
 - *[Dimensional Strike]*: Evolving from single LLM pure text processing to an omnipotent Agent Legion equipped with **perception, inference, code generation, and visual auditing**, achieving true "distributed multi-core operation" in complex workflows.
+
+### 5. 🔐 Ironclad: Security Protection Level Approval System
+
+Acosmi introduces the industry's first **L1 ~ L3 tiered security approval system**, fundamentally eliminating the risk of AI Agent "loss of control."
+
+- **L1 (Notification)**: Low-risk operations are auto-approved with silent audit logging.
+- **L2 (Confirmation)**: Medium-risk operations (file writes, network requests) require explicit user confirmation, ensuring Human-in-the-Loop at all times.
+- **L3 (Approval)**: High-risk operations (system command execution, sensitive data access) undergo a strict approval workflow, supporting timeout fallback and permanent lock policies.
+- *[Dimensional Strike]*: Every Agent action passes through tiered security valves, achieving full-spectrum precision governance of AI behavior at the institutional level — not relying on the model's "self-restraint."
+
+### 6. 🎖️ Three-Level Command: User → General Agent → Sub-Agents
+
+Acosmi establishes a clear and rigorous **Chain of Command** that ensures precise transmission from top-level intent to low-level execution.
+
+- **User (Commander)**: The ultimate decision-maker, issuing macro objectives and strategic directives.
+- **General Agent**: Interprets user intent, formulates execution plans, dispatches sub-agent resources, and reports the global situation.
+- **Sub-Agents**: Execute specific tasks within sandboxed security zones (visual perception, code generation, media processing, etc.) and report results back to the General Agent.
+- *[Dimensional Strike]*: Moving beyond the industry-common "one LLM does everything" flat model, establishing a military-grade Agent collaboration hierarchy with clear levels and distinct responsibilities.
+
+### 7. 📡 Async Queue: Proactive Progress Reporting
+
+Acosmi implements a true **asynchronous task execution + proactive progress reporting** mechanism, so long-running tasks never "disappear into the void."
+
+- During time-consuming tasks, Agents proactively push stage-by-stage progress updates to users via the built-in `report_progress` tool.
+- Built on an Async Message Queue architecture, ensuring progress messages are never lost and never block the main pipeline.
+- Users can understand the full picture at any moment—what's done, what's in progress, and the estimated time remaining.
+- *[Dimensional Strike]*: Evolving from "issue a command and wait blindly for the final result" to "fully transparent, real-time observable command and control."
+
+### 8. 🚀 One-Click Deployment
+
+Acosmi is committed to a **zero-barrier, out-of-the-box** deployment experience.
+
+- **Cross-Platform One-Click Start**: macOS / Windows / Linux all support double-click scripts or `make start` to launch all federation services instantly.
+- **Automated Dependency Management**: The startup process automatically detects, installs, and compiles all required dependencies — no manual Rust toolchain or Go environment setup needed.
+- **Full Federation Service Orchestration**: A single command spins up the Gateway, Sandbox Engine, Memory System, Visual Nexus, and all other microservices simultaneously.
+- *[Dimensional Strike]*: Compressing a complex AI Agent development environment that previously took half a day to set up into **a single double-click**.
 
 ---
 
