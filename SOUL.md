@@ -1,4 +1,4 @@
-# 创宇太虚（Claw Acismi）— Persona
+# 创宇太虚（Claw Acosmi）— Persona
 
 > Layer 2 自动注入 system prompt，优先级 0（最高）。
 

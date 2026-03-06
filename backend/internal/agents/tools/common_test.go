@@ -77,38 +77,6 @@ func TestNormalizeToolParameters_Nil(t *testing.T) {
 	}
 }
 
-// ---------- registry.go ----------
-
-func TestToolRegistry(t *testing.T) {
-	reg := NewToolRegistry()
-	if reg.Count() != 0 {
-		t.Errorf("empty registry count = %d", reg.Count())
-	}
-
-	reg.Register(&AgentTool{Name: "exec", Label: "Execute"})
-	reg.Register(&AgentTool{Name: "read", Label: "Read"})
-
-	if reg.Count() != 2 {
-		t.Errorf("count = %d, want 2", reg.Count())
-	}
-	if !reg.Has("exec") {
-		t.Error("should have exec")
-	}
-	if reg.Has("missing") {
-		t.Error("should not have missing")
-	}
-
-	tool := reg.Get("read")
-	if tool == nil || tool.Label != "Read" {
-		t.Errorf("Get(read) = %v", tool)
-	}
-
-	names := reg.Names()
-	if len(names) != 2 || names[0] != "exec" || names[1] != "read" {
-		t.Errorf("Names() = %v", names)
-	}
-}
-
 // ---------- policy.go ----------
 
 func TestCompilePattern_Exact(t *testing.T) {

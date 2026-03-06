@@ -48,7 +48,7 @@ func SpawnArgusAgentToolDef() llmclient.ToolDef {
 		},
 		"scope": {
 			"type": "array",
-			"description": "Allowed visual scope. Use 'screen://' paths for screen regions. Optional — defaults to full screen read access.",
+			"description": "Allowed visual scope. Use 'screen://' paths for screen regions. Optional — defaults to full screen read and write access.",
 			"items": {
 				"type": "object",
 				"properties": {

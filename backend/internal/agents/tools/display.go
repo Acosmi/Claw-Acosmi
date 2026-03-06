@@ -79,13 +79,19 @@ var fallbackDetailKeys = []string{
 // ---------- 工具注册表（来自 tool-display.json）----------
 
 var toolRegistry = map[string]ToolDisplaySpec{
-	"exec":        {Emoji: "🛠️", Title: "Exec", DetailKeys: []string{"command"}},
-	"process":     {Emoji: "🧰", Title: "Process", DetailKeys: []string{"sessionId"}},
-	"read":        {Emoji: "📖", Title: "Read", DetailKeys: []string{"path"}},
-	"write":       {Emoji: "✍️", Title: "Write", DetailKeys: []string{"path"}},
-	"edit":        {Emoji: "📝", Title: "Edit", DetailKeys: []string{"path"}},
+	// Canonical tool names (from capabilities.Registry)
+	"bash":        {Emoji: "🛠️", Title: "Bash", DetailKeys: []string{"command"}},
+	"read_file":   {Emoji: "📖", Title: "Read File", DetailKeys: []string{"path"}},
+	"write_file":  {Emoji: "✍️", Title: "Write File", DetailKeys: []string{"path"}},
+	"list_dir":    {Emoji: "📂", Title: "List Dir", DetailKeys: []string{"path"}},
 	"apply_patch": {Emoji: "🩹", Title: "Apply Patch"},
-	"attach":      {Emoji: "📎", Title: "Attach", DetailKeys: []string{"path", "url", "fileName"}},
+	// Legacy tool names (backward compat for old transcripts)
+	"exec":    {Emoji: "🛠️", Title: "Exec", DetailKeys: []string{"command"}},
+	"process": {Emoji: "🧰", Title: "Process", DetailKeys: []string{"sessionId"}},
+	"read":    {Emoji: "📖", Title: "Read", DetailKeys: []string{"path"}},
+	"write":   {Emoji: "✍️", Title: "Write", DetailKeys: []string{"path"}},
+	"edit":    {Emoji: "📝", Title: "Edit", DetailKeys: []string{"path"}},
+	"attach":  {Emoji: "📎", Title: "Attach", DetailKeys: []string{"path", "url", "fileName"}},
 	"browser": {Emoji: "🌐", Title: "Browser", Actions: map[string]ToolDisplayActionSpec{
 		"status": {Label: "status"}, "start": {Label: "start"}, "stop": {Label: "stop"},
 		"tabs":       {Label: "tabs"},

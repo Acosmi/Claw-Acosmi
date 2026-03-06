@@ -13,10 +13,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/Acosmi/ClawAcosmi/internal/agents/capabilities"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/llmclient"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/models"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/prompt"
@@ -24,6 +26,7 @@ import (
 	"github.com/Acosmi/ClawAcosmi/internal/agents/skills"
 	goproviders_common "github.com/Acosmi/ClawAcosmi/internal/goproviders/common"
 	"github.com/Acosmi/ClawAcosmi/internal/infra"
+	"github.com/Acosmi/ClawAcosmi/internal/routing"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
@@ -262,26 +265,7 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 	// 提前到 buildSystemPrompt 之前，使 intent guidance 能注入提示词
 	tier := classifyIntent(params.Prompt)
 
-	// 4. 构建系统提示词（含会话状态路由 + 意图行为指引）
-	systemPrompt := r.buildSystemPrompt(params, sessionState, tier)
-
-	// 5. 按意图裁剪历史（greeting 靠 boot brief 感知上下文，不需要历史）
-	priorMessages = trimHistoryByIntent(priorMessages, tier)
-
-	// 5a. 组装消息列表
-	messages := append(priorMessages, llmclient.TextMessage("user", params.Prompt))
-
-	// 5a.1 Transcript 持久化保障: 使用 defer 确保即使 LLM 失败/超时也能持久化用户消息。
-	// 正常完成时 messages 包含 user+assistant，失败时至少包含 user。
-	// Bug#11: SuppressTranscript 在 model fallback 场景下跳过持久化，避免失败 attempt 污染 transcript。
-	transcriptPersisted := params.SuppressTranscript
-	defer func() {
-		if !transcriptPersisted {
-			r.persistToTranscript(params, messages, log)
-		}
-	}()
-
-	// 5b. 工具过滤（六级分级暴露 3-12 个工具，约束 LLM 输出收敛性）
+	// 4. 构建工具定义（必须在构建系统提示词之前，以便传入真实工具名列表）
 	tools := r.buildToolDefinitions()
 	// Phase 4: 如果有异步消息通道，动态添加 request_help 工具
 	if params.AgentChannel != nil {
@@ -301,6 +285,32 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 			}
 		}
 	}
+
+	// 4b. 提取真实工具名列表（未经意图过滤），用于构建 ## Tooling 段落
+	toolNames := make([]string, len(tools))
+	for i, t := range tools {
+		toolNames[i] = t.Name
+	}
+	toolSummaries := capabilities.ToolSummaries()
+
+	// 5. 构建系统提示词（含会话状态路由 + 意图行为指引 + 真实工具名）
+	systemPrompt := r.buildSystemPrompt(params, sessionState, tier, toolNames, toolSummaries)
+
+	// 5a. 按意图裁剪历史（greeting 靠 boot brief 感知上下文，不需要历史）
+	priorMessages = trimHistoryByIntent(priorMessages, tier)
+
+	// 5b. 组装消息列表
+	messages := append(priorMessages, llmclient.TextMessage("user", params.Prompt))
+
+	// 5b.1 Transcript 持久化保障: 使用 defer 确保即使 LLM 失败/超时也能持久化用户消息。
+	transcriptPersisted := params.SuppressTranscript
+	defer func() {
+		if !transcriptPersisted {
+			r.persistToTranscript(params, messages, log)
+		}
+	}()
+
+	// 5c. 工具过滤（六级分级暴露 3-12 个工具，约束 LLM 输出收敛性）
 	tools = filterToolsByIntent(tools, tier)
 	log.Debug("intent filter", "tier", tier, "toolCount", len(tools), "historyCount", len(priorMessages))
 
@@ -1029,7 +1039,7 @@ func loadOAuthTokenFromAuthProfiles(provider string) string {
 	return ""
 }
 
-func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams, sessionState prompt.SessionState, tier intentTier) string {
+func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams, sessionState prompt.SessionState, tier intentTier, toolNames []string, toolSummaries map[string]string) string {
 	// 使用 prompt 包的 BuildAgentSystemPrompt 构建完整系统提示
 	rt := prompt.DefaultRuntimeInfo()
 	rt.Model = params.Provider + "/" + params.ModelID
@@ -1093,6 +1103,8 @@ func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams, sessionS
 		WorkspaceDir:            params.WorkspaceDir,
 		ExtraSystemPrompt:       params.ExtraSystemPrompt,
 		SkillsPrompt:            skillsPrompt,
+		ToolNames:               toolNames,
+		ToolSummaries:           toolSummaries,
 		RuntimeInfo:             &rt,
 		ThinkLevel:              params.ThinkLevel,
 		BootContextBrief:        bootBrief,
@@ -1130,6 +1142,20 @@ func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams, sessionS
 				})
 			}
 		}
+	}
+
+	// 子智能体会话过滤：移除 MEMORY.md / SOUL.md（防止 WARM_START 误判和上下文污染）
+	if routing.IsSubagentSessionKey(params.SessionKey) && len(bp.ContextFiles) > 0 {
+		filtered := bp.ContextFiles[:0]
+		for _, cf := range bp.ContextFiles {
+			base := filepath.Base(cf.Path)
+			if base == "MEMORY.md" || base == "SOUL.md" {
+				slog.Debug("buildSystemPrompt: subagent filtering out context file", "file", cf.Path)
+				continue
+			}
+			filtered = append(filtered, cf)
+		}
+		bp.ContextFiles = filtered
 	}
 
 	// 诊断日志: 确认 prompt 各环节是否生效

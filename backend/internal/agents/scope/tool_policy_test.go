@@ -5,14 +5,28 @@ import (
 )
 
 func TestNormalizeToolName(t *testing.T) {
-	if NormalizeToolName("BASH") != "exec" {
-		t.Errorf("BASH → %q, want exec", NormalizeToolName("BASH"))
+	// exec→bash (旧名映射到真实名)
+	if NormalizeToolName("exec") != "bash" {
+		t.Errorf("exec → %q, want bash", NormalizeToolName("exec"))
+	}
+	// BASH→bash (大小写规范化)
+	if NormalizeToolName("BASH") != "bash" {
+		t.Errorf("BASH → %q, want bash", NormalizeToolName("BASH"))
 	}
 	if NormalizeToolName("apply-patch") != "apply_patch" {
 		t.Errorf("apply-patch → %q, want apply_patch", NormalizeToolName("apply-patch"))
 	}
-	if NormalizeToolName("read") != "read" {
-		t.Errorf("read → %q, want read", NormalizeToolName("read"))
+	// read→read_file (旧名映射到真实名)
+	if NormalizeToolName("read") != "read_file" {
+		t.Errorf("read → %q, want read_file", NormalizeToolName("read"))
+	}
+	// write→write_file (旧名映射到真实名)
+	if NormalizeToolName("write") != "write_file" {
+		t.Errorf("write → %q, want write_file", NormalizeToolName("write"))
+	}
+	// ls→list_dir (旧名映射到真实名)
+	if NormalizeToolName("ls") != "list_dir" {
+		t.Errorf("ls → %q, want list_dir", NormalizeToolName("ls"))
 	}
 }
 

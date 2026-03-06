@@ -10,49 +10,53 @@ import (
 // TS 参考: system-prompt.ts 各 build*Section 函数
 
 // coreToolSummaries 核心工具描述映射。
+// NOTE: 主链路工具的权威描述来自 capabilities.Registry。
+// 此处保留非主链路工具（canvas/nodes/cron/gateway/sessions 等）的描述，
+// 主链路工具描述通过 BuildParams.ToolSummaries 从 registry 传入。
 var coreToolSummaries = map[string]string{
-	"read":              "Read file contents",
-	"write":             "Create or overwrite files",
-	"edit":              "Make precise edits to files",
-	"apply_patch":       "Apply multi-file patches",
-	"grep":              "Search file contents for patterns",
-	"find":              "Find files by glob pattern",
-	"ls":                "List directory contents",
-	"exec":              "Run shell commands",
-	"process":           "Manage background exec sessions",
-	"web_search":        "Search the web",
-	"web_fetch":         "Fetch and extract readable content from a URL",
-	"browser":           "Control web browser via CDP (navigate, click, type, screenshot). Uses CSS selectors. Prefer over Argus for web tasks",
-	"canvas":            "Present/eval/snapshot the Canvas",
-	"nodes":             "List/describe/notify/camera/screen on paired nodes",
-	"cron":              "Manage cron jobs and wake events",
-	"message":           "Send messages and channel actions",
-	"gateway":           "Restart, apply config, or run updates",
-	"spawn_coder_agent": "Delegate coding tasks to Open Coder sub-agent (independent LLM session with delegation contract)",
-	"spawn_argus_agent": "Delegate desktop/visual tasks to 灵瞳 (Argus) sub-agent (screen coordinates + visual perception)",
+	// --- 主链路工具（名称与 capabilities.Registry 对齐）---
+	"bash":              "Execute bash commands in the workspace",
+	"read_file":         "Read file contents",
+	"write_file":        "Create or overwrite files",
+	"list_dir":          "List directory contents",
+	"web_search":        "Search the web for real-time information",
+	"browser":           "Control web browser via CDP (navigate, click, type, screenshot, ARIA refs)",
 	"send_media":        "Send file/media to channel (feishu/discord/telegram/whatsapp)",
-	"agents_list":       "List agent ids allowed for sessions_spawn",
-	"sessions_list":     "List other sessions with filters/last",
-	"sessions_history":  "Fetch history for another session/sub-agent",
-	"sessions_send":     "Send a message to another session/sub-agent",
-	"sessions_spawn":    "Spawn a sub-agent session",
-	"session_status":    "Show status card (usage + time + Reasoning/Verbose/Elevated)",
-	"image":             "Analyze an image with the configured image model",
+	"spawn_coder_agent": "Delegate coding tasks to Open Coder sub-agent (delegation contract)",
+	"spawn_argus_agent": "Delegate desktop/visual tasks to Argus sub-agent (screen + visual perception)",
+	"spawn_media_agent": "Delegate media operations to media sub-agent",
 	"search_skills":     "Search skills index by keyword",
 	"lookup_skill":      "Look up full content of a skill by name",
-	"memory_search":     "Search UHMS memory (太虚永忆) by keyword",
-	"memory_get":        "Get specific lines from a memory file by path + line range",
+	"memory_search":     "Search UHMS memory by keyword",
+	"memory_get":        "Get specific memory entry by ID",
+	"report_progress":   "Report intermediate progress to user",
+	"request_help":      "Request help from parent agent (sub-agent only)",
+	// --- 非主链路工具（保留原始描述）---
+	"canvas":           "Present/eval/snapshot the Canvas",
+	"nodes":            "List/describe/notify/camera/screen on paired nodes",
+	"cron":             "Manage cron jobs and wake events",
+	"message":          "Send messages and channel actions",
+	"gateway":          "Restart, apply config, or run updates",
+	"agents_list":      "List agent ids allowed for sessions_spawn",
+	"sessions_list":    "List other sessions with filters/last",
+	"sessions_history": "Fetch history for another session/sub-agent",
+	"sessions_send":    "Send a message to another session/sub-agent",
+	"sessions_spawn":   "Spawn a sub-agent session",
+	"session_status":   "Show status card (usage + time + Reasoning/Verbose/Elevated)",
+	"image":            "Analyze an image with the configured image model",
+	"web_fetch":        "Fetch and extract readable content from a URL",
 }
 
-// toolOrder 工具输出排序。
+// toolOrder 工具输出排序（名称与 capabilities.Registry 对齐）。
 var toolOrder = []string{
-	"read", "write", "edit", "apply_patch", "grep", "find", "ls",
-	"exec", "process", "web_search", "web_fetch", "browser", "canvas",
+	"bash", "read_file", "write_file", "list_dir",
+	"web_search", "web_fetch", "browser", "canvas",
 	"nodes", "cron", "message", "gateway",
-	"spawn_coder_agent", "spawn_argus_agent", "send_media",
+	"spawn_coder_agent", "spawn_argus_agent", "spawn_media_agent", "send_media",
 	"agents_list", "sessions_list", "sessions_history", "sessions_send",
 	"sessions_spawn", "session_status", "image",
 	"search_skills", "lookup_skill", "memory_search", "memory_get",
+	"report_progress", "request_help",
 }
 
 func buildToolingSection(toolNames []string, toolSummaries map[string]string) string {
@@ -206,8 +210,9 @@ func buildDelegationGuidanceSection() string {
 ### Tool Selection
 - spawn_coder_agent (Open Coder): multi-file code edits, refactoring, test writing
 - spawn_argus_agent (灵瞳 Argus): desktop app interaction, OCR, visual workflows
+- spawn_media_agent: media processing, image/audio/video operations
 - browser: web page automation (CSS selectors, faster than Argus for web)
-- Simple single-file edits: use write/edit/bash directly
+- Simple single-file edits: use write_file/bash directly
 
 ### spawn_coder_agent Negotiation
 When spawn_coder_agent returns needs_auth:
@@ -239,13 +244,14 @@ When any sub-agent returns completed:
 func buildPlanGenerationSection() string {
 	return `## 任务执行体系（三级指挥）
 
-你是站长（主智能体），管理 Open Coder（编程）和灵瞳（视觉）两个子智能体，并可直接使用 browser 工具进行网页自动化。
+你是站长（主智能体），管理 Open Coder（编程）、灵瞳（视觉）和媒体运营三个子智能体，并可直接使用 browser 工具进行网页自动化。
 
 工具选择：
 - 编码任务（多文件编辑、重构、测试）→ spawn_coder_agent
 - 桌面/GUI 操作（原生应用、OCR）→ spawn_argus_agent
+- 媒体运营（内容创作、发布、趋势分析）→ spawn_media_agent
 - 网页自动化（表单、点击、截图）→ browser（CSS 选择器，无需子智能体）
-- 简单操作 → 直接使用 bash/write/edit
+- 简单操作 → 直接使用 bash/write_file
 
 执行流程：
 1. 接收用户任务 → 分析意图 → 方案由系统自动提交用户确认

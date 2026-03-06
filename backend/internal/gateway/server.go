@@ -452,10 +452,10 @@ func (a *uhmsBridgeAdapter) BuildContextBrief(ctx context.Context) string {
 	if brief != "" {
 		return brief
 	}
-	// Cold start: lastSummary 为空（首次对话或重启后），生成系统简报
-	if a.coldStartInfo != nil {
-		return a.coldStartInfo()
-	}
+	// Fix R3: 不再 fallback 到 coldStartInfo()。
+	// 旧逻辑将系统状态快照（Memory 条目数 + 频道 + Argus 状态）填入 [Last_Summary]，
+	// 导致 attempt_runner 误判为 WARM_START，模型输出虚假记忆恢复话术。
+	// lastSummary 为空时应返回空 → COLD_START → 正确的全新用户协议。
 	return ""
 }
 

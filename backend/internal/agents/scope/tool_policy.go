@@ -25,18 +25,23 @@ type ToolPolicy struct {
 	Deny  []string `json:"deny,omitempty"`
 }
 
-// toolNameAliases 工具名称别名。
+// toolNameAliases 工具名称别名（旧名→真实名）。
+// NOTE: 主链路真实名来自 capabilities.Registry。
+// 此处保留向后兼容别名，让旧配置文件中的旧名仍能正确映射。
 var toolNameAliases = map[string]string{
-	"bash":        "exec",
+	"exec":        "bash",
+	"read":        "read_file",
+	"write":       "write_file",
+	"ls":          "list_dir",
 	"apply-patch": "apply_patch",
 }
 
-// ToolGroups 工具分组定义。
+// ToolGroups 工具分组定义（名称与 capabilities.Registry 对齐）。
 var ToolGroups = map[string][]string{
 	"group:memory":     {"memory_search", "memory_get"},
 	"group:web":        {"web_search", "web_fetch"},
-	"group:fs":         {"read", "write", "edit", "apply_patch"},
-	"group:runtime":    {"exec", "process"},
+	"group:fs":         {"read_file", "write_file", "list_dir"},
+	"group:runtime":    {"bash"},
 	"group:sessions":   {"sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"},
 	"group:ui":         {"browser", "canvas"},
 	"group:automation": {"cron", "gateway"},

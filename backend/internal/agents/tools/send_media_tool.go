@@ -14,7 +14,7 @@ type MediaSender interface {
 	SendMedia(ctx context.Context, target, mediaBase64, mimeType string) error
 }
 
-// CreateSendMediaTool 创建媒体发送工具 schema（供 ToolRegistry 注册）。
+// CreateSendMediaTool 创建媒体发送工具 schema。
 // 实际执行由 runner/tool_executor.go 处理，sender 参数保留用于接口兼容。
 func CreateSendMediaTool(_ MediaSender) *AgentTool {
 	return &AgentTool{
@@ -50,11 +50,10 @@ func CreateSendMediaTool(_ MediaSender) *AgentTool {
 				},
 			},
 		},
-		// Execute 是 ToolRegistry 要求的占位实现。
-		// 实际 send_media 执行由 runner/tool_executor.go 的 executeSendMedia() 处理，
-		// 此处 Execute 不会被调用（CreateSendMediaTool 仅用于 schema 注册）。
+		// Execute 占位实现。
+		// 实际 send_media 执行由 runner/tool_executor.go 的 executeSendMedia() 处理。
 		Execute: func(ctx context.Context, toolCallID string, args map[string]any) (*AgentToolResult, error) {
-			return nil, fmt.Errorf("send_media: execution should be handled by tool_executor.go, not ToolRegistry Execute path")
+			return nil, fmt.Errorf("send_media: execution should be handled by tool_executor.go, not Execute path")
 		},
 	}
 }

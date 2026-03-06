@@ -50,6 +50,7 @@ type DynamicPromptParams struct {
 	WorkspaceDir       string        // workspace 目录（扫描 context files）
 	ContextTokenBudget int           // context 文件的 token 预算（0=无限制）
 	AgentID            string        // agent 身份
+	IsSubagent         bool          // true = 子智能体会话（过滤掉 MEMORY.md 等主会话专属文件）
 	ContextFiles       []ContextFile // 预指定的 context files（优先于扫描）
 }
 
@@ -66,6 +67,11 @@ func BuildDynamicSystemPrompt(params DynamicPromptParams) string {
 	contextFiles := params.ContextFiles
 	if len(contextFiles) == 0 && params.WorkspaceDir != "" {
 		contextFiles = ResolveContextFiles(params.WorkspaceDir)
+	}
+
+	// 2b. 子智能体会话过滤：移除主会话专属 context files
+	if params.IsSubagent && len(contextFiles) > 0 {
+		contextFiles = filterSubagentContextFiles(contextFiles)
 	}
 
 	if len(contextFiles) == 0 {
@@ -256,6 +262,27 @@ func EstimatePromptTokens(text string) int {
 }
 
 // ---------- 内部辅助 ----------
+
+// subagentExcludedFiles 子智能体会话中不注入的 context 文件。
+// MEMORY.md 含主会话记忆，注入子智能体会导致 WARM_START 误判和上下文污染。
+// SOUL.md 同理——子智能体的系统提示词由 announce_helpers 单独构建。
+var subagentExcludedFiles = map[string]bool{
+	"MEMORY.md": true,
+	"SOUL.md":   true,
+}
+
+// filterSubagentContextFiles 过滤掉子智能体不应接收的 context 文件。
+func filterSubagentContextFiles(files []ContextFile) []ContextFile {
+	var filtered []ContextFile
+	for _, f := range files {
+		base := filepath.Base(f.Path)
+		if subagentExcludedFiles[base] {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+	return filtered
+}
 
 // truncateToTokenBudget 截断文本到指定 token 预算内。
 func truncateToTokenBudget(text string, tokenBudget int) string {

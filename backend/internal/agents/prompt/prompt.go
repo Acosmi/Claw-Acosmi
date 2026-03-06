@@ -216,8 +216,9 @@ func BuildAgentSystemPrompt(params BuildParams) string {
 	if !isMinimal && available["spawn_coder_agent"] {
 		add(buildDelegationGuidanceSection())
 	}
-	// 3.6 三级指挥体系（Phase 1: 仅在方案确认门控可用时注入，非 minimal 模式）
-	if !isMinimal && params.PlanConfirmationEnabled {
+	// 3.6 三级指挥体系（Fix R2: 按工具可用性注入，而非仅按配置开关）
+	// 只有在方案确认门控可用 AND 子智能体工具真实可用时才注入
+	if !isMinimal && params.PlanConfirmationEnabled && available["spawn_coder_agent"] {
 		add(buildPlanGenerationSection())
 	}
 	// 4. Safety

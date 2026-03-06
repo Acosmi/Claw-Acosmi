@@ -1,253 +1,65 @@
-# OpenAcosmi — oa-sandbox Agent Directives
+# Claw Acosmi 运行时指引
 
-> This file is auto-loaded by Claude Code. It defines mandatory execution rules for
-> the oa-sandbox development agent. Full specifications are in `docs/SKILL-*.md`.
+> 本文件会作为项目上下文自动注入主智能体提示词。
+> 内容应保持精简、稳定，并与当前 Claw Acosmi 运行时一致。
+> 旧版 Claude / oa-sandbox Skill 1-5 内容已归档到
+> `docs/claude/archive/2026-03-06-legacy-claude-md-oa-sandbox-skill-1-5-backup.md`。
 
-## Project Overview
+## 作用
 
-Polyglot monorepo: Rust CLI (`cli-rust/`) + Go backend (`backend/`) + frontend (`ui/`).
-Primary focus module: **oa-sandbox** (sandbox/container isolation subsystem).
+本文件定义 Claw Acosmi 的跨任务运行时指引。
+它不是技能系统，不是任务跟踪表，也不是代码审计清单。
+具体工具工作流在 `docs/skills/**/SKILL.md`。
+架构说明、历史记录和迁移文档在 `docs/claude/**`。
 
----
+## 运行时模型
 
-## Skill 1: Workspace Governance
+- 当前生效的是 Claw Acosmi 运行时，不是旧的 oa-sandbox 单模块工作流。
+- 工具能力和安全边界以当前实现和运行时配置为准，不以旧 prose 文档为准。
+- 不要凭空发明比当前工具/运行时更严格的路径规则。
+- 不要把旧 `docs/SKILL-*.md` 引用当成当前主行为来源。
 
-> Prevent token waste. Scope all operations surgically. Full spec: `docs/SKILL-1-WORKSPACE-GOVERNANCE.md`
+## 工作方式
 
-### Allowed Paths
+- 标准任务优先直接执行：查看代码、调用工具、核实结果、再回复用户。
+- 只有在歧义会实质改变结果，或存在不可逆风险时才提问。
+- 除非用户明确要求，否则不要强行套用文档驱动计划、审计门禁或在线验证仪式。
+- 没有真实工具结果时，不得声称任务已成功。
 
-| Scope | Paths |
-|---|---|
-| Primary | `cli-rust/crates/oa-cmd-sandbox/`, `cli-rust/crates/oa-runtime/` |
-| Supporting | `cli-rust/crates/oa-types/`, `cli-rust/crates/oa-config/`, `cli-rust/crates/oa-infra/` |
-| Docs | `docs/`, `docs/claude/` |
-| Context | `Dockerfile.sandbox*`, `docker-compose.yml` |
+## 搜索与范围
 
-Anything outside requires **explicit user authorization**.
+- 用户只说文件名、不说路径时，应按请求的真实范围搜索，不要默认先钻进 `docs/claude/`。
+- 仓库内任务先看代码和当前实现，再决定下一步。
+- 桌面、本地文件等用户路径任务，先判断相关工具是否真的能访问该路径。
+- 如果工具不能直接访问源路径，要立即说明真实阻塞点，并给出最短安全中转方案。
 
-### Forbidden at Project Root
+## 频道交付
 
-- `find .` / `tree` / `ls -R` (recursive listing)
-- Unbounded `grep -r` / `rg` without path constraint
-- `Read` on files >500 lines without `offset`/`limit`
-- Glob `**/*` at root level
+- `webchat` 和远程频道是相互独立的频道，不默认互相镜像。
+- 用户在远程频道说“把这个文件发给我”时，优先向当前远程频道使用 `send_media`。
+- 文件转发默认保留原始 basename。
+- 除非用户明确要求，或工具边界确实需要临时复制，否则不要擅自重命名、规范化或搬移文件。
+- 发送完成后，优先回报工具真实返回的目标、文件名和大小。
 
-### Exploration Protocol
+## 审批与风险
 
-1. Ask first if target path is uncertain
-2. Single-level `ls` only
-3. Targeted `Read` with offset/limit for large files
-4. Document reason for cross-module access in tracking doc
+- 删除、提权、权限边界变化等操作都属于审批敏感动作。
+- 简单查询、读取、文件转发任务，不要轻易包装成大写任务或复杂方案确认。
+- 如果审批或作用域真的阻塞执行，要立即告诉用户，不要让任务静默卡住。
 
----
+## Browser 与 Argus
 
-## Skill 2: DocOps (Document-Driven Operations)
+- 网页和 DOM 交互优先使用 `browser`。
+- 原生桌面界面、读屏、视觉定位和多步 UI 操作优先使用 Argus。
+- 多步桌面任务优先让 Argus 以子智能体方式执行，主智能体不要过度逐步直控。
 
-> Every task is traceable from plan to archive. Full spec: `docs/SKILL-2-DOCOPS.md`
+## 进度汇报
 
-### Directory Structure
+- 较长任务应在系统支持时使用异步和进度汇报机制。
+- 当前频道支持阶段性进度时，提供简短明确的阶段更新。
+- 当前频道不稳定支持中途进度时，至少保证最终结果清晰可见。
 
-```
-docs/claude/
-  tracking/     # Active task decomposition & progress
-  deferred/     # TODOs, blockers, gotchas, tech debt
-  audit/        # Code-level review reports (Skill 4)
-  archive/      # Completed & audited items (read-only)
-```
+## 历史边界
 
-### Mandatory Document Header
-
-Every `docs/claude/**/*.md` file must start with:
-
-```yaml
----
-document_type: Tracking | Deferred | Audit | Archive
-status: Draft | In Progress | Auditing | Archived
-created: YYYY-MM-DD
-last_updated: YYYY-MM-DD
-audit_report: Pending | <path to audit report>
-skill5_verified: true | false
----
-```
-
-### Task Lifecycle
-
-```
-[Plan] → [Track] → [Execute] → [Audit] → [Archive]
-```
-
-- **Plan**: Decompose into checkbox items in `tracking/`. Trigger Skill 5 verification.
-- **Track**: Check off `[x]` as steps complete.
-- **Defer**: Immediately log blockers/TODOs/gotchas to `deferred/`. Never leave them only in conversation.
-- **Audit**: Trigger Skill 4 before closing.
-- **Archive**: Requires completed audit report (Skill 4 gate). No exceptions.
-
-### Archive Gate
-
-**Hard stop** — no item moves to `archive/` without:
-- All checkboxes `[x]`
-- Audit report in `audit/` covering every code change
-- Audit link populated in document header
-- Status set to `Archived`
-
----
-
-## Skill 3: Rust Sandbox Coding Standard
-
-> Zero-panic, resource-safe, security-critical code. Full spec: `docs/SKILL-3-RUST-SANDBOX-CODING.md`
-
-### 3.1 Zero-Panic Policy
-
-Production code (non-test) **must never panic**:
-
-| Banned | Use Instead |
-|---|---|
-| `.unwrap()` | `.context("...")?` / `.map_err(...)?` |
-| `.expect()` | `.ok_or_else(\|\| Error::...)?` |
-| `panic!()` / `unreachable!()` / `todo!()` | `return Err(...)` |
-| `array[i]` on untrusted input | `.get(i).ok_or(...)?` |
-
-Exceptions: `#[cfg(test)]`, truly infallible static init (with `// SAFETY:` comment).
-
-### 3.2 Error Propagation
-
-- `thiserror` for library errors (typed, matchable)
-- `anyhow` for CLI/application errors (contextual)
-- Every `?` in public functions needs `.context()` or typed error
-- Preserve underlying `io::Error` via `#[source]`
-- Include identifiers (PID, path, fd) in error messages
-
-### 3.3 Unsafe Boundary Control
-
-- **Minimize scope**: wrap only the FFI call
-- **`// SAFETY:` comment mandatory**: explain invariants, soundness, and failure modes
-- **Encapsulate**: safe public API over internal `unsafe`; never expose `unsafe` publicly
-- All `unsafe` blocks are high-priority Skill 4 audit targets
-
-### 3.4 Resource Lifecycle
-
-| Resource | Release | Failure Mode |
-|---|---|---|
-| Child process | `wait()` / `kill()+wait()` via `Drop` | Zombie process |
-| File descriptor | `Drop` on `OwnedFd` | FD exhaustion |
-| Temp directory | `Drop` on `TempDir` | Disk fill |
-| Job Object (Win) | `CloseHandle` via Drop wrapper | Orphan processes |
-| Network namespace | Process exit / explicit teardown | Stale namespace |
-
-Every `Command::spawn()` needs a reap path. Use RAII (`Drop`, `scopeguard`) for cleanup.
-
-### 3.5 Concurrency
-
-- Prefer message passing (`mpsc`, `oneshot`) over `Arc<Mutex<T>>`
-- Document lock ordering if shared state is necessary
-- Never hold a lock across `.await`
-- Document cancel-safety of `tokio::select!` branches
-
----
-
-## Skill 4: Granular Code-Level Audit
-
-> "LGTM" is not an audit. Full spec: `docs/SKILL-4-CODE-AUDIT.md`
-
-### Banned Responses
-
-- "Code looks good / LGTM"
-- "Logic appears correct"
-- "No obvious issues"
-- Summarizing without analyzing correctness
-
-### Audit Checklist
-
-**Security:**
-- Path traversal (`..`, symlinks, TOCTOU)
-- Namespace/permission boundary correctness
-- Privilege escalation vectors
-- Input validation (CLI args, env vars, IPC, files)
-
-**Resource Safety:**
-- Error path cleanup (FDs, processes, temp files, locks)
-- Panic path cleanup (`Drop` impls)
-- Concurrency safety (lock ordering, `.await` + lock)
-- Leak potential (zombies, FDs, temp files)
-
-**Correctness:**
-- Edge cases (empty, max-length, Unicode, null bytes, concurrency)
-- Platform differences (macOS/Linux/Windows)
-- Integer overflow
-- Type safety (`as` casts → prefer `try_into()`)
-
-### Report Format
-
-Store in `docs/claude/audit/` as `audit-YYYY-MM-DD-<component>-<description>.md`.
-Must include: scope, per-finding analysis with location/risk/recommendation, and verdict.
-
-### Audit Triggers
-
-1. Archive gate (Skill 2 interlock)
-2. Final checkbox in tracking doc
-3. New or modified `unsafe` code
-4. Changes to namespace/sandbox/permission logic
-5. Process lifecycle changes (spawn/kill/wait)
-6. User request
-
-### Post-Audit
-
-- Save report → update tracking doc header with link → if FAIL: create fix items, block archive
-
----
-
-## Skill 5: Pre-Planning Online Verification
-
-> Verify before you build. Full spec: `docs/SKILL-5-ONLINE-VERIFICATION.md`
-
-### When Mandatory
-
-Before writing code involving: OS syscalls, platform security APIs (Seatbelt, namespaces,
-Job Objects), kernel features (cgroups, eBPF, landlock), new crate adoption, container
-runtime behavior, or filesystem semantics.
-
-### Source Hierarchy
-
-1. **Official docs**: Apple Developer, Microsoft Learn, man7.org
-2. **Ecosystem docs**: docs.rs, crates.io, doc.rust-lang.org
-3. **Source code**: kernel.org, GitHub (runc/containerd)
-4. **Specs**: POSIX, OCI runtime spec, LSM docs
-5. **Tech blogs**: LWN.net (cross-reference required)
-
-Non-authoritative sources (SO, random blogs) need cross-reference with tier 1-4.
-
-### Verification Record
-
-Every planning doc must include:
-
-```markdown
-## Online Verification Log
-### <Topic>
-- **Query**: <search terms>
-- **Source**: <URL>
-- **Key finding**: <1-3 sentences>
-- **Verified date**: YYYY-MM-DD
-```
-
-### Gate
-
-`skill5_verified: false` in document header → **must not** proceed to implementation.
-
----
-
-## Skill Activation Quick Reference
-
-| Trigger | Skills |
-|---|---|
-| New task received | 5 → 2 → 1 |
-| Writing sandbox code | 3, 1 |
-| Task complete | 4 → 2 (archive gate) |
-| Blocker / TODO found | 2 (deferred) |
-| Cross-module access | 1 (boundary check) |
-| OS/API design decision | 5 (mandatory verify) |
-
-## Dependency Graph
-
-```
-Skill 5 (Verify) → Skill 2 (Track) → Skill 3 (Code) → Skill 4 (Audit) → Skill 2 (Archive)
-```
+- 已归档的 oa-sandbox Skill 1-5 材料仅供历史参考。
+- 不得把它当作 Claw Acosmi 当前默认工作模型。

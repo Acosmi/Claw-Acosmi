@@ -43,11 +43,8 @@ Swabble/
 Argus/go-sensory/server
 Argus/build/
 
-# Docs: 保留文档，排除含敏感信息的审计/聊天记录
-docs/claude/
-docs/meiti/audit-*
-docs/xinjiagou/*-audit-*
-docs/renwu/*-audit-*
+# Docs: 屏蔽整个 docs 目录
+docs/
 
 # 隐私与安全 — 严禁上传
 *.pem
