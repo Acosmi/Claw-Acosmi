@@ -278,6 +278,16 @@ function renderDetailModal(task: TaskKanbanItem, props: TaskKanbanProps) {
             `
       : nothing}
 
+          <!-- Recent Step -->
+          ${task.progressText
+      ? html`
+              <div class="tk-detail__block">
+                <div class="tk-detail__block-label">${t("tasks.detail.progress")}</div>
+                <div class="tk-detail__block-text">${task.progressText}</div>
+              </div>
+            `
+      : nothing}
+
           <!-- Summary -->
           ${task.summary
       ? html`

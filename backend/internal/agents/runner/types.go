@@ -65,6 +65,23 @@ type MediaBlock struct {
 	Base64   string `json:"base64"`
 }
 
+// ---------- 进度汇报 ----------
+
+// ProgressUpdate report_progress 的结构化进度负载。
+type ProgressUpdate struct {
+	Summary string `json:"summary"`
+	Percent int    `json:"percent,omitempty"`
+	Phase   string `json:"phase,omitempty"`
+}
+
+// ProgressReportStatus 远程进度投递结果。
+// 默认零值表示仅更新本地实时界面。
+type ProgressReportStatus struct {
+	RemoteDelivered bool   `json:"remoteDelivered,omitempty"`
+	Throttled       bool   `json:"throttled,omitempty"`
+	Error           string `json:"error,omitempty"`
+}
+
 // ---------- 运行结果 ----------
 
 // EmbeddedPiRunResult 嵌入式 PI 运行结果。
@@ -180,6 +197,9 @@ type RunEmbeddedPiAgentParams struct {
 	// 工具执行前后调用，用于频道广播工具名称、参数摘要和结果摘要。
 	// nil = 不广播工具事件（默认，向后兼容）。
 	OnToolEvent func(event ToolEvent) `json:"-"`
+	// OnProgress 中间进度回调（可选）。
+	// 用于将 report_progress 同步到显式开启的远程渠道；nil = 仅本地实时事件。
+	OnProgress func(ctx context.Context, update ProgressUpdate) ProgressReportStatus `json:"-"`
 	// AgentChannel 异步消息通道（可选，nil = 不支持求助通道）。
 	// Phase 4: 三级指挥体系 — 子智能体执行中异步向主智能体求助。
 	AgentChannel *AgentChannel `json:"-"`

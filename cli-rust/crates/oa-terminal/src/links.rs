@@ -4,8 +4,8 @@
 ///
 /// Source: `src/terminal/links.ts`, `src/utils.ts`
 
-/// Root URL for OpenAcosmi documentation.
-pub const DOCS_ROOT: &str = "https://github.com/Acosmi/Claw-Acismi/tree/main/docs";
+/// Root URL for Claw Acosmi documentation.
+pub const DOCS_ROOT: &str = "https://github.com/Acosmi/Claw-Acosmi/tree/main/docs";
 
 /// Format an OSC-8 terminal hyperlink.
 ///

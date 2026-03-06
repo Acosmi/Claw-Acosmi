@@ -36,6 +36,10 @@ func CreateSendMediaTool(_ MediaSender) *AgentTool {
 					"type":        "string",
 					"description": "Base64-encoded media data. Only use when data is already in base64 form.",
 				},
+				"file_name": map[string]any{
+					"type":        "string",
+					"description": "Optional original filename. Recommended when using media_base64 so channels can preserve the attachment name.",
+				},
 				"mime_type": map[string]any{
 					"type":        "string",
 					"description": "MIME type. Auto-detected from file extension when using file_path.",

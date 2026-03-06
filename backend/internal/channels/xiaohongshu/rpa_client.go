@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -254,19 +255,20 @@ func (c *XHSRPAClient) extractPublishedURL(ctx context.Context, browser BrowserD
 }
 
 // extractNoteID 从 URL 提取笔记 ID。
-func (c *XHSRPAClient) extractNoteID(url string) string {
-	// URL 格式: https://www.xiaohongshu.com/explore/<noteID>
-	if url == "" {
+// URL 格式: https://www.xiaohongshu.com/explore/<noteID> 或带尾部斜杠。
+func (c *XHSRPAClient) extractNoteID(rawURL string) string {
+	if rawURL == "" {
 		return ""
 	}
-	// 简单提取最后一段路径
-	for i := len(url) - 1; i >= 0; i-- {
-		if url[i] == '/' {
-			id := url[i+1:]
-			if id != "" {
-				return id
-			}
-		}
+	// 去除尾部斜杠和查询参数
+	s := rawURL
+	if idx := strings.IndexByte(s, '?'); idx >= 0 {
+		s = s[:idx]
+	}
+	s = strings.TrimRight(s, "/")
+	// 取最后一段路径
+	if idx := strings.LastIndexByte(s, '/'); idx >= 0 {
+		return s[idx+1:]
 	}
 	return ""
 }
@@ -274,16 +276,16 @@ func (c *XHSRPAClient) extractNoteID(url string) string {
 // ---------- 频率控制 ----------
 
 // rateLimit 操作间隔控制（≥ 配置秒数 + 随机延迟）。
+// 锁仅用于读写 lastAction，sleep 在锁外执行，避免阻塞并发调用。
 func (c *XHSRPAClient) rateLimit() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	minInterval := time.Duration(c.cfg.RateLimitSeconds) * time.Second
 	if minInterval < 5*time.Second {
 		minInterval = 5 * time.Second
 	}
-
 	elapsed := time.Since(c.lastAction)
+	c.mu.Unlock()
+
 	if elapsed < minInterval {
 		time.Sleep(minInterval - elapsed)
 	}
@@ -292,5 +294,7 @@ func (c *XHSRPAClient) rateLimit() {
 	jitter := time.Duration(rand.Intn(2000)) * time.Millisecond
 	time.Sleep(jitter)
 
+	c.mu.Lock()
 	c.lastAction = time.Now()
+	c.mu.Unlock()
 }

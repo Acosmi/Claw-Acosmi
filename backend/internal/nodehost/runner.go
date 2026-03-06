@@ -10,6 +10,7 @@ package nodehost
 // GatewayClient 处理，此处定义 HandleInvoke 回调供 gateway 注册使用。
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"runtime"
@@ -18,6 +19,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Acosmi/ClawAcosmi/internal/infra"
+)
+
+const (
+	defaultNodeApprovalTimeoutMs        = 120_000
+	defaultNodeApprovalRequestTimeoutMs = 130_000
 )
 
 // ---------- 公开 API ----------
@@ -255,9 +261,14 @@ func (s *NodeHostService) handleSystemRun(frame *NodeInvokeRequest) {
 		cmdText = FormatCommand(argv)
 	}
 
+	agentID := StringOrDefault(params.AgentID, "main")
 	sessionKey := StringOrDefault(params.SessionKey, "node")
 	runID := StringOrDefault(params.RunID, uuid.NewString())
 	env := SanitizeEnv(params.Env)
+	cwd := ""
+	if params.Cwd != nil {
+		cwd = strings.TrimSpace(*params.Cwd)
+	}
 
 	// 安全检查: screenRecording
 	if params.NeedsScreenRecording != nil && *params.NeedsScreenRecording {
@@ -269,16 +280,126 @@ func (s *NodeHostService) handleSystemRun(frame *NodeInvokeRequest) {
 		return
 	}
 
+	// 节点本地审批文件是 system.run 的唯一 allowlist/ask 数据源。
+	snapshot := infra.ReadExecApprovalsSnapshot()
+	resolved := ResolveExecApprovalsFromFile(struct {
+		File       *infra.ExecApprovalsFile
+		AgentID    string
+		Overrides  *ExecApprovalsDefaultOverrides
+		Path       string
+		SocketPath string
+		Token      string
+	}{
+		File:    snapshot.File,
+		AgentID: agentID,
+		Path:    snapshot.Path,
+	})
+
+	hostSecurity := resolved.Agent.Security
+	hostAsk := resolved.Agent.Ask
+
+	if hostSecurity == infra.ExecSecurityDeny {
+		s.denySystemRun(frame, sessionKey, runID, cmdText, "security:deny", "SYSTEM_RUN_DENIED: security=deny")
+		return
+	}
+
+	safeBins := ResolveSafeBins(nil)
+	var skillBins map[string]struct{}
+	if resolved.Agent.AutoAllowSkills && s.skillBins != nil {
+		skillBins = s.skillBins.Current(false)
+	}
+	analysis := EvaluateShellAllowlist(
+		cmdText,
+		resolved.Allowlist,
+		safeBins,
+		cwd,
+		env,
+		skillBins,
+		resolved.Agent.AutoAllowSkills,
+		currentNodePlatform(),
+	)
+	analysisOk := analysis.AnalysisOk
+	allowlistSatisfied := false
+	if hostSecurity == infra.ExecSecurityAllowlist && analysisOk {
+		allowlistSatisfied = analysis.AllowlistSatisfied
+	}
+
+	approvedByAsk, approvalDecision := approvedSystemRunDecision(params)
+	requiresAsk := RequiresExecApproval(hostAsk, hostSecurity, analysisOk, allowlistSatisfied)
+	if requiresAsk && !approvedByAsk {
+		decision, err := RequestExecApprovalViaSocket(
+			context.Background(),
+			resolved.SocketPath,
+			resolved.Token,
+			map[string]interface{}{
+				"id":         runID,
+				"command":    cmdText,
+				"cwd":        cwd,
+				"host":       "node",
+				"security":   string(hostSecurity),
+				"ask":        string(hostAsk),
+				"agentId":    agentID,
+				"sessionKey": sessionKey,
+				"timeoutMs":  defaultNodeApprovalTimeoutMs,
+			},
+			defaultNodeApprovalRequestTimeoutMs,
+		)
+		if err != nil {
+			s.denySystemRun(frame, sessionKey, runID, cmdText, "approval-request-failed", "SYSTEM_RUN_DENIED: approval request failed")
+			return
+		}
+
+		switch decision {
+		case ExecApprovalDeny:
+			s.denySystemRun(frame, sessionKey, runID, cmdText, "user-denied", "SYSTEM_RUN_DENIED: user denied")
+			return
+		case ExecApprovalAllowAlways:
+			approvedByAsk = true
+			approvalDecision = decision
+		case ExecApprovalAllowOnce:
+			approvedByAsk = true
+			approvalDecision = decision
+		default:
+			switch resolved.Agent.AskFallback {
+			case infra.ExecSecurityFull:
+				approvedByAsk = true
+				approvalDecision = ExecApprovalAllowOnce
+			case infra.ExecSecurityAllowlist:
+				if analysisOk && allowlistSatisfied {
+					approvedByAsk = true
+					approvalDecision = ExecApprovalAllowOnce
+				} else {
+					s.denySystemRun(frame, sessionKey, runID, cmdText, "allowlist-miss", "SYSTEM_RUN_DENIED: allowlist miss")
+					return
+				}
+			default:
+				s.denySystemRun(frame, sessionKey, runID, cmdText, "approval-timeout", "SYSTEM_RUN_DENIED: approval timeout")
+				return
+			}
+		}
+	}
+
+	if hostSecurity == infra.ExecSecurityAllowlist && (!analysisOk || !allowlistSatisfied) && !approvedByAsk {
+		reason := "allowlist-miss"
+		message := "SYSTEM_RUN_DENIED: allowlist miss"
+		if !analysisOk {
+			reason = "allowlist-analysis-failed"
+			message = "SYSTEM_RUN_DENIED: allowlist analysis failed"
+		}
+		s.denySystemRun(frame, sessionKey, runID, cmdText, reason, message)
+		return
+	}
+
+	if approvalDecision == ExecApprovalAllowAlways && hostSecurity == infra.ExecSecurityAllowlist {
+		recordAllowAlwaysEntries(resolved.File, agentID, analysis.Segments)
+	}
+	recordAllowlistMatches(resolved.File, agentID, analysis.AllowlistMatches, cmdText, firstResolvedSegmentPath(analysis.Segments))
+
 	// 执行命令
 	timeoutMs := 0
 	if params.TimeoutMs != nil {
 		timeoutMs = *params.TimeoutMs
 	}
-	cwd := ""
-	if params.Cwd != nil {
-		cwd = strings.TrimSpace(*params.Cwd)
-	}
-
 	result := RunCommand(argv, cwd, env, timeoutMs)
 	if result.Truncated {
 		suffix := "... (truncated)"
@@ -312,6 +433,88 @@ func (s *NodeHostService) handleSystemRun(frame *NodeInvokeRequest) {
 	}
 	data, _ := json.Marshal(payload)
 	s.sendInvokeResult(frame, true, string(data), nil)
+}
+
+func (s *NodeHostService) denySystemRun(
+	frame *NodeInvokeRequest,
+	sessionKey, runID, cmdText, reason, message string,
+) {
+	s.sendNodeEvent("exec.denied", BuildExecEventPayload(&ExecEventPayload{
+		SessionKey: sessionKey,
+		RunID:      runID,
+		Host:       "node",
+		Command:    cmdText,
+		Reason:     reason,
+	}))
+	s.sendInvokeResult(frame, false, "", &InvokeErrorShape{Code: "FORBIDDEN", Message: message})
+}
+
+func approvedSystemRunDecision(params SystemRunParams) (bool, ExecApprovalDecision) {
+	if params.Approved == nil || !*params.Approved {
+		return false, ""
+	}
+	if params.ApprovalDecision == nil {
+		return true, ExecApprovalAllowOnce
+	}
+	switch ExecApprovalDecision(strings.TrimSpace(*params.ApprovalDecision)) {
+	case ExecApprovalAllowAlways:
+		return true, ExecApprovalAllowAlways
+	case ExecApprovalAllowOnce:
+		return true, ExecApprovalAllowOnce
+	default:
+		return true, ExecApprovalAllowOnce
+	}
+}
+
+func recordAllowAlwaysEntries(file *infra.ExecApprovalsFile, agentID string, segments []ExecCommandSegment) {
+	seen := make(map[string]struct{})
+	for _, seg := range segments {
+		if seg.Resolution == nil || strings.TrimSpace(seg.Resolution.ResolvedPath) == "" {
+			continue
+		}
+		resolvedPath := strings.TrimSpace(seg.Resolution.ResolvedPath)
+		if _, ok := seen[resolvedPath]; ok {
+			continue
+		}
+		seen[resolvedPath] = struct{}{}
+		AddAllowlistEntry(file, agentID, resolvedPath)
+	}
+}
+
+func recordAllowlistMatches(
+	file *infra.ExecApprovalsFile,
+	agentID string,
+	matches []infra.ExecAllowlistEntry,
+	command, resolvedPath string,
+) {
+	if file == nil || len(matches) == 0 {
+		return
+	}
+	seen := make(map[string]struct{})
+	for _, match := range matches {
+		pattern := strings.TrimSpace(match.Pattern)
+		if pattern == "" {
+			continue
+		}
+		if _, ok := seen[pattern]; ok {
+			continue
+		}
+		seen[pattern] = struct{}{}
+		RecordAllowlistUse(file, agentID, match, command, resolvedPath)
+	}
+}
+
+func firstResolvedSegmentPath(segments []ExecCommandSegment) string {
+	for _, seg := range segments {
+		if seg.Resolution == nil {
+			continue
+		}
+		resolvedPath := strings.TrimSpace(seg.Resolution.ResolvedPath)
+		if resolvedPath != "" {
+			return resolvedPath
+		}
+	}
+	return ""
 }
 
 // ---------- 通信辅助 ----------
@@ -365,4 +568,15 @@ func joinNonEmpty(sep string, parts ...string) string {
 // IsDarwin 返回当前平台是否为 macOS。
 func IsDarwin() bool {
 	return runtime.GOOS == "darwin"
+}
+
+func currentNodePlatform() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "darwin"
+	case "windows":
+		return "win32"
+	default:
+		return runtime.GOOS
+	}
 }

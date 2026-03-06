@@ -47,7 +47,9 @@ func NewSTTProvider(cfg *types.STTConfig) (STTProvider, error) {
 	case "azure":
 		return NewOpenAISTT(cfg), nil // Azure 也走 OpenAI 兼容 API
 	case "qwen":
-		// 通义千问 DashScope 原生 API（不走 OpenAI 兼容端点，因其不支持 /audio/transcriptions）
+		// 通义千问 DashScope — 使用 WebSocket 实时语音识别 API。
+		// DashScope 原生批量转录 API 仅接受 HTTP(S) URL，OpenAI 兼容端点不支持 /audio/transcriptions，
+		// 因此使用 WebSocket API（wss://dashscope.aliyuncs.com/api-ws/v1/inference/）直接传入音频字节。
 		return NewDashScopeSTT(cfg), nil
 	case "ollama":
 		// 本地 Ollama OpenAI 兼容 API

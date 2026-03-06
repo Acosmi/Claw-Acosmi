@@ -3,8 +3,8 @@ package gateway
 // server_methods_exec_approvals.go — exec.approvals.* 方法处理器
 // 对应 TS: src/gateway/server-methods/exec-approvals.ts
 //
-// 管理执行审批配置。exec.approvals.get/set 操作本地 JSON 文件，
-// exec.approvals.node.get/set 需要 node registry，暂保留 stub。
+// 管理执行审批配置。exec.approvals.get/set 操作本地 JSON 文件。
+// node 审批文件改为节点本地维护；Gateway 不再代理 exec.approvals.node.get/set。
 
 import (
 	"strings"
@@ -17,8 +17,8 @@ func ExecApprovalsHandlers() map[string]GatewayMethodHandler {
 	return map[string]GatewayMethodHandler{
 		"exec.approvals.get":      handleExecApprovalsGet,
 		"exec.approvals.set":      handleExecApprovalsSet,
-		"exec.approvals.node.get": handleExecApprovalsNodeGetStub,
-		"exec.approvals.node.set": handleExecApprovalsNodeSetStub,
+		"exec.approvals.node.get": handleExecApprovalsNodeGetUnsupported,
+		"exec.approvals.node.set": handleExecApprovalsNodeSetUnsupported,
 	}
 }
 
@@ -132,34 +132,36 @@ func handleExecApprovalsSet(ctx *MethodHandlerContext) {
 }
 
 // ---------- exec.approvals.node.get / node.set ----------
-// 需要 node registry（尚未在 Go 中实现），暂保留 stub。
+// node 审批文件由节点主机本地维护；Gateway 不做代理。
 
-func handleExecApprovalsNodeGetStub(ctx *MethodHandlerContext) {
+func handleExecApprovalsNodeGetUnsupported(ctx *MethodHandlerContext) {
 	nodeId, _ := ctx.Params["nodeId"].(string)
 	if strings.TrimSpace(nodeId) == "" {
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "nodeId required"))
 		return
 	}
-	ctx.Respond(true, map[string]interface{}{
-		"ok":      true,
-		"stub":    true,
-		"method":  "exec.approvals.node.get",
-		"message": "node registry not yet implemented in Go gateway",
-	}, nil)
+	ctx.Respond(false, nil, NewErrorShape(
+		ErrCodeUnsupportedFeature,
+		"remote node exec approvals are maintained on the node host; gateway proxying is not supported",
+	).WithDetails(map[string]interface{}{
+		"method": "exec.approvals.node.get",
+		"nodeId": strings.TrimSpace(nodeId),
+	}))
 }
 
-func handleExecApprovalsNodeSetStub(ctx *MethodHandlerContext) {
+func handleExecApprovalsNodeSetUnsupported(ctx *MethodHandlerContext) {
 	nodeId, _ := ctx.Params["nodeId"].(string)
 	if strings.TrimSpace(nodeId) == "" {
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "nodeId required"))
 		return
 	}
-	ctx.Respond(true, map[string]interface{}{
-		"ok":      true,
-		"stub":    true,
-		"method":  "exec.approvals.node.set",
-		"message": "node registry not yet implemented in Go gateway",
-	}, nil)
+	ctx.Respond(false, nil, NewErrorShape(
+		ErrCodeUnsupportedFeature,
+		"remote node exec approvals are maintained on the node host; gateway proxying is not supported",
+	).WithDetails(map[string]interface{}{
+		"method": "exec.approvals.node.set",
+		"nodeId": strings.TrimSpace(nodeId),
+	}))
 }
 
 // ---------- 辅助：从 map 解析 ExecApprovalsFile ----------
@@ -218,6 +220,9 @@ func parseExecApprovalsDefaults(m map[string]interface{}) *infra.ExecApprovalsDe
 	d := &infra.ExecApprovalsDefaults{}
 	if s, ok := m["security"].(string); ok {
 		d.Security = infra.ExecSecurity(s)
+	}
+	if ef, ok := m["escalationFallback"].(string); ok {
+		d.EscalationFallback = infra.ExecEscalationFallback(ef)
 	}
 	if a, ok := m["ask"].(string); ok {
 		d.Ask = infra.ExecAsk(a)

@@ -33,6 +33,12 @@ type MediaStateStore interface {
 	GetPublishStats() PublishStats
 	// RecordPublish 记录一次发布事件。
 	RecordPublish(platform, title string) error
+	// CanAutoSpawn 检查今日是否可自动 spawn（计数未超限）。
+	CanAutoSpawn(maxPerDay int) bool
+	// RecordAutoSpawn 记录一次自动 spawn。
+	RecordAutoSpawn() error
+	// GetAutoSpawnCount 获取今日自动 spawn 计数。
+	GetAutoSpawnCount() int
 }
 
 // ---------- 数据结构 ----------
@@ -49,6 +55,10 @@ type MediaState struct {
 	LastPublishedTitle string `json:"last_published_title,omitempty"`
 	// UpdatedAt 状态更新时间。
 	UpdatedAt time.Time `json:"updated_at"`
+	// AutoSpawnCount 今日自动 spawn 计数。
+	AutoSpawnCount int `json:"auto_spawn_count,omitempty"`
+	// AutoSpawnResetDay 自动 spawn 计数重置日期（"2006-01-02" 格式）。
+	AutoSpawnResetDay string `json:"auto_spawn_reset_day,omitempty"`
 }
 
 // PublishStats 发布统计摘要。
@@ -178,6 +188,44 @@ func (s *FileMediaStateStore) RecordPublish(platform, title string) error {
 	return s.writeToDisk(s.state)
 }
 
+// CanAutoSpawn 检查今日是否可自动 spawn（计数未超限）。
+// 跨日自动重置计数。
+func (s *FileMediaStateStore) CanAutoSpawn(maxPerDay int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	today := time.Now().UTC().Format("2006-01-02")
+	if s.state.AutoSpawnResetDay != today {
+		// 跨日：视为可用
+		return true
+	}
+	return s.state.AutoSpawnCount < maxPerDay
+}
+
+// RecordAutoSpawn 记录一次自动 spawn，跨日自动重置计数。
+func (s *FileMediaStateStore) RecordAutoSpawn() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	today := time.Now().UTC().Format("2006-01-02")
+	if s.state.AutoSpawnResetDay != today {
+		s.state.AutoSpawnCount = 0
+		s.state.AutoSpawnResetDay = today
+	}
+	s.state.AutoSpawnCount++
+	s.state.UpdatedAt = time.Now().UTC()
+	return s.writeToDisk(s.state)
+}
+
+// GetAutoSpawnCount 获取今日自动 spawn 计数。跨日返回 0。
+func (s *FileMediaStateStore) GetAutoSpawnCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	today := time.Now().UTC().Format("2006-01-02")
+	if s.state.AutoSpawnResetDay != today {
+		return 0
+	}
+	return s.state.AutoSpawnCount
+}
+
 // ---------- 内部 I/O ----------
 
 func (s *FileMediaStateStore) loadFromDisk() (*MediaState, error) {
@@ -212,6 +260,8 @@ func cloneMediaState(src *MediaState) *MediaState {
 		UpdatedAt:          src.UpdatedAt,
 		LastPublishedTitle: src.LastPublishedTitle,
 		LastPublishedAt:    src.LastPublishedAt,
+		AutoSpawnCount:     src.AutoSpawnCount,
+		AutoSpawnResetDay:  src.AutoSpawnResetDay,
 	}
 	if src.ProcessedTopics != nil {
 		clone.ProcessedTopics = make(map[string]time.Time, len(src.ProcessedTopics))

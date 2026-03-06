@@ -175,7 +175,7 @@ type EmbeddedAttemptRunner struct {
 	}
 	// MediaSender 媒体文件发送器（可选，nil = send_media 工具不可用）
 	MediaSender interface {
-		SendMedia(ctx context.Context, channelID, to string, data []byte, mimeType, message string) error
+		SendMedia(ctx context.Context, channelID, to string, data []byte, fileName, mimeType, message string) error
 	}
 	// MediaSubsystem 媒体子系统（可选，nil = spawn_media_agent 工具不注册）。
 	// 提供 trending_topics / content_compose / media_publish / social_interact 工具。
@@ -304,47 +304,53 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 	tools = filterToolsByIntent(tools, tier)
 	log.Debug("intent filter", "tier", tier, "toolCount", len(tools), "historyCount", len(priorMessages))
 
+	effectiveSecurityLevel := resolveEffectiveSecurityLevel(params, r.Config)
+
 	// 5c. Phase 1: 方案确认门控（三级指挥体系）
 	// [R1] 使用独立 context，不受 RunAttempt timeout 约束。
 	// 用户确认等待（最长 5min）不消耗 RunAttempt 的执行时间预算。
 	if r.PlanConfirmation != nil && needsPlanConfirmation(tier) && r.PlanConfirmation.ShouldGate() {
-		planCtx, planCancel := context.WithTimeout(context.Background(), r.PlanConfirmation.Timeout())
-		defer planCancel()
+		if effectiveSecurityLevel == "full" {
+			log.Debug("plan confirmation bypassed: full security level", "tier", tier)
+		} else {
+			planCtx, planCancel := context.WithTimeout(context.Background(), r.PlanConfirmation.Timeout())
+			defer planCancel()
 
-		planReq := PlanConfirmationRequest{
-			TaskBrief:  params.Prompt,
-			IntentTier: string(tier),
-		}
-
-		log.Debug("plan confirmation gate triggered", "tier", tier)
-
-		decision, planErr := r.PlanConfirmation.RequestPlanConfirmation(planCtx, planReq)
-		if planErr != nil {
-			log.Warn("plan confirmation error, aborting", "error", planErr)
-			return &AttemptResult{
-				Aborted:        true,
-				AssistantTexts: []string{fmt.Sprintf("方案确认出错: %v", planErr)},
-				SessionIDUsed:  params.SessionID,
-			}, nil
-		}
-
-		switch decision.Action {
-		case "reject":
-			log.Info("plan rejected by user", "feedback", decision.Feedback)
-			return &AttemptResult{
-				Aborted:        true,
-				AssistantTexts: []string{fmt.Sprintf("方案已被拒绝。%s", decision.Feedback)},
-				SessionIDUsed:  params.SessionID,
-			}, nil
-		case "edit":
-			// 用修改后方案增强 prompt 上下文
-			if decision.EditedPlan != "" {
-				messages = append(messages, llmclient.TextMessage("user",
-					fmt.Sprintf("[用户修改方案] %s", decision.EditedPlan)))
-				log.Debug("plan edited by user, augmenting prompt")
+			planReq := PlanConfirmationRequest{
+				TaskBrief:  params.Prompt,
+				IntentTier: string(tier),
 			}
-		case "approve":
-			log.Debug("plan approved by user")
+
+			log.Debug("plan confirmation gate triggered", "tier", tier)
+
+			decision, planErr := r.PlanConfirmation.RequestPlanConfirmation(planCtx, planReq)
+			if planErr != nil {
+				log.Warn("plan confirmation error, aborting", "error", planErr)
+				return &AttemptResult{
+					Aborted:        true,
+					AssistantTexts: []string{fmt.Sprintf("方案确认出错: %v", planErr)},
+					SessionIDUsed:  params.SessionID,
+				}, nil
+			}
+
+			switch decision.Action {
+			case "reject":
+				log.Info("plan rejected by user", "feedback", decision.Feedback)
+				return &AttemptResult{
+					Aborted:        true,
+					AssistantTexts: []string{fmt.Sprintf("方案已被拒绝。%s", decision.Feedback)},
+					SessionIDUsed:  params.SessionID,
+				}, nil
+			case "edit":
+				// 用修改后方案增强 prompt 上下文
+				if decision.EditedPlan != "" {
+					messages = append(messages, llmclient.TextMessage("user",
+						fmt.Sprintf("[用户修改方案] %s", decision.EditedPlan)))
+					log.Debug("plan edited by user, augmenting prompt")
+				}
+			case "approve":
+				log.Debug("plan approved by user")
+			}
 		}
 	}
 
@@ -1353,6 +1359,7 @@ func (r *EmbeddedAttemptRunner) buildToolExecParams(params AttemptParams, secLvl
 		MediaSender:            r.MediaSender,
 		QualityReviewFn:        r.QualityReviewFn,
 		ResultApprovalMgr:      r.ResultApprovalMgr,
+		OnProgress:             params.OnProgress,
 		AgentChannel:           params.AgentChannel, // Phase 4: 从 AttemptParams 获取（每次调用独立）
 		MediaSubsystem:         r.MediaSubsystem,    // 媒体工具 dispatch
 	}
@@ -1636,14 +1643,8 @@ func resolveAllowNetwork(cfg *types.OpenAcosmiConfig) bool {
 	return level == "full" || level == "sandboxed"
 }
 
-// resolveSecurityLevel 从 OpenAcosmiConfig 中提取 tools.exec.security 字段值。
-// 返回规范化的安全级别字符串: "deny", "allowlist", "sandboxed", "full"。
-// 兼容 "sandbox" 作为 "allowlist" 的别名，"off" 作为 "deny" 的别名。
-func resolveSecurityLevel(cfg *types.OpenAcosmiConfig) string {
-	if cfg == nil || cfg.Tools == nil || cfg.Tools.Exec == nil {
-		return "deny"
-	}
-	switch strings.ToLower(strings.TrimSpace(cfg.Tools.Exec.Security)) {
+func normalizeSecurityLevelValue(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "full":
 		return "full"
 	case "sandboxed":
@@ -1655,6 +1656,25 @@ func resolveSecurityLevel(cfg *types.OpenAcosmiConfig) string {
 	default:
 		return "deny"
 	}
+}
+
+func resolveEffectiveSecurityLevel(params AttemptParams, cfg *types.OpenAcosmiConfig) string {
+	if params.SecurityLevelFunc != nil {
+		if level := normalizeSecurityLevelValue(params.SecurityLevelFunc()); level != "" {
+			return level
+		}
+	}
+	return resolveSecurityLevel(cfg)
+}
+
+// resolveSecurityLevel 从 OpenAcosmiConfig 中提取 tools.exec.security 字段值。
+// 返回规范化的安全级别字符串: "deny", "allowlist", "sandboxed", "full"。
+// 兼容 "sandbox" 作为 "allowlist" 的别名，"off" 作为 "deny" 的别名。
+func resolveSecurityLevel(cfg *types.OpenAcosmiConfig) string {
+	if cfg == nil || cfg.Tools == nil || cfg.Tools.Exec == nil {
+		return "deny"
+	}
+	return normalizeSecurityLevelValue(cfg.Tools.Exec.Security)
 }
 
 // (Phase 2A: resolveCoderTimeoutSeconds 已删除 — Coder MCP 模式不再使用)

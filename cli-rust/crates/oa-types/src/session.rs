@@ -1,4 +1,4 @@
-/// Session types for OpenAcosmi CLI.
+/// Session types for Claw Acosmi CLI.
 ///
 /// Source: `src/config/sessions/types.ts`
 

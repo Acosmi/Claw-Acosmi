@@ -6,7 +6,39 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Acosmi/ClawAcosmi/internal/infra"
 )
+
+func setBaseSecurityLevelForTest(t *testing.T, level infra.ExecSecurity) {
+	t.Helper()
+	snapshot := infra.ReadExecApprovalsSnapshot()
+	if snapshot == nil || snapshot.File == nil {
+		t.Fatal("expected exec-approvals snapshot/file")
+	}
+	if snapshot.File.Defaults == nil {
+		snapshot.File.Defaults = &infra.ExecApprovalsDefaults{}
+	}
+	snapshot.File.Defaults.Security = level
+	if err := infra.SaveExecApprovals(snapshot.File); err != nil {
+		t.Fatalf("save exec-approvals: %v", err)
+	}
+}
+
+func setEscalationFallbackForTest(t *testing.T, mode infra.ExecEscalationFallback) {
+	t.Helper()
+	snapshot := infra.ReadExecApprovalsSnapshot()
+	if snapshot == nil || snapshot.File == nil {
+		t.Fatal("expected exec-approvals snapshot/file")
+	}
+	if snapshot.File.Defaults == nil {
+		snapshot.File.Defaults = &infra.ExecApprovalsDefaults{}
+	}
+	snapshot.File.Defaults.EscalationFallback = mode
+	if err := infra.SaveExecApprovals(snapshot.File); err != nil {
+		t.Fatalf("save exec-approvals: %v", err)
+	}
+}
 
 // ---------- Escalation Request ----------
 
@@ -63,6 +95,310 @@ func TestEscalationRequest_InvalidLevel(t *testing.T) {
 
 	if err := mgr.RequestEscalation("esc_001", "invalid", "reason", "", "", "", "", 30); err == nil {
 		t.Error("invalid level should fail")
+	}
+}
+
+func TestEscalationRequest_SameLevelSandboxedWithMountAllowed(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	setBaseSecurityLevelForTest(t, infra.ExecSecuritySandboxed)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	err := mgr.RequestEscalation(
+		"esc_mount_001",
+		"sandboxed",
+		"Need temporary mount",
+		"",
+		"",
+		"",
+		"",
+		30,
+		MountRequest{HostPath: filepath.Join(tmpHome, "external"), MountMode: "rw"},
+	)
+	if err != nil {
+		t.Fatalf("same-level mount extension should be allowed: %v", err)
+	}
+
+	status := mgr.GetStatus()
+	if !status.HasPending || status.Pending == nil {
+		t.Fatal("expected pending request")
+	}
+	if got := len(status.Pending.MountRequests); got != 1 {
+		t.Fatalf("expected 1 mount request, got %d", got)
+	}
+	if status.Pending.MountRequests[0].MountMode != "rw" {
+		t.Fatalf("expected rw mount mode, got %q", status.Pending.MountRequests[0].MountMode)
+	}
+}
+
+func TestEscalationRequest_SameLevelSandboxedWithoutMountRejected(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	setBaseSecurityLevelForTest(t, infra.ExecSecuritySandboxed)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	err := mgr.RequestEscalation("esc_no_mount_001", "sandboxed", "no mount needed", "", "", "", "", 30)
+	if err == nil {
+		t.Fatal("expected same-level request without mount to fail")
+	}
+	if !strings.Contains(err.Error(), "already satisfies") {
+		t.Fatalf("expected base-satisfied error, got %v", err)
+	}
+}
+
+func TestEscalationRequest_ActiveSandboxedAllowsMountExtension(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	if err := mgr.RequestEscalation("esc_active_001", "sandboxed", "need l2", "run-1", "", "", "", 30); err != nil {
+		t.Fatalf("initial request failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 30); err != nil {
+		t.Fatalf("initial approve failed: %v", err)
+	}
+
+	secondMount := filepath.Join(tmpHome, "second")
+	if err := mgr.RequestEscalation(
+		"esc_active_002",
+		"sandboxed",
+		"extend mount",
+		"",
+		"",
+		"",
+		"",
+		30,
+		MountRequest{HostPath: secondMount, MountMode: "rw"},
+	); err != nil {
+		t.Fatalf("mount extension request should be allowed with active sandboxed grant: %v", err)
+	}
+
+	status := mgr.GetStatus()
+	if !status.HasActive {
+		t.Fatal("expected existing active grant to remain")
+	}
+	if !status.HasPending || status.Pending == nil {
+		t.Fatal("expected pending extension request")
+	}
+	if got := len(status.Pending.MountRequests); got != 1 {
+		t.Fatalf("expected 1 pending mount request, got %d", got)
+	}
+}
+
+func TestEscalationRequest_ActiveAllowlistAllowsMountExtension(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	if err := mgr.RequestEscalation("esc_allow_active_001", "allowlist", "need l1", "", "", "", "", 30); err != nil {
+		t.Fatalf("initial request failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 30); err != nil {
+		t.Fatalf("initial approve failed: %v", err)
+	}
+
+	secondMount := filepath.Join(tmpHome, "second")
+	if err := mgr.RequestEscalation(
+		"esc_allow_active_002",
+		"allowlist",
+		"extend allowlist path",
+		"",
+		"",
+		"",
+		"",
+		30,
+		MountRequest{HostPath: secondMount, MountMode: "ro"},
+	); err != nil {
+		t.Fatalf("mount extension request should be allowed with active allowlist grant: %v", err)
+	}
+
+	status := mgr.GetStatus()
+	if !status.HasActive {
+		t.Fatal("expected existing active grant to remain")
+	}
+	if !status.HasPending || status.Pending == nil {
+		t.Fatal("expected pending extension request")
+	}
+	if got := len(status.Pending.MountRequests); got != 1 {
+		t.Fatalf("expected 1 pending mount request, got %d", got)
+	}
+}
+
+func TestEscalationResolve_MergesMountRequestsOnSameLevel(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	firstMount := filepath.Join(tmpHome, "first")
+	secondMount := filepath.Join(tmpHome, "second")
+
+	if err := mgr.RequestEscalation(
+		"esc_merge_001",
+		"sandboxed",
+		"initial mount",
+		"",
+		"",
+		"",
+		"",
+		30,
+		MountRequest{HostPath: firstMount, MountMode: "ro"},
+	); err != nil {
+		t.Fatalf("initial request failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 30); err != nil {
+		t.Fatalf("initial approve failed: %v", err)
+	}
+
+	if err := mgr.RequestEscalation(
+		"esc_merge_002",
+		"sandboxed",
+		"add mount",
+		"",
+		"",
+		"",
+		"",
+		30,
+		MountRequest{HostPath: secondMount, MountMode: "rw"},
+	); err != nil {
+		t.Fatalf("extension request failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 30); err != nil {
+		t.Fatalf("extension approve failed: %v", err)
+	}
+
+	status := mgr.GetStatus()
+	if !status.HasActive || status.Active == nil {
+		t.Fatal("expected active grant")
+	}
+	if got := len(status.Active.MountRequests); got != 2 {
+		t.Fatalf("expected 2 merged mount requests, got %d", got)
+	}
+}
+
+func TestEscalationResolve_MergesAllowlistMountRequestsOnSameLevel(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	firstMount := filepath.Join(tmpHome, "first")
+	secondMount := filepath.Join(tmpHome, "second")
+
+	if err := mgr.RequestEscalation(
+		"esc_allow_merge_001",
+		"allowlist",
+		"initial mount",
+		"",
+		"",
+		"",
+		"",
+		30,
+		MountRequest{HostPath: firstMount, MountMode: "ro"},
+	); err != nil {
+		t.Fatalf("initial request failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 30); err != nil {
+		t.Fatalf("initial approve failed: %v", err)
+	}
+
+	if err := mgr.RequestEscalation(
+		"esc_allow_merge_002",
+		"allowlist",
+		"add mount",
+		"",
+		"",
+		"",
+		"",
+		30,
+		MountRequest{HostPath: secondMount, MountMode: "ro"},
+	); err != nil {
+		t.Fatalf("extension request failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 30); err != nil {
+		t.Fatalf("extension approve failed: %v", err)
+	}
+
+	status := mgr.GetStatus()
+	if !status.HasActive || status.Active == nil {
+		t.Fatal("expected active grant")
+	}
+	if status.Active.Level != "allowlist" {
+		t.Fatalf("expected active level allowlist, got %q", status.Active.Level)
+	}
+	if got := len(status.Active.MountRequests); got != 2 {
+		t.Fatalf("expected 2 merged mount requests, got %d", got)
+	}
+}
+
+func TestEscalationRestoreFromDisk_PreservesMountRequests(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr1 := NewEscalationManager(nil, nil, nil)
+	mgr1.SetMaxAllowedLevel("sandboxed")
+	mountPath := filepath.Join(tmpHome, "persisted")
+	if err := mgr1.RequestEscalation(
+		"esc_restore_001",
+		"sandboxed",
+		"persist mount request",
+		"",
+		"",
+		"",
+		"",
+		30,
+		MountRequest{HostPath: mountPath, MountMode: "rw"},
+	); err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	mgr1.Close()
+
+	mgr2 := NewEscalationManager(nil, nil, nil)
+	mgr2.SetMaxAllowedLevel("sandboxed")
+	defer mgr2.Close()
+	mgr2.RestoreFromDisk()
+
+	status := mgr2.GetStatus()
+	if !status.HasPending || status.Pending == nil {
+		t.Fatal("expected restored pending request")
+	}
+	if got := len(status.Pending.MountRequests); got != 1 {
+		t.Fatalf("expected 1 restored mount request, got %d", got)
+	}
+	if status.Pending.MountRequests[0].HostPath != mountPath {
+		t.Fatalf("unexpected restored mount path: %q", status.Pending.MountRequests[0].HostPath)
 	}
 }
 
@@ -157,6 +493,66 @@ func TestEscalationAutoDeescalate(t *testing.T) {
 	status := mgr.GetStatus()
 	if status.HasActive {
 		t.Error("should not have active grant after TTL expiry")
+	}
+}
+
+func TestEscalationDeescalate_FallbackBaseKeepsBaseLevel(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	setBaseSecurityLevelForTest(t, infra.ExecSecurityAllowlist)
+	setEscalationFallbackForTest(t, infra.ExecEscalationFallbackBase)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("full")
+	defer mgr.Close()
+
+	if err := mgr.RequestEscalation("esc_fb_base", "full", "reason", "", "", "", "", 30); err != nil {
+		t.Fatalf("request escalation failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 15); err != nil {
+		t.Fatalf("approve failed: %v", err)
+	}
+
+	mgr.ManualRevoke()
+	status := mgr.GetStatus()
+	if status.BaseLevel != string(infra.ExecSecurityAllowlist) {
+		t.Fatalf("expected base level keep allowlist, got %q", status.BaseLevel)
+	}
+	if status.ActiveLevel != string(infra.ExecSecurityAllowlist) {
+		t.Fatalf("expected active level fallback to allowlist, got %q", status.ActiveLevel)
+	}
+}
+
+func TestEscalationDeescalate_FallbackSandboxedSetsL2ForL3Expiry(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	setBaseSecurityLevelForTest(t, infra.ExecSecurityDeny)
+	setEscalationFallbackForTest(t, infra.ExecEscalationFallbackSandboxed)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("full")
+	defer mgr.Close()
+
+	if err := mgr.RequestEscalation("esc_fb_sandboxed", "full", "reason", "", "", "", "", 30); err != nil {
+		t.Fatalf("request escalation failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 15); err != nil {
+		t.Fatalf("approve failed: %v", err)
+	}
+
+	mgr.ManualRevoke()
+	status := mgr.GetStatus()
+	if status.BaseLevel != string(infra.ExecSecuritySandboxed) {
+		t.Fatalf("expected base level upgraded to sandboxed, got %q", status.BaseLevel)
+	}
+	if status.ActiveLevel != string(infra.ExecSecuritySandboxed) {
+		t.Fatalf("expected active level fallback to sandboxed, got %q", status.ActiveLevel)
 	}
 }
 

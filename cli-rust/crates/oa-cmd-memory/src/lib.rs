@@ -1,4 +1,4 @@
-/// Agent memory management commands for OpenAcosmi CLI.
+/// Agent memory management commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands for managing agent memory and vector storage:
 /// status, index, check, search.

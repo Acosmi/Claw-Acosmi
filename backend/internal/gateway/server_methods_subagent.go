@@ -49,11 +49,17 @@ func handleSubagentList(ctx *MethodHandlerContext) {
 	}
 
 	// 1. Argus 视觉子智能体 — 从 GatewayState 动态读取（而非连接快照）
-	bridge := ctx.Context.State.ArgusBridge()
+	var bridge *argus.Bridge
+	if ctx.Context.State != nil {
+		bridge = ctx.Context.State.ArgusBridge()
+	}
 	entries = append(entries, buildArgusEntry(bridge))
 
 	// 2. oa-coder 编程子智能体
 	entries = append(entries, buildCoderEntry(ctx.Context.CoderConfirmMgr != nil, liveCfg))
+
+	// 3. oa-media 媒体运营子智能体
+	entries = append(entries, buildMediaEntry(ctx.Context.MediaSubsystem, liveCfg))
 
 	ctx.Respond(true, map[string]interface{}{
 		"agents": entries,
@@ -123,6 +129,8 @@ func handleSubagentCtl(ctx *MethodHandlerContext) {
 		handleArgusCtl(ctx, action)
 	case "oa-coder":
 		handleCoderCtl(ctx, action)
+	case "oa-media":
+		handleMediaCtl(ctx, action)
 	default:
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, fmt.Sprintf("unknown agent: %s", agentID)))
 	}
@@ -150,7 +158,10 @@ func argusStartErrorResponse(err error) *ErrorShape {
 
 func handleArgusCtl(ctx *MethodHandlerContext, action string) {
 	// 从 GatewayState 动态读取 bridge（而非连接级快照），确保跨连接可见性
-	bridge := ctx.Context.State.ArgusBridge()
+	var bridge *argus.Bridge
+	if ctx.Context.State != nil {
+		bridge = ctx.Context.State.ArgusBridge()
+	}
 	switch action {
 	case "set_enabled":
 		enabled, _ := ctx.Params["value"].(bool)
@@ -280,5 +291,39 @@ func handleCoderCtl(ctx *MethodHandlerContext, action string) {
 
 	default:
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, fmt.Sprintf("unknown action for oa-coder: %s", action)))
+	}
+}
+
+// ---------- oa-media ----------
+
+func buildMediaEntry(sub interface{}, cfg *types.OpenAcosmiConfig) subagentEntry {
+	entry := subagentEntry{
+		ID:    "oa-media",
+		Label: "媒体运营 Media Ops",
+	}
+	if sub == nil {
+		entry.Status = "stopped"
+		entry.Error = "media subsystem not initialized"
+		return entry
+	}
+	entry.Status = "available"
+	// 从配置中读取 LLM 信息
+	if cfg != nil && cfg.SubAgents != nil && cfg.SubAgents.MediaAgent != nil {
+		ma := cfg.SubAgents.MediaAgent
+		entry.Provider = ma.Provider
+		entry.Model = ma.Model
+		entry.Configured = ma.Provider != "" || ma.Model != ""
+	}
+	return entry
+}
+
+func handleMediaCtl(ctx *MethodHandlerContext, action string) {
+	switch action {
+	case "set_enabled":
+		// oa-media 是进程内子系统，始终随 gateway 运行。
+		// set_enabled 仅控制 UI 显示状态。
+		ctx.Respond(true, map[string]interface{}{"ok": true, "ack": "set_enabled"}, nil)
+	default:
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, fmt.Sprintf("unknown action for oa-media: %s", action)))
 	}
 }

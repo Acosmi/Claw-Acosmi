@@ -1,4 +1,4 @@
-/// Hook management commands for OpenAcosmi CLI.
+/// Hook management commands for Claw Acosmi CLI.
 ///
 /// Provides `hooks` subcommands: list, info, check, enable, disable, install, update.
 /// Hooks are managed via config — no dedicated Gateway RPC.

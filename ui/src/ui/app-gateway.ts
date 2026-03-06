@@ -1,5 +1,6 @@
 import type { EventLogEntry } from "./app-events.ts";
 import type { OpenAcosmiApp } from "./app.ts";
+import { t } from "./i18n.ts";
 import type { CoderConfirmRequest } from "./controllers/coder-confirmation.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { GatewayEventFrame, GatewayHelloOk } from "./gateway.ts";
@@ -94,6 +95,7 @@ type GatewayHost = {
   planConfirmQueue: import("./controllers/plan-confirmation.ts").PlanConfirmRequest[];
   resultReviewQueue: import("./controllers/result-review.ts").ResultReviewRequest[];
   subagentHelpQueue: import("./controllers/subagent-help.ts").SubagentHelpRequest[];
+  mediaHeartbeat: import("./app-view-state.ts").MediaHeartbeatStatus | null;
 };
 
 type SessionDefaultsSnapshot = {
@@ -206,7 +208,7 @@ export function connectGateway(host: GatewayHost) {
       if (host.onboarding && !host.wizardAutoStarted) {
         host.wizardAutoStarted = true;
         const app = host as unknown as OpenAcosmiApp;
-        void app.handleStartWizard();
+        void app.handleStartWizardV2();
       }
     },
     onClose: ({ code, reason }) => {
@@ -644,6 +646,46 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     const resolved = parseSubagentHelpResolved(evt.payload);
     if (resolved) {
       host.subagentHelpQueue = removeSubagentHelp(host.subagentHelpQueue ?? [], resolved.id);
+    }
+  }
+
+  // Phase 4: 媒体自动创作通知
+  if (evt.event === "media.auto_spawn") {
+    const app = host as unknown as OpenAcosmiApp;
+    if (typeof app.addNotification === "function") {
+      app.addNotification(t("media.autoSpawn.notify"), "info");
+    }
+    // 递增心跳面板的自动创作计数
+    const prev = host.mediaHeartbeat;
+    host.mediaHeartbeat = {
+      ...prev,
+      lastPatrolAt: prev?.lastPatrolAt ?? null,
+      nextPatrolAt: prev?.nextPatrolAt ?? null,
+      activeJobId: prev?.activeJobId ?? null,
+      lastError: prev?.lastError ?? null,
+      autoSpawnCount: (prev?.autoSpawnCount ?? 0) + 1,
+    };
+    if (typeof (host as any).requestUpdate === "function") {
+      (host as any).requestUpdate();
+    }
+    return;
+  }
+
+  // Phase 3: 媒体巡检心跳事件
+  if (evt.event === "media.heartbeat") {
+    const payload = evt.payload as { jobId?: string; kind?: string; error?: string } | undefined;
+    if (payload) {
+      const now = Date.now();
+      const prev = host.mediaHeartbeat;
+      host.mediaHeartbeat = {
+        lastPatrolAt: payload.kind === "jobDone" || payload.kind === "jobRun" ? now : prev?.lastPatrolAt ?? null,
+        nextPatrolAt: prev?.nextPatrolAt ?? null,
+        activeJobId: payload.kind === "jobRun" ? (payload.jobId ?? null) : null,
+        lastError: payload.kind === "jobError" ? (payload.error ?? "unknown error") : null,
+      };
+      if (typeof (host as any).requestUpdate === "function") {
+        (host as any).requestUpdate();
+      }
     }
   }
 }

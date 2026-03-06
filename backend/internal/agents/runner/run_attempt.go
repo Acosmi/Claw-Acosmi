@@ -142,6 +142,8 @@ type AttemptParams struct {
 	// OnToolEvent 结构化工具事件回调（可选，nil = 不广播）。
 	// 工具执行前后调用，用于频道广播工具名称、参数摘要和结果摘要。
 	OnToolEvent func(event ToolEvent)
+	// OnProgress 中间进度回调（可选，nil = 仅本地实时事件）。
+	OnProgress func(ctx context.Context, update ProgressUpdate) ProgressReportStatus
 	// AgentChannel 异步消息通道（可选，nil = 不支持求助通道）。
 	// Phase 4: 三级指挥体系 — 子智能体执行中异步向主智能体求助。
 	AgentChannel *AgentChannel

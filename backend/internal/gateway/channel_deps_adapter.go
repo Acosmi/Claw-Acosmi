@@ -114,6 +114,7 @@ func buildDiscordDispatcher(dctx *ChannelDepsContext) func(ctx context.Context, 
 			MsgCtx:     params.Ctx,
 			SessionKey: params.Ctx.SessionKey,
 			Dispatcher: dctx.Dispatcher,
+			OnProgress: buildMsgContextProgressCallback(dctx.State, params.Ctx),
 		})
 		if result.Error != nil {
 			return nil, result.Error
@@ -258,6 +259,7 @@ func buildTelegramDispatcher(dctx *ChannelDepsContext) func(ctx context.Context,
 			MsgCtx:     params.Ctx,
 			SessionKey: params.Ctx.SessionKey,
 			Dispatcher: dctx.Dispatcher,
+			OnProgress: buildMsgContextProgressCallback(dctx.State, params.Ctx),
 		})
 		if result.Error != nil {
 			return nil, result.Error
@@ -439,6 +441,7 @@ func buildSlackDispatcher(dctx *ChannelDepsContext) func(ctx context.Context, pa
 			MsgCtx:     params.Ctx,
 			SessionKey: params.Ctx.SessionKey,
 			Dispatcher: dctx.Dispatcher,
+			OnProgress: buildMsgContextProgressCallback(dctx.State, params.Ctx),
 		})
 		if result.Error != nil {
 			return nil, result.Error

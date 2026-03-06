@@ -1,4 +1,4 @@
-/// ACP (Agent Client Protocol) bridge commands for OpenAcosmi CLI.
+/// ACP (Agent Client Protocol) bridge commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands for ACP IDE integration:
 /// status, invoke.

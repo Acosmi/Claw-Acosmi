@@ -1,4 +1,4 @@
-/// Infrastructure utilities for OpenAcosmi CLI.
+/// Infrastructure utilities for Claw Acosmi CLI.
 ///
 /// Provides environment variable access, error formatting,
 /// time utilities, device identification, dotenv loading,

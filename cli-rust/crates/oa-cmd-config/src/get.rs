@@ -1,6 +1,6 @@
 /// Config get command.
 ///
-/// Reads a value from the OpenAcosmi configuration by dot-separated path.
+/// Reads a value from the Claw Acosmi configuration by dot-separated path.
 ///
 /// Source: `src/commands/config-get.ts`
 

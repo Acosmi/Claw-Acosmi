@@ -170,7 +170,7 @@ struct ClientInner {
     backoff_ms: u64,
 }
 
-/// WebSocket-based RPC client for the OpenAcosmi gateway.
+/// WebSocket-based RPC client for the Claw Acosmi gateway.
 ///
 /// Manages the write side of the WebSocket connection, dispatches
 /// RPC requests, and correlates responses. Use [`connect_gateway`]

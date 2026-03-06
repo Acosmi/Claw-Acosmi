@@ -59,6 +59,10 @@ export async function updateSecurityLevel(
         const existingFile = snapshot.file ?? {};
         const existingDefaults =
             (existingFile.defaults as Record<string, unknown>) ?? {};
+        const escalationFallback =
+            typeof existingDefaults.escalationFallback === "string"
+                ? existingDefaults.escalationFallback
+                : "base";
 
         // 构建更新后的 file 对象
         const nextFile = {
@@ -67,6 +71,7 @@ export async function updateSecurityLevel(
             defaults: {
                 ...existingDefaults,
                 security: level,
+                escalationFallback,
             },
         };
 

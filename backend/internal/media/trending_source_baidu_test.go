@@ -137,6 +137,9 @@ func TestParseBaiduHotScore(t *testing.T) {
 		{"0", 0},
 		{"", 0},
 		{"12abc34", 1234},
+		{"5.2万", 52000},
+		{"100万", 1000000},
+		{"1.5万热度", 15000},
 	}
 	for _, tt := range tests {
 		got := parseBaiduHotScore(tt.input)

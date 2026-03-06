@@ -1,4 +1,4 @@
-/// Terminal UI components for OpenAcosmi CLI.
+/// Terminal UI components for Claw Acosmi CLI.
 ///
 /// Provides themed terminal output, tables, progress indicators,
 /// and styled text formatting.

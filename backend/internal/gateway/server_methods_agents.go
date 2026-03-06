@@ -15,6 +15,7 @@ import (
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/scope"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/workspace"
+	"github.com/Acosmi/ClawAcosmi/internal/argus"
 	"github.com/Acosmi/ClawAcosmi/internal/sessions"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
@@ -44,9 +45,9 @@ func handleAgentsList(ctx *MethodHandlerContext) {
 	defaultId := scope.ResolveDefaultAgentId(cfg)
 	agentIds := scope.ListAgentIds(cfg)
 
-	agents := make([]GatewayAgentRow, 0, len(agentIds))
+	agents := make([]GatewayAgentRow, 0, len(agentIds)+3) // +3 for builtin subagents (argus, coder, media)
 	for _, id := range agentIds {
-		row := GatewayAgentRow{ID: id}
+		row := GatewayAgentRow{ID: id, Type: "agent"}
 
 		entry := scope.ResolveAgentEntry(cfg, id)
 		if entry != nil && entry.Name != "" {
@@ -60,6 +61,9 @@ func handleAgentsList(ctx *MethodHandlerContext) {
 
 		agents = append(agents, row)
 	}
+
+	// 追加子智能体条目（统一发现），传入已加载的 cfg 避免双重加载
+	agents = appendSubagentRows(ctx, cfg, agents)
 
 	mainKey := ""
 	if cfg.Session != nil && cfg.Session.MainKey != "" {
@@ -99,6 +103,10 @@ func handleAgentsCreate(ctx *MethodHandlerContext) {
 	agentId := scope.NormalizeAgentId(rawName)
 	if agentId == "default" {
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, `"default" is reserved`))
+		return
+	}
+	if reservedSubagentIDs[agentId] {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, fmt.Sprintf("%q is a reserved subagent ID", agentId)))
 		return
 	}
 
@@ -348,6 +356,59 @@ func appendToFile(path, content string) {
 	}
 	defer f.Close()
 	_, _ = f.WriteString(content)
+}
+
+// reservedSubagentIDs 内置子智能体保留 ID，禁止用户通过 agents.create 创建同名 agent。
+var reservedSubagentIDs = map[string]bool{
+	"argus-screen": true,
+	"oa-coder":     true,
+	"oa-media":     true,
+}
+
+// ---------- 统一发现: 子智能体 → GatewayAgentRow ----------
+
+// appendSubagentRows 将子智能体转换为 GatewayAgentRow 追加到 agents 列表。
+// 复用 server_methods_subagent.go 中已有的 build*Entry 函数。
+func appendSubagentRows(ctx *MethodHandlerContext, liveCfg *types.OpenAcosmiConfig, agents []GatewayAgentRow) []GatewayAgentRow {
+	// State 可能为 nil（单元测试场景）
+	var argusBridge *argus.Bridge
+	if ctx.Context.State != nil {
+		argusBridge = ctx.Context.State.ArgusBridge()
+	}
+
+	subEntries := []subagentEntry{
+		buildArgusEntry(argusBridge),
+		buildCoderEntry(ctx.Context.CoderConfirmMgr != nil, liveCfg),
+		buildMediaEntry(ctx.Context.MediaSubsystem, liveCfg),
+	}
+
+	emojiMap := map[string]string{
+		"argus-screen": "👁️",
+		"oa-coder":     "🔧",
+		"oa-media":     "🎬",
+	}
+
+	for _, se := range subEntries {
+		configured := se.Configured
+		builtinTrue := true
+		row := GatewayAgentRow{
+			ID:   se.ID,
+			Name: se.Label,
+			Identity: &AgentIdentityRow{
+				Name:  se.Label,
+				Emoji: emojiMap[se.ID],
+			},
+			Type:       "subagent",
+			Status:     se.Status,
+			Error:      se.Error,
+			Provider:   se.Provider,
+			Model:      se.Model,
+			Configured: &configured,  // 始终序列化（false = 未配置）
+			Builtin:    &builtinTrue, // 内置子智能体
+		}
+		agents = append(agents, row)
+	}
+	return agents
 }
 
 // ---------- Config 持久化辅助 (P0) ----------

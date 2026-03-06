@@ -1,4 +1,4 @@
-/// Color palette definitions for OpenAcosmi CLI.
+/// Color palette definitions for Claw Acosmi CLI.
 ///
 /// Source: `src/terminal/palette.ts`
 
@@ -24,7 +24,7 @@ pub struct LobsterPalette {
     pub muted: &'static str,
 }
 
-/// The default OpenAcosmi lobster palette.
+/// The default Claw Acosmi lobster palette.
 pub static LOBSTER_PALETTE: LobsterPalette = LobsterPalette {
     accent: "#FF5A2D",
     accent_bright: "#FF7A3D",

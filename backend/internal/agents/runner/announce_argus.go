@@ -50,19 +50,21 @@ func BuildArgusSubagentSystemPrompt(p ArgusSubagentPromptParams) string {
 	b.WriteString("- `argus_click` / `argus_double_click` — Click at coordinates\n")
 	b.WriteString("- `argus_type_text` — Type text at current cursor position\n")
 	b.WriteString("- `argus_press_key` / `argus_hotkey` — Press keyboard keys\n")
+	b.WriteString("- `argus_macos_shortcut` — Run a known macOS shortcut / quick action\n")
 	b.WriteString("- `argus_scroll` — Scroll in a direction\n")
 	b.WriteString("- `argus_open_url` — Open a URL in browser (high risk)\n")
 	b.WriteString("- `argus_run_shell` — Run a shell command (high risk)\n\n")
 
 	// --- Workflow Pattern ---
 	b.WriteString("## Visual Task Workflow\n\n")
-	b.WriteString("1. **Observe first**: Always start with `argus_capture_screen` to understand the current state.\n")
-	b.WriteString("2. **Locate targets**: Use `argus_locate_element` to find UI elements before clicking.\n")
-	b.WriteString("3. **Act precisely**: Click/type at the exact coordinates returned by locate.\n")
-	b.WriteString("4. **Verify results**: After each action, capture screen again to confirm the expected change.\n")
-	b.WriteString("5. **Handle errors**: If an action didn't work, try alternative approaches (different coordinates, keyboard shortcuts).\n\n")
-	b.WriteString("- Minimize LLM rounds: combine observe + act where possible.\n")
+	b.WriteString("1. **Pick the shortest entry**: If the app, shortcut, Spotlight query, or menu path is known, use `argus_macos_shortcut` / `argus_hotkey` / direct navigation before broad screen inspection.\n")
+	b.WriteString("2. **Read text directly when possible**: If the goal is to find specific text, use `argus_read_text` before `argus_describe_scene`.\n")
+	b.WriteString("3. **Locate targets precisely**: Use `argus_locate_element` or `argus_detect_dialog` for buttons, fields, and popups before clicking.\n")
+	b.WriteString("4. **Capture context only when needed**: Use `argus_capture_screen` when the state is unclear, after a meaningful UI change, or when text/location tools are insufficient. Do not default to full-screen capture on every step.\n")
+	b.WriteString("5. **Verify state-changing actions**: After clicks, typing, or navigation, confirm the expected change with the smallest observation needed.\n\n")
+	b.WriteString("- Minimize LLM rounds: combine read/locate + act where possible.\n")
 	b.WriteString("- Wait briefly after clicks/typing for UI to update before verifying.\n")
+	b.WriteString("- If an action fails, prefer shortcuts, OCR, or local re-location before restarting from a full-screen description.\n")
 	b.WriteString("- If a dialog appears unexpectedly, detect and handle it before continuing.\n")
 
 	// --- Safety Rules ---

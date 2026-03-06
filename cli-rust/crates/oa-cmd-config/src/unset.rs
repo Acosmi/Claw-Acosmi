@@ -1,6 +1,6 @@
 /// Config unset command.
 ///
-/// Removes a key from the OpenAcosmi configuration at a dot-separated
+/// Removes a key from the Claw Acosmi configuration at a dot-separated
 /// path and writes the updated config to disk.
 ///
 /// Source: `src/commands/config-unset.ts`

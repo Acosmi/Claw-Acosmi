@@ -1,4 +1,4 @@
-/// Subcommand routing for the OpenAcosmi CLI.
+/// Subcommand routing for the Claw Acosmi CLI.
 ///
 /// Defines the `Commands` enum connecting all command crates, defines
 /// Clap `Args` wrappers for each command group, and provides the `dispatch`
@@ -61,19 +61,19 @@ pub enum Commands {
     /// Run or send a message to an AI agent.
     Agent(AgentArgs),
 
-    /// Open the OpenAcosmi dashboard in a browser.
+    /// Open the Claw Acosmi dashboard in a browser.
     Dashboard(DashboardArgs),
 
-    /// Search OpenAcosmi documentation.
+    /// Search Claw Acosmi documentation.
     Docs(DocsArgs),
 
-    /// Reset OpenAcosmi state (config, sessions, workspace).
+    /// Reset Claw Acosmi state (config, sessions, workspace).
     Reset(ResetArgs),
 
     /// Initial workspace setup.
     Setup(SetupArgs),
 
-    /// Uninstall OpenAcosmi components.
+    /// Uninstall Claw Acosmi components.
     Uninstall(UninstallArgs),
 
     /// Send a message through a channel.
@@ -1534,7 +1534,7 @@ pub struct ApprovalsGetArgs {
     /// Target the gateway.
     #[arg(long)]
     pub gateway: bool,
-    /// Target a specific node.
+    /// Node approvals must be managed on the node host directly (currently unsupported here).
     #[arg(long)]
     pub node: Option<String>,
     /// Output as JSON.
@@ -1549,7 +1549,7 @@ pub struct ApprovalsSetArgs {
     /// Target the gateway.
     #[arg(long)]
     pub gateway: bool,
-    /// Target a specific node.
+    /// Node approvals must be managed on the node host directly (currently unsupported here).
     #[arg(long)]
     pub node: Option<String>,
 }
@@ -3942,303 +3942,478 @@ async fn dispatch_browser(cmd: BrowserCommand, json: bool) -> Result<()> {
         // -- Manage --
         BrowserAction::Status(args) => {
             oa_cmd_browser::browser_status_command(&oa_cmd_browser::BrowserStatusArgs {
-                json: json || args.json, browser_profile: args.browser_profile,
-            }).await
+                json: json || args.json,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Start(args) => {
             oa_cmd_browser::browser_start_command(&oa_cmd_browser::BrowserStartArgs {
-                browser_profile: args.browser_profile, headless: args.headless,
-            }).await
+                browser_profile: args.browser_profile,
+                headless: args.headless,
+            })
+            .await
         }
         BrowserAction::Stop(args) => {
             oa_cmd_browser::browser_stop_command(&oa_cmd_browser::BrowserStopArgs {
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Tabs(args) => {
             oa_cmd_browser::browser_tabs_command(&oa_cmd_browser::BrowserTabsArgs {
-                json: json || args.json, browser_profile: args.browser_profile,
-            }).await
+                json: json || args.json,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Open(args) => {
             oa_cmd_browser::browser_open_command(&oa_cmd_browser::BrowserOpenArgs {
-                url: args.url, browser_profile: args.browser_profile,
-            }).await
+                url: args.url,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Focus(args) => {
             oa_cmd_browser::browser_focus_command(&oa_cmd_browser::BrowserFocusArgs {
-                target_id: args.target_id, browser_profile: args.browser_profile,
-            }).await
+                target_id: args.target_id,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Close(args) => {
             oa_cmd_browser::browser_close_command(&oa_cmd_browser::BrowserCloseArgs {
-                target_id: args.target_id, browser_profile: args.browser_profile,
-            }).await
+                target_id: args.target_id,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Screenshot(args) => {
             oa_cmd_browser::browser_screenshot_command(&oa_cmd_browser::BrowserScreenshotArgs {
-                file: args.file, full_page: args.full_page, r#ref: args.ref_id,
-                element: args.element, format: args.format, target_id: args.target_id,
+                file: args.file,
+                full_page: args.full_page,
+                r#ref: args.ref_id,
+                element: args.element,
+                format: args.format,
+                target_id: args.target_id,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Profiles(args) => {
             oa_cmd_browser::browser_profiles_command(&oa_cmd_browser::BrowserProfilesArgs {
                 json: json || args.json,
-            }).await
+            })
+            .await
         }
         BrowserAction::CreateProfile(args) => {
-            oa_cmd_browser::browser_create_profile_command(&oa_cmd_browser::BrowserCreateProfileArgs {
-                name: args.name, color: args.color, cdp_url: args.cdp_url, driver: args.driver,
-            }).await
+            oa_cmd_browser::browser_create_profile_command(
+                &oa_cmd_browser::BrowserCreateProfileArgs {
+                    name: args.name,
+                    color: args.color,
+                    cdp_url: args.cdp_url,
+                    driver: args.driver,
+                },
+            )
+            .await
         }
         BrowserAction::DeleteProfile(args) => {
-            oa_cmd_browser::browser_delete_profile_command(&oa_cmd_browser::BrowserDeleteProfileArgs {
-                name: args.name,
-            }).await
+            oa_cmd_browser::browser_delete_profile_command(
+                &oa_cmd_browser::BrowserDeleteProfileArgs { name: args.name },
+            )
+            .await
         }
         BrowserAction::ResetProfile(args) => {
-            oa_cmd_browser::browser_reset_profile_command(&oa_cmd_browser::BrowserResetProfileArgs {
-                browser_profile: args.browser_profile,
-            }).await
+            oa_cmd_browser::browser_reset_profile_command(
+                &oa_cmd_browser::BrowserResetProfileArgs {
+                    browser_profile: args.browser_profile,
+                },
+            )
+            .await
         }
         // -- Inspect --
         BrowserAction::Snapshot(args) => {
             oa_cmd_browser::browser_snapshot_command(&oa_cmd_browser::BrowserSnapshotArgs {
-                format: args.format, target_id: args.target_id, limit: args.limit,
-                interactive: args.interactive, compact: args.compact, depth: args.depth,
-                selector: args.selector, frame: args.frame, efficient: args.efficient,
-                labels: args.labels, out: args.out, json: json || args.json,
+                format: args.format,
+                target_id: args.target_id,
+                limit: args.limit,
+                interactive: args.interactive,
+                compact: args.compact,
+                depth: args.depth,
+                selector: args.selector,
+                frame: args.frame,
+                efficient: args.efficient,
+                labels: args.labels,
+                out: args.out,
+                json: json || args.json,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Console(args) => {
             oa_cmd_browser::browser_console_command(&oa_cmd_browser::BrowserConsoleArgs {
-                level: args.level, clear: args.clear, target_id: args.target_id,
-                json: json || args.json, browser_profile: args.browser_profile,
-            }).await
+                level: args.level,
+                clear: args.clear,
+                target_id: args.target_id,
+                json: json || args.json,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Errors(args) => {
             oa_cmd_browser::browser_errors_command(&oa_cmd_browser::BrowserErrorsArgs {
-                clear: args.clear, target_id: args.target_id,
-                json: json || args.json, browser_profile: args.browser_profile,
-            }).await
+                clear: args.clear,
+                target_id: args.target_id,
+                json: json || args.json,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Requests(args) => {
             oa_cmd_browser::browser_requests_command(&oa_cmd_browser::BrowserRequestsArgs {
-                filter: args.filter, clear: args.clear, target_id: args.target_id,
-                json: json || args.json, browser_profile: args.browser_profile,
-            }).await
+                filter: args.filter,
+                clear: args.clear,
+                target_id: args.target_id,
+                json: json || args.json,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::ResponseBody(args) => {
             oa_cmd_browser::browser_responsebody_command(&oa_cmd_browser::BrowserResponseBodyArgs {
-                pattern: args.pattern, max_chars: args.max_chars, target_id: args.target_id,
-                json: json || args.json, browser_profile: args.browser_profile,
-            }).await
+                pattern: args.pattern,
+                max_chars: args.max_chars,
+                target_id: args.target_id,
+                json: json || args.json,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Pdf(args) => {
             oa_cmd_browser::browser_pdf_command(&oa_cmd_browser::BrowserPdfArgs {
-                target_id: args.target_id, browser_profile: args.browser_profile,
-            }).await
+                target_id: args.target_id,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         // -- Actions --
         BrowserAction::Navigate(args) => {
             oa_cmd_browser::browser_navigate_command(&oa_cmd_browser::BrowserNavigateArgs {
-                url: args.url, target_id: args.target_id, browser_profile: args.browser_profile,
-            }).await
+                url: args.url,
+                target_id: args.target_id,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Resize(args) => {
             oa_cmd_browser::browser_resize_command(&oa_cmd_browser::BrowserResizeArgs {
-                width: args.width, height: args.height, target_id: args.target_id,
+                width: args.width,
+                height: args.height,
+                target_id: args.target_id,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Click(args) => {
             oa_cmd_browser::browser_click_command(&oa_cmd_browser::BrowserClickArgs {
-                r#ref: args.ref_id, double: args.double, button: args.button,
-                modifiers: args.modifiers, target_id: args.target_id,
+                r#ref: args.ref_id,
+                double: args.double,
+                button: args.button,
+                modifiers: args.modifiers,
+                target_id: args.target_id,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::TypeText(args) => {
             oa_cmd_browser::browser_type_command(&oa_cmd_browser::BrowserTypeArgs {
-                r#ref: args.ref_id, text: args.text, submit: args.submit, slowly: args.slowly,
-                target_id: args.target_id, browser_profile: args.browser_profile,
-            }).await
+                r#ref: args.ref_id,
+                text: args.text,
+                submit: args.submit,
+                slowly: args.slowly,
+                target_id: args.target_id,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Press(args) => {
             oa_cmd_browser::browser_press_command(&oa_cmd_browser::BrowserPressArgs {
-                key: args.key, target_id: args.target_id, browser_profile: args.browser_profile,
-            }).await
+                key: args.key,
+                target_id: args.target_id,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::Hover(args) => {
             oa_cmd_browser::browser_hover_command(&oa_cmd_browser::BrowserHoverArgs {
-                r#ref: args.ref_id, target_id: args.target_id, browser_profile: args.browser_profile,
-            }).await
+                r#ref: args.ref_id,
+                target_id: args.target_id,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         BrowserAction::ScrollIntoView(args) => {
-            oa_cmd_browser::browser_scrollintoview_command(&oa_cmd_browser::BrowserScrollIntoViewArgs {
-                r#ref: args.ref_id, target_id: args.target_id, browser_profile: args.browser_profile,
-            }).await
+            oa_cmd_browser::browser_scrollintoview_command(
+                &oa_cmd_browser::BrowserScrollIntoViewArgs {
+                    r#ref: args.ref_id,
+                    target_id: args.target_id,
+                    browser_profile: args.browser_profile,
+                },
+            )
+            .await
         }
         BrowserAction::Drag(args) => {
             oa_cmd_browser::browser_drag_command(&oa_cmd_browser::BrowserDragArgs {
-                start_ref: args.start_ref, end_ref: args.end_ref, target_id: args.target_id,
+                start_ref: args.start_ref,
+                end_ref: args.end_ref,
+                target_id: args.target_id,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Select(args) => {
             oa_cmd_browser::browser_select_command(&oa_cmd_browser::BrowserSelectArgs {
-                r#ref: args.ref_id, values: args.values, target_id: args.target_id,
+                r#ref: args.ref_id,
+                values: args.values,
+                target_id: args.target_id,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Download(args) => {
             oa_cmd_browser::browser_download_command(&oa_cmd_browser::BrowserDownloadArgs {
-                r#ref: args.ref_id, save_path: args.save_path, target_id: args.target_id,
+                r#ref: args.ref_id,
+                save_path: args.save_path,
+                target_id: args.target_id,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::WaitForDownload(args) => {
-            oa_cmd_browser::browser_waitfordownload_command(&oa_cmd_browser::BrowserWaitForDownloadArgs {
-                save_path: args.save_path, timeout_ms: args.timeout_ms,
-                browser_profile: args.browser_profile,
-            }).await
+            oa_cmd_browser::browser_waitfordownload_command(
+                &oa_cmd_browser::BrowserWaitForDownloadArgs {
+                    save_path: args.save_path,
+                    timeout_ms: args.timeout_ms,
+                    browser_profile: args.browser_profile,
+                },
+            )
+            .await
         }
         BrowserAction::Upload(args) => {
             oa_cmd_browser::browser_upload_command(&oa_cmd_browser::BrowserUploadArgs {
-                paths: args.paths, r#ref: args.ref_id, input_ref: args.input_ref,
-                element: args.element, target_id: args.target_id, timeout_ms: args.timeout_ms,
+                paths: args.paths,
+                r#ref: args.ref_id,
+                input_ref: args.input_ref,
+                element: args.element,
+                target_id: args.target_id,
+                timeout_ms: args.timeout_ms,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Fill(args) => {
             oa_cmd_browser::browser_fill_command(&oa_cmd_browser::BrowserFillArgs {
-                fields: args.fields, fields_file: args.fields_file, target_id: args.target_id,
+                fields: args.fields,
+                fields_file: args.fields_file,
+                target_id: args.target_id,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Dialog(args) => {
             oa_cmd_browser::browser_dialog_command(&oa_cmd_browser::BrowserDialogArgs {
-                accept: args.accept, dismiss: args.dismiss, prompt: args.prompt,
-                target_id: args.target_id, timeout_ms: args.timeout_ms,
+                accept: args.accept,
+                dismiss: args.dismiss,
+                prompt: args.prompt,
+                target_id: args.target_id,
+                timeout_ms: args.timeout_ms,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Wait(args) => {
             oa_cmd_browser::browser_wait_command(&oa_cmd_browser::BrowserWaitArgs {
-                selector: args.selector, url: args.url, load: args.load, js_fn: args.js_fn,
-                text: args.text, text_gone: args.text_gone, time: args.time,
-                timeout_ms: args.timeout_ms, target_id: args.target_id,
+                selector: args.selector,
+                url: args.url,
+                load: args.load,
+                js_fn: args.js_fn,
+                text: args.text,
+                text_gone: args.text_gone,
+                time: args.time,
+                timeout_ms: args.timeout_ms,
+                target_id: args.target_id,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Evaluate(args) => {
             oa_cmd_browser::browser_evaluate_command(&oa_cmd_browser::BrowserEvaluateArgs {
-                js_fn: args.js_fn, r#ref: args.ref_id, target_id: args.target_id,
+                js_fn: args.js_fn,
+                r#ref: args.ref_id,
+                target_id: args.target_id,
                 browser_profile: args.browser_profile,
-            }).await
+            })
+            .await
         }
         BrowserAction::Highlight(args) => {
             oa_cmd_browser::browser_highlight_command(&oa_cmd_browser::BrowserHighlightArgs {
-                r#ref: args.ref_id, target_id: args.target_id, browser_profile: args.browser_profile,
-            }).await
+                r#ref: args.ref_id,
+                target_id: args.target_id,
+                browser_profile: args.browser_profile,
+            })
+            .await
         }
         // -- Trace --
         BrowserAction::Trace(cmd) => match cmd.action {
             BrowserTraceAction::Start(args) => {
-                oa_cmd_browser::browser_trace_start_command(&oa_cmd_browser::BrowserTraceStartArgs {
-                    browser_profile: args.browser_profile,
-                }).await
+                oa_cmd_browser::browser_trace_start_command(
+                    &oa_cmd_browser::BrowserTraceStartArgs {
+                        browser_profile: args.browser_profile,
+                    },
+                )
+                .await
             }
             BrowserTraceAction::Stop(args) => {
                 oa_cmd_browser::browser_trace_stop_command(&oa_cmd_browser::BrowserTraceStopArgs {
                     browser_profile: args.browser_profile,
-                }).await
+                })
+                .await
             }
-        }
+        },
         // -- Cookies --
         BrowserAction::Cookies(cmd) => match cmd.action {
             None => {
                 oa_cmd_browser::browser_cookies_command(&oa_cmd_browser::BrowserCookiesArgs {
-                    json: json || cmd.json, browser_profile: cmd.browser_profile,
-                }).await
+                    json: json || cmd.json,
+                    browser_profile: cmd.browser_profile,
+                })
+                .await
             }
             Some(BrowserCookiesAction::Set(args)) => {
-                oa_cmd_browser::browser_cookies_set_command(&oa_cmd_browser::BrowserCookiesSetArgs {
-                    name: args.name, value: args.value, url: args.url,
-                    browser_profile: args.browser_profile.or(cmd.browser_profile),
-                }).await
+                oa_cmd_browser::browser_cookies_set_command(
+                    &oa_cmd_browser::BrowserCookiesSetArgs {
+                        name: args.name,
+                        value: args.value,
+                        url: args.url,
+                        browser_profile: args.browser_profile.or(cmd.browser_profile),
+                    },
+                )
+                .await
             }
             Some(BrowserCookiesAction::Clear(args)) => {
-                oa_cmd_browser::browser_cookies_clear_command(&oa_cmd_browser::BrowserCookiesClearArgs {
-                    browser_profile: args.browser_profile.or(cmd.browser_profile),
-                }).await
+                oa_cmd_browser::browser_cookies_clear_command(
+                    &oa_cmd_browser::BrowserCookiesClearArgs {
+                        browser_profile: args.browser_profile.or(cmd.browser_profile),
+                    },
+                )
+                .await
             }
-        }
+        },
         // -- Storage --
         BrowserAction::Storage(cmd) => match cmd.action {
             BrowserStorageAction::Get(args) => {
-                oa_cmd_browser::browser_storage_get_command(&oa_cmd_browser::BrowserStorageGetArgs {
-                    kind: args.kind, json: json || args.json, browser_profile: args.browser_profile,
-                }).await
+                oa_cmd_browser::browser_storage_get_command(
+                    &oa_cmd_browser::BrowserStorageGetArgs {
+                        kind: args.kind,
+                        json: json || args.json,
+                        browser_profile: args.browser_profile,
+                    },
+                )
+                .await
             }
             BrowserStorageAction::Set(args) => {
-                oa_cmd_browser::browser_storage_set_command(&oa_cmd_browser::BrowserStorageSetArgs {
-                    kind: args.kind, key: args.key, value: args.value,
-                    browser_profile: args.browser_profile,
-                }).await
+                oa_cmd_browser::browser_storage_set_command(
+                    &oa_cmd_browser::BrowserStorageSetArgs {
+                        kind: args.kind,
+                        key: args.key,
+                        value: args.value,
+                        browser_profile: args.browser_profile,
+                    },
+                )
+                .await
             }
             BrowserStorageAction::Clear(args) => {
-                oa_cmd_browser::browser_storage_clear_command(&oa_cmd_browser::BrowserStorageClearArgs {
-                    kind: args.kind, browser_profile: args.browser_profile,
-                }).await
+                oa_cmd_browser::browser_storage_clear_command(
+                    &oa_cmd_browser::BrowserStorageClearArgs {
+                        kind: args.kind,
+                        browser_profile: args.browser_profile,
+                    },
+                )
+                .await
             }
-        }
+        },
         // -- Set --
         BrowserAction::Set(cmd) => match cmd.action {
             BrowserSetAction::Offline(args) => {
-                oa_cmd_browser::browser_set_offline_command(&oa_cmd_browser::BrowserSetOfflineArgs {
-                    state: args.state, browser_profile: args.browser_profile,
-                }).await
+                oa_cmd_browser::browser_set_offline_command(
+                    &oa_cmd_browser::BrowserSetOfflineArgs {
+                        state: args.state,
+                        browser_profile: args.browser_profile,
+                    },
+                )
+                .await
             }
             BrowserSetAction::Headers(args) => {
-                oa_cmd_browser::browser_set_headers_command(&oa_cmd_browser::BrowserSetHeadersArgs {
-                    json: args.json, clear: args.clear, browser_profile: args.browser_profile,
-                }).await
+                oa_cmd_browser::browser_set_headers_command(
+                    &oa_cmd_browser::BrowserSetHeadersArgs {
+                        json: args.json,
+                        clear: args.clear,
+                        browser_profile: args.browser_profile,
+                    },
+                )
+                .await
             }
             BrowserSetAction::Credentials(args) => {
-                oa_cmd_browser::browser_set_credentials_command(&oa_cmd_browser::BrowserSetCredentialsArgs {
-                    username: args.username, password: args.password, clear: args.clear,
-                    browser_profile: args.browser_profile,
-                }).await
+                oa_cmd_browser::browser_set_credentials_command(
+                    &oa_cmd_browser::BrowserSetCredentialsArgs {
+                        username: args.username,
+                        password: args.password,
+                        clear: args.clear,
+                        browser_profile: args.browser_profile,
+                    },
+                )
+                .await
             }
             BrowserSetAction::Geo(args) => {
                 oa_cmd_browser::browser_set_geo_command(&oa_cmd_browser::BrowserSetGeoArgs {
-                    latitude: args.latitude, longitude: args.longitude, origin: args.origin,
-                    clear: args.clear, browser_profile: args.browser_profile,
-                }).await
+                    latitude: args.latitude,
+                    longitude: args.longitude,
+                    origin: args.origin,
+                    clear: args.clear,
+                    browser_profile: args.browser_profile,
+                })
+                .await
             }
             BrowserSetAction::Media(args) => {
                 oa_cmd_browser::browser_set_media_command(&oa_cmd_browser::BrowserSetMediaArgs {
-                    scheme: args.scheme, browser_profile: args.browser_profile,
-                }).await
+                    scheme: args.scheme,
+                    browser_profile: args.browser_profile,
+                })
+                .await
             }
             BrowserSetAction::Timezone(args) => {
-                oa_cmd_browser::browser_set_timezone_command(&oa_cmd_browser::BrowserSetTimezoneArgs {
-                    timezone: args.timezone, browser_profile: args.browser_profile,
-                }).await
+                oa_cmd_browser::browser_set_timezone_command(
+                    &oa_cmd_browser::BrowserSetTimezoneArgs {
+                        timezone: args.timezone,
+                        browser_profile: args.browser_profile,
+                    },
+                )
+                .await
             }
             BrowserSetAction::Locale(args) => {
                 oa_cmd_browser::browser_set_locale_command(&oa_cmd_browser::BrowserSetLocaleArgs {
-                    locale: args.locale, browser_profile: args.browser_profile,
-                }).await
+                    locale: args.locale,
+                    browser_profile: args.browser_profile,
+                })
+                .await
             }
             BrowserSetAction::Device(args) => {
                 oa_cmd_browser::browser_set_device_command(&oa_cmd_browser::BrowserSetDeviceArgs {
-                    device: args.device, browser_profile: args.browser_profile,
-                }).await
+                    device: args.device,
+                    browser_profile: args.browser_profile,
+                })
+                .await
             }
-        }
+        },
     }
 }

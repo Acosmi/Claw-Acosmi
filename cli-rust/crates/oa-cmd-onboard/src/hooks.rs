@@ -72,7 +72,7 @@ pub fn build_hooks_primer_text() -> String {
         "Hooks let you automate actions when agent commands are issued.",
         "Example: Save session context to memory when you issue /new.",
         "",
-        "Learn more: https://github.com/Acosmi/Claw-Acismi/tree/main/docs/cli/hooks",
+        "Learn more: https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/cli/hooks",
     ]
     .join("\n")
 }
@@ -183,7 +183,7 @@ mod tests {
     fn hooks_primer_text_content() {
         let text = build_hooks_primer_text();
         assert!(text.contains("Hooks let you automate"));
-        assert!(text.contains("github.com/Acosmi/Claw-Acismi"));
+        assert!(text.contains("github.com/Acosmi/Claw-Acosmi"));
     }
 
     #[test]

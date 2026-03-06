@@ -7,8 +7,11 @@ package argus
 // 以便在 skills.status 响应中合并展示。
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 
+	agentskills "github.com/Acosmi/ClawAcosmi/internal/agents/skills"
 	"github.com/Acosmi/ClawAcosmi/internal/mcpclient"
 )
 
@@ -80,8 +83,15 @@ var toolRiskMap = map[string]string{
 	"open_url":         "medium",
 }
 
+type argusToolBinding struct {
+	Description string
+	FilePath    string
+	BaseDir     string
+}
+
 // BuildArgusSkillEntries 将 MCP 工具列表转为技能条目列表。
 func BuildArgusSkillEntries(tools []mcpclient.MCPToolDef) []ArgusSkillEntry {
+	docBindings := loadArgusToolBindings()
 	entries := make([]ArgusSkillEntry, 0, len(tools))
 	for _, t := range tools {
 		category := toolCategoryMap[t.Name]
@@ -93,12 +103,23 @@ func BuildArgusSkillEntries(tools []mcpclient.MCPToolDef) []ArgusSkillEntry {
 			risk = "medium"
 		}
 
+		description := t.Description
+		filePath := ""
+		baseDir := ""
+		if binding, ok := docBindings["argus_"+t.Name]; ok {
+			if strings.TrimSpace(binding.Description) != "" {
+				description = binding.Description
+			}
+			filePath = binding.FilePath
+			baseDir = binding.BaseDir
+		}
+
 		entries = append(entries, ArgusSkillEntry{
 			Name:        "argus." + t.Name,
-			Description: t.Description,
+			Description: description,
 			Source:      "argus",
-			FilePath:    "",
-			BaseDir:     "",
+			FilePath:    filePath,
+			BaseDir:     baseDir,
 			SkillKey:    "argus." + t.Name,
 			Bundled:     false,
 			PrimaryEnv:  "",
@@ -125,6 +146,80 @@ func BuildArgusSkillEntries(tools []mcpclient.MCPToolDef) []ArgusSkillEntry {
 		})
 	}
 	return entries
+}
+
+func loadArgusToolBindings() map[string]argusToolBinding {
+	docsSkillsDir := agentskills.ResolveDocsSkillsDir("")
+	if docsSkillsDir == "" {
+		return nil
+	}
+
+	bindings := make(map[string]argusToolBinding)
+	loadArgusToolBindingsFromDir(bindings, docsSkillsDir)
+
+	categoryDirs, err := os.ReadDir(docsSkillsDir)
+	if err != nil {
+		return bindings
+	}
+	for _, de := range categoryDirs {
+		if !de.IsDir() || strings.HasPrefix(de.Name(), ".") {
+			continue
+		}
+		loadArgusToolBindingsFromDir(bindings, filepath.Join(docsSkillsDir, de.Name()))
+	}
+	return bindings
+}
+
+func loadArgusToolBindingsFromDir(bindings map[string]argusToolBinding, dir string) {
+	skillDirs, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	for _, de := range skillDirs {
+		if !de.IsDir() || strings.HasPrefix(de.Name(), ".") {
+			continue
+		}
+		skillFile := filepath.Join(dir, de.Name(), "SKILL.md")
+		content, err := os.ReadFile(skillFile)
+		if err != nil {
+			continue
+		}
+
+		fm := agentskills.ParseFrontmatter(string(content))
+		description := strings.TrimSpace(fm["description"])
+		if description == "" {
+			continue
+		}
+		for _, toolName := range parseSkillTools(fm["tools"]) {
+			if !strings.HasPrefix(toolName, "argus_") {
+				continue
+			}
+			if _, exists := bindings[toolName]; exists {
+				continue
+			}
+			bindings[toolName] = argusToolBinding{
+				Description: description,
+				FilePath:    skillFile,
+				BaseDir:     filepath.Dir(skillFile),
+			}
+		}
+	}
+}
+
+func parseSkillTools(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	tools := make([]string, 0, len(parts))
+	for _, part := range parts {
+		toolName := strings.TrimSpace(part)
+		if toolName != "" {
+			tools = append(tools, toolName)
+		}
+	}
+	return tools
 }
 
 // emojiForCategory 根据分类返回 emoji 标识。

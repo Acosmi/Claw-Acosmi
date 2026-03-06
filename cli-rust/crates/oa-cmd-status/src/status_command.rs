@@ -590,8 +590,8 @@ pub async fn status_command(
 
     // Footer.
     println!();
-    println!("FAQ: https://github.com/Acosmi/Claw-Acismi/tree/main/docs/skills/general/faq");
-    println!("Troubleshooting: https://github.com/Acosmi/Claw-Acismi/tree/main/docs/skills/general/troubleshooting");
+    println!("FAQ: https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/skills/general/faq");
+    println!("Troubleshooting: https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/skills/general/troubleshooting");
     println!();
     if let Some(update_hint) = format_update_available_hint(&scan.update, "dev") {
         println!("{}", Theme::warn(&update_hint));

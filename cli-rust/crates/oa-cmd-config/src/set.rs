@@ -1,6 +1,6 @@
 /// Config set command.
 ///
-/// Sets a value in the OpenAcosmi configuration at a dot-separated path
+/// Sets a value in the Claw Acosmi configuration at a dot-separated path
 /// and writes the updated config to disk.
 ///
 /// Source: `src/commands/config-set.ts`

@@ -34,7 +34,7 @@ func init() {
 		"onboard.hatch.web_failed":    "Failed to open browser: %s\nOpen manually: %s",
 		"onboard.hatch.later_hint":    "Start later: openacosmi",
 		"onboard.controlui.title":     "Control UI",
-		"onboard.finalize.outro":      "Onboarding complete. Use the dashboard link above to control OpenAcosmi.",
+		"onboard.finalize.outro":      "Onboarding complete. Use the dashboard link above to control Claw Acosmi.",
 		"onboard.finalize.probe_ok":   "Gateway reachable: %s",
 		"onboard.finalize.probe_fail": "Gateway not responding: %s\nStart manually: openacosmi gateway serve",
 		"onboard.finalize.web_search": "Tip: enable web search to enhance AI answer quality.\nConfigure: config.json → agents.defaults.webSearch",
@@ -51,7 +51,7 @@ func init() {
 		"onboard.gw.ts_funnel_auth_note": "Tailscale funnel requires password auth.",
 
 		// ── gateway/wizard_onboarding.go ──
-		"onboard.welcome":               "Welcome to the OpenAcosmi Setup Wizard 🚀",
+		"onboard.welcome":               "Welcome to the Claw Acosmi Setup Wizard 🚀",
 		"onboard.provider.title":        "Model Provider",
 		"onboard.provider.select":       "Choose your AI model provider",
 		"onboard.provider.env_detected": "Environment variable %s detected. Use existing credentials?",
@@ -73,7 +73,7 @@ func init() {
 
 		// ── cmd/setup_skills.go ──
 		"onboard.skill.title":         "Skills",
-		"onboard.skill.intro":         "Skills add extended capabilities to your bot.\nOpenAcosmi ships with several built-in skills, and you can install community skills.",
+		"onboard.skill.intro":         "Skills add extended capabilities to your bot.\nClaw Acosmi ships with several built-in skills, and you can install community skills.",
 		"onboard.skill.configure":     "Configure skills now? (recommended)",
 		"onboard.skill.node_missing":  "Node.js not detected. Some skills require Node.js.\nRecommended: install Node.js via Homebrew",
 		"onboard.skill.brew_confirm":  "Show Homebrew install command?",
@@ -85,14 +85,14 @@ func init() {
 
 		// ── cmd/setup_hooks.go ──
 		"onboard.hook.title":   "Hooks",
-		"onboard.hook.intro":   "Hooks let you run custom scripts on specific events.\nOpenAcosmi supports pre-reply, post-reply and other lifecycle hooks.",
+		"onboard.hook.intro":   "Hooks let you run custom scripts on specific events.\nClaw Acosmi supports pre-reply, post-reply and other lifecycle hooks.",
 		"onboard.hook.summary": "Hooks configuration complete.",
 		"onboard.hook.none":    "No hooks detected in current directory.\nCreate a hooks/ directory and add scripts to enable.",
 
 		// ── cmd/setup_remote.go ──
 		"onboard.remote.title":          "Remote Connection",
 		"onboard.remote.discover":       "Discover gateway on LAN (Bonjour)?",
-		"onboard.remote.discover_hint":  "Scanning for OpenAcosmi Gateways on the local network...\nThis requires a Gateway to be running on another machine.",
+		"onboard.remote.discover_hint":  "Scanning for Claw Acosmi Gateways on the local network...\nThis requires a Gateway to be running on another machine.",
 		"onboard.remote.discover_error": "Discovery error: %v",
 		"onboard.remote.discover_none":  "No gateways found",
 		"onboard.remote.discover_found": "Found %d gateway(s)",

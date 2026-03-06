@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Acosmi/ClawAcosmi/internal/agents/runner"
 	"github.com/Acosmi/ClawAcosmi/internal/autoreply"
 )
 
@@ -86,6 +87,7 @@ func RunReplyAgent(ctx context.Context, params RunReplyAgentParams) ([]autoreply
 		OnReasoningStream:     resolveReasoningCallback(params.Opts),
 		OnModelSelected:       resolveModelSelectedCallback(params.Opts),
 		OnBlockReply:          resolveBlockReplyCallback(params.Opts),
+		OnProgress:            resolveProgressCallback(params.Opts),
 	})
 	if err != nil {
 		typing.Cleanup()
@@ -159,4 +161,15 @@ func resolveBlockReplyCallback(opts *autoreply.GetReplyOptions) func(autoreply.R
 		return opts.OnBlockReply
 	}
 	return nil
+}
+
+func resolveProgressCallback(opts *autoreply.GetReplyOptions) func(context.Context, runner.ProgressUpdate) runner.ProgressReportStatus {
+	if opts == nil || opts.OnProgress == nil {
+		return nil
+	}
+	cb, ok := opts.OnProgress.(func(context.Context, runner.ProgressUpdate) runner.ProgressReportStatus)
+	if !ok {
+		return nil
+	}
+	return cb
 }

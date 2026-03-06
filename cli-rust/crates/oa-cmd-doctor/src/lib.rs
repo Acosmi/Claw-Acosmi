@@ -1,4 +1,4 @@
-/// System diagnostics commands for OpenAcosmi CLI.
+/// System diagnostics commands for Claw Acosmi CLI.
 ///
 /// The `doctor` command inspects and repairs the configuration, auth profiles,
 /// gateway service, sandbox images, shell completion, state integrity, and

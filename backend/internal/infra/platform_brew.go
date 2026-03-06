@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build darwin
 
 // platform_brew.go — macOS/Linux Homebrew 路径检测 (S2-7: HIDDEN-8)
 

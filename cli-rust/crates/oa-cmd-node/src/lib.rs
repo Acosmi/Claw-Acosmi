@@ -1,4 +1,4 @@
-/// Headless node host commands for OpenAcosmi CLI.
+/// Headless node host commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands: run, install, uninstall, status, stop, restart.
 ///

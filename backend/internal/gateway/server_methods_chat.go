@@ -492,6 +492,9 @@ func handleChatSend(ctx *MethodHandlerContext) {
 					}
 				}
 
+				progressText := truncateForLog(toolText, 300)
+				now := time.Now().UnixMilli()
+
 				// 广播 task.progress 结构化看板事件
 				broadcaster.Broadcast(EventTaskProgress, TaskProgressEvent{
 					TaskID:     runId,
@@ -499,16 +502,28 @@ func handleChatSend(ctx *MethodHandlerContext) {
 					ToolName:   event.ToolName,
 					ToolID:     event.ToolID,
 					Phase:      event.Phase,
-					Text:       truncateForLog(toolText, 300),
+					Text:       progressText,
 					IsError:    event.IsError,
 					Duration:   event.Duration,
-					Ts:         time.Now().UnixMilli(),
+					Ts:         now,
 				}, &BroadcastOptions{DropIfSlow: true})
-				// 更新 ToolName 并持久化（L-01 修复：确保指针安全，调用 Save 写入）
+				// 持久化最近一个工具步骤，供 tasks.list 在刷新后稳定读取。
 				if store := ctx.Context.SessionStore; store != nil {
-					if entry := store.LoadSessionEntry(taskSessionKey); entry != nil && entry.TaskMeta != nil {
+					if entry := store.LoadSessionEntry(taskSessionKey); entry != nil {
+						if entry.TaskMeta == nil {
+							entry.TaskMeta = &sessiontypes.TaskMeta{}
+						}
+						entry.TaskMeta.Status = "progress"
 						entry.TaskMeta.ToolName = event.ToolName
-						entry.UpdatedAt = time.Now().UnixMilli()
+						entry.TaskMeta.ProgressPhase = event.Phase
+						entry.TaskMeta.ProgressText = progressText
+						entry.TaskMeta.ProgressIsError = event.IsError
+						entry.TaskMeta.ProgressDuration = event.Duration
+						entry.TaskMeta.ProgressAt = now
+						if entry.TaskMeta.StartedAt == 0 {
+							entry.TaskMeta.StartedAt = now
+						}
+						entry.UpdatedAt = now
 						store.Save(entry)
 					}
 				}

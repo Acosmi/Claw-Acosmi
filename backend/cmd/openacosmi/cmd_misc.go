@@ -133,7 +133,7 @@ func newDocsCmd() *cobra.Command {
 		Use:   "docs",
 		Short: "Open documentation",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cmd.Println("📖 Docs: https://github.com/Acosmi/Claw-Acismi")
+			cmd.Println("📖 Docs: https://github.com/Acosmi/Claw-Acosmi")
 			return nil
 		},
 	}
@@ -223,7 +223,7 @@ func newDashboardCmd() *cobra.Command {
 func newResetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
-		Short: "Reset OpenAcosmi state",
+		Short: "Reset Claw Acosmi state",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.Println("⚠️ Reset not yet implemented")
 			return nil

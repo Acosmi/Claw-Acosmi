@@ -1,7 +1,7 @@
 /// Setup command implementation.
 ///
 /// Initializes or updates the workspace, configuration file, and session
-/// directories for the OpenAcosmi CLI.
+/// directories for the Claw Acosmi CLI.
 ///
 /// Source: `src/commands/setup.ts`
 

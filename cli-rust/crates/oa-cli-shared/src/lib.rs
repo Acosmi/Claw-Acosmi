@@ -1,4 +1,4 @@
-/// CLI shared utilities for OpenAcosmi CLI.
+/// CLI shared utilities for Claw Acosmi CLI.
 ///
 /// Provides common CLI infrastructure: banner display, global state,
 /// progress indicators, config guards, command formatting, and argument

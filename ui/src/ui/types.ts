@@ -375,6 +375,14 @@ export type GatewayAgentRow = {
     avatar?: string;
     avatarUrl?: string;
   };
+  // 统一发现字段 — 子智能体通过 agents.list 一并返回
+  type?: "agent" | "subagent";
+  status?: string;
+  error?: string;
+  provider?: string;
+  model?: string;
+  configured?: boolean;
+  builtin?: boolean;
 };
 
 export type AgentsListResult = {

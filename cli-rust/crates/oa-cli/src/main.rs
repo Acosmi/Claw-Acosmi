@@ -1,11 +1,10 @@
-/// OpenAcosmi CLI — Rust implementation.
+/// Claw Acosmi CLI — Rust implementation.
 ///
 /// Binary entry point with Clap-based command routing. Connects all command
 /// crates through a `#[derive(Subcommand)]` enum and dispatches to the
 /// appropriate entry function.
 ///
 /// Source: `backend/cmd/openacosmi/main.go`, `src/cli/index.ts`
-
 mod commands;
 
 use std::process::ExitCode;
@@ -20,12 +19,12 @@ use commands::Commands;
 // Root CLI definition
 // ---------------------------------------------------------------------------
 
-/// OpenAcosmi CLI — orchestrate AI agents, channels, models, and more.
+/// Claw Acosmi CLI — orchestrate AI agents, channels, models, and more.
 #[derive(Debug, Parser)]
 #[command(
     name = "openacosmi",
     version = env!("CARGO_PKG_VERSION"),
-    about = "OpenAcosmi CLI — orchestrate AI agents, channels, models, and more",
+    about = "Claw Acosmi CLI — orchestrate AI agents, channels, models, and more",
     long_about = None,
     propagate_version = true,
     subcommand_required = true,
@@ -68,8 +67,8 @@ pub struct Cli {
 /// `OPENACOSMI_LOG` environment variable (or `warn` if unset).
 fn init_tracing(verbose: bool) {
     let default_level = if verbose { "debug" } else { "warn" };
-    let filter = EnvFilter::try_from_env("OPENACOSMI_LOG")
-        .unwrap_or_else(|_| EnvFilter::new(default_level));
+    let filter =
+        EnvFilter::try_from_env("OPENACOSMI_LOG").unwrap_or_else(|_| EnvFilter::new(default_level));
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)

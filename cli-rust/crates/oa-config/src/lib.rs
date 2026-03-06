@@ -1,4 +1,4 @@
-/// Configuration loading, validation, and I/O for OpenAcosmi CLI.
+/// Configuration loading, validation, and I/O for Claw Acosmi CLI.
 ///
 /// Handles reading/writing configuration files, path resolution,
 /// defaults, validation, environment-specific overrides, and session storage.

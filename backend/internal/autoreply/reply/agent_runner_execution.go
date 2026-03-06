@@ -42,6 +42,7 @@ type AgentTurnParams struct {
 	OnReasoningStream func(payload autoreply.ReplyPayload)
 	OnModelSelected   func(ctx autoreply.ModelSelectedContext)
 	OnBlockReply      func(payload autoreply.ReplyPayload, ctx *autoreply.BlockReplyContext)
+	OnProgress        func(ctx context.Context, update runner.ProgressUpdate) runner.ProgressReportStatus
 }
 
 // BlockReplyChunking 块回复分块配置。

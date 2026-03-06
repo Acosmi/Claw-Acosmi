@@ -225,7 +225,7 @@ func (p *WeComPlugin) SendMessage(params channels.OutboundSendParams) (*channels
 
 	mediaSent := false
 	if len(params.MediaData) > 0 {
-		if err := sender.SendBinaryMedia(ctx, params.To, params.MediaData, params.MediaMimeType, ""); err != nil {
+		if err := sender.SendBinaryMedia(ctx, params.To, params.MediaData, params.MediaMimeType, params.MediaFileName); err != nil {
 			slog.Warn("wecom: binary media send failed, fallback to text",
 				"to", params.To, "mimeType", params.MediaMimeType, "error", err)
 			if outboundText == "" {

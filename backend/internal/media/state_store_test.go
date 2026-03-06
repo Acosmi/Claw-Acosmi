@@ -265,6 +265,84 @@ func TestFileMediaStateStore_SaveClone(t *testing.T) {
 	}
 }
 
+func TestCanAutoSpawn_UnderLimit(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileMediaStateStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileMediaStateStore: %v", err)
+	}
+
+	// 初始状态：今日零计数，应可自动 spawn
+	if !store.CanAutoSpawn(5) {
+		t.Error("should be able to auto spawn initially")
+	}
+
+	// 记录 2 次
+	if err := store.RecordAutoSpawn(); err != nil {
+		t.Fatalf("RecordAutoSpawn: %v", err)
+	}
+	if err := store.RecordAutoSpawn(); err != nil {
+		t.Fatalf("RecordAutoSpawn: %v", err)
+	}
+
+	if !store.CanAutoSpawn(5) {
+		t.Error("should still be able to auto spawn (2 < 5)")
+	}
+	if store.GetAutoSpawnCount() != 2 {
+		t.Errorf("GetAutoSpawnCount: got %d, want 2", store.GetAutoSpawnCount())
+	}
+}
+
+func TestCanAutoSpawn_OverLimit(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileMediaStateStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileMediaStateStore: %v", err)
+	}
+
+	// 记录到达上限
+	for i := 0; i < 3; i++ {
+		if err := store.RecordAutoSpawn(); err != nil {
+			t.Fatalf("RecordAutoSpawn: %v", err)
+		}
+	}
+
+	if store.CanAutoSpawn(3) {
+		t.Error("should NOT be able to auto spawn (3 >= 3)")
+	}
+	if store.CanAutoSpawn(4) {
+		t.Log("should be able with higher limit")
+	}
+}
+
+func TestCanAutoSpawn_DayReset(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileMediaStateStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileMediaStateStore: %v", err)
+	}
+
+	// 模拟昨天的记录
+	store.mu.Lock()
+	store.state.AutoSpawnCount = 10
+	store.state.AutoSpawnResetDay = "2020-01-01" // 过去的日期
+	store.mu.Unlock()
+
+	// 跨日应该允许
+	if !store.CanAutoSpawn(5) {
+		t.Error("should be able to auto spawn after day reset")
+	}
+
+	// 记录一次后计数重置
+	if err := store.RecordAutoSpawn(); err != nil {
+		t.Fatalf("RecordAutoSpawn: %v", err)
+	}
+
+	if store.GetAutoSpawnCount() != 1 {
+		t.Errorf("GetAutoSpawnCount after reset: got %d, want 1", store.GetAutoSpawnCount())
+	}
+}
+
 func TestFileMediaStateStore_RecordPublishViaInterface(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewFileMediaStateStore(dir)

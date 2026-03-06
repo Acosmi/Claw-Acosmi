@@ -36,7 +36,7 @@ func init() {
 		"onboard.hatch.web_failed":    "浏览器打开失败: %s\n手动打开: %s",
 		"onboard.hatch.later_hint":    "稍后启动: openacosmi",
 		"onboard.controlui.title":     "控制台",
-		"onboard.finalize.outro":      "设置完成。使用上方的控制台链接管理 OpenAcosmi。",
+		"onboard.finalize.outro":      "设置完成。使用上方的控制台链接管理 Claw Acosmi。",
 		"onboard.finalize.probe_ok":   "Gateway 可达: %s",
 		"onboard.finalize.probe_fail": "Gateway 未响应: %s\n手动启动: openacosmi gateway serve",
 		"onboard.finalize.web_search": "提示: 启用 Web 搜索可增强 AI 回答质量。\n配置: config.json → agents.defaults.webSearch",
@@ -53,7 +53,7 @@ func init() {
 		"onboard.gw.ts_funnel_auth_note": "Tailscale funnel 需要密码认证。",
 
 		// ── gateway/wizard_onboarding.go ──
-		"onboard.welcome":               "欢迎使用 OpenAcosmi 设置向导 🚀",
+		"onboard.welcome":               "欢迎使用 Claw Acosmi 设置向导 🚀",
 		"onboard.provider.title":        "模型提供商",
 		"onboard.provider.select":       "选择 AI 模型提供商",
 		"onboard.provider.env_detected": "检测到环境变量 %s。使用已有凭证？",
@@ -75,7 +75,7 @@ func init() {
 
 		// ── cmd/setup_skills.go ──
 		"onboard.skill.title":         "技能管理",
-		"onboard.skill.intro":         "技能（Skills）为机器人添加扩展能力。\n OpenAcosmi 自带多个内置技能，您也可以安装社区技能。",
+		"onboard.skill.intro":         "技能（Skills）为机器人添加扩展能力。\n Claw Acosmi 自带多个内置技能，您也可以安装社区技能。",
 		"onboard.skill.configure":     "现在配置技能？（推荐）",
 		"onboard.skill.node_missing":  "Node.js 未检测到。安装一些技能需要 Node.js。\n推荐: 通过 Homebrew 安装 Node.js",
 		"onboard.skill.brew_confirm":  "显示 Homebrew 安装命令？",
@@ -87,14 +87,14 @@ func init() {
 
 		// ── cmd/setup_hooks.go ──
 		"onboard.hook.title":   "Hooks 管理",
-		"onboard.hook.intro":   "Hooks 可在特定事件触发时执行自定义脚本。\nOpenAcosmi 支持 pre-reply、post-reply 等生命周期钩子。",
+		"onboard.hook.intro":   "Hooks 可在特定事件触发时执行自定义脚本。\nClaw Acosmi 支持 pre-reply、post-reply 等生命周期钩子。",
 		"onboard.hook.summary": "Hooks 配置完成。",
 		"onboard.hook.none":    "当前目录下未检测到 hooks。\n创建 hooks/ 目录并添加脚本以启用。",
 
 		// ── cmd/setup_remote.go ──
 		"onboard.remote.title":          "远程连接",
 		"onboard.remote.discover":       "在局域网发现 Gateway（Bonjour）？",
-		"onboard.remote.discover_hint":  "正在搜索局域网上的 OpenAcosmi Gateway...\n这需要 Gateway 已在另一台机器上运行。",
+		"onboard.remote.discover_hint":  "正在搜索局域网上的 Claw Acosmi Gateway...\n这需要 Gateway 已在另一台机器上运行。",
 		"onboard.remote.discover_error": "发现错误: %v",
 		"onboard.remote.discover_none":  "未找到 Gateway",
 		"onboard.remote.discover_found": "找到 %d 个 Gateway",

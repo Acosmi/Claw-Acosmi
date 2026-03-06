@@ -1,4 +1,4 @@
-/// DNS and mDNS discovery helper commands for OpenAcosmi CLI.
+/// DNS and mDNS discovery helper commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands: setup.
 ///

@@ -210,14 +210,14 @@ func (p *FeishuPlugin) Start(accountID string) error {
 								"account", capturedAccountID, "chat_id", chatID, "error", uploadErr)
 							// 降级：独立消息发送
 							_ = p.sendMediaData(context.Background(), client, sender, chatID, idType,
-								data, mimeType)
+								data, "", mimeType)
 						} else {
 							embeddedImageKeys = append(embeddedImageKeys, imageKey)
 						}
 					} else {
 						// 非图片（音频/文件）：独立消息发送
 						mediaErr := p.sendMediaData(context.Background(), client, sender, chatID, idType,
-							data, mimeType)
+							data, "", mimeType)
 						if mediaErr != nil {
 							slog.Warn("feishu: auto-reply media send failed",
 								"account", capturedAccountID, "chat_id", chatID, "error", mediaErr)
@@ -391,7 +391,7 @@ func (p *FeishuPlugin) SendMessage(params channels.OutboundSendParams) (*channel
 
 	// 如有 MediaData（base64 解码的二进制），直接上传发送（跳过 HTTP 下载和 SSRF 校验）
 	if len(params.MediaData) > 0 && client != nil {
-		mediaErr := p.sendMediaData(ctx, client, sender, params.To, idType, params.MediaData, params.MediaMimeType)
+		mediaErr := p.sendMediaData(ctx, client, sender, params.To, idType, params.MediaData, params.MediaFileName, params.MediaMimeType)
 		if mediaErr != nil {
 			mediaSendErr = mediaErr
 			slog.Warn("feishu: binary media send failed, falling back to text",
@@ -529,6 +529,7 @@ func (p *FeishuPlugin) sendMediaData(
 	sender feishuMessageSender,
 	receiveID, idType string,
 	data []byte,
+	fileName string,
 	mimeType string,
 ) error {
 	mediaCategory := detectMediaCategory(mimeType, data)
@@ -549,7 +550,9 @@ func (p *FeishuPlugin) sendMediaData(
 		return sender.SendAudio(ctx, receiveID, idType, fileKey)
 
 	default:
-		fileName := "file"
+		if strings.TrimSpace(fileName) == "" {
+			fileName = "file"
+		}
 		fileType := FeishuFileType(mimeType, fileName)
 		fileKey, err := client.UploadFile(ctx, data, fileName, fileType, 0)
 		if err != nil {

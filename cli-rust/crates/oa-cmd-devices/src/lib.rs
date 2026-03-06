@@ -1,4 +1,4 @@
-/// Device pairing and token management commands for OpenAcosmi CLI.
+/// Device pairing and token management commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands: list, approve, reject, rotate, revoke.
 ///

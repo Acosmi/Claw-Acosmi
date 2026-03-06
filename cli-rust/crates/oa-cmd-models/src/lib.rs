@@ -1,4 +1,4 @@
-/// Model management commands for OpenAcosmi CLI.
+/// Model management commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands for listing, setting, aliasing, and managing
 /// model fallbacks. Mirrors the TypeScript commands in

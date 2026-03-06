@@ -54,7 +54,7 @@ func newSkillsListCmd() *cobra.Command {
 				fmt.Println("  (no skills installed, use --verbose for details)")
 			}
 			if eligible {
-				fmt.Println("\n  Browse skills: https://github.com/Acosmi/Claw-Acismi/tree/main/docs/skills")
+				fmt.Println("\n  Browse skills: https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/skills")
 			}
 			return nil
 		},

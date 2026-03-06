@@ -1,4 +1,4 @@
-/// Status, status-all, and gateway-status commands for OpenAcosmi CLI.
+/// Status, status-all, and gateway-status commands for Claw Acosmi CLI.
 ///
 /// Source: `src/commands/status.ts`, `src/commands/status-all.ts`,
 ///         `src/commands/gateway-status.ts`

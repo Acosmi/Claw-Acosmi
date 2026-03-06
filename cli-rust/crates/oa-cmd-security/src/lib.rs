@@ -1,4 +1,4 @@
-/// Security audit and management commands for OpenAcosmi CLI.
+/// Security audit and management commands for Claw Acosmi CLI.
 ///
 /// Provides `security` subcommands: audit.
 /// Delegates to Gateway RPC: `security.get`.

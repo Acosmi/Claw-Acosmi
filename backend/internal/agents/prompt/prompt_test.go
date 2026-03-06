@@ -25,7 +25,7 @@ func TestBuildAgentSystemPrompt_Full(t *testing.T) {
 	})
 
 	// 验证包含各段落
-	if !strings.Contains(result, "OpenAcosmi") {
+	if !strings.Contains(result, "Claw Acosmi") {
 		t.Error("missing identity line")
 	}
 	if !strings.Contains(result, "User: Alice") {
@@ -54,7 +54,7 @@ func TestBuildAgentSystemPrompt_Minimal(t *testing.T) {
 	})
 
 	// 身份行应存在
-	if !strings.Contains(result, "OpenAcosmi") {
+	if !strings.Contains(result, "Claw Acosmi") {
 		t.Error("missing identity")
 	}
 	// 用户身份在 minimal 模式下被排除
@@ -72,7 +72,7 @@ func TestBuildAgentSystemPrompt_None(t *testing.T) {
 		Mode: PromptModeNone,
 	})
 
-	if !strings.Contains(result, "OpenAcosmi") {
+	if !strings.Contains(result, "Claw Acosmi") {
 		t.Error("missing identity")
 	}
 	// 不应包含段落

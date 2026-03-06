@@ -195,6 +195,46 @@ func TestRemoteApprovalNotifier_InjectPreservesLastKnown(t *testing.T) {
 	}
 }
 
+func TestRemoteApprovalNotifier_UpdateConfig_PreservesFeishuFallbackFields(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	n := NewRemoteApprovalNotifier(nil)
+	n.InjectChannelFeishuConfig("cli_app", "secret_app", "oc_approval_group")
+	n.UpdateLastKnownFeishuTarget("oc_last_chat", "ou_last_user")
+
+	if err := n.UpdateConfig(RemoteApprovalConfig{
+		Enabled:     true,
+		CallbackURL: "https://example.com/callback",
+		Feishu: &FeishuProviderConfig{
+			Enabled:   true,
+			AppID:     "cli_app",
+			AppSecret: "***",
+			ChatID:    "oc_new_chat",
+			UserID:    "ou_new_user",
+			// 故意不回传 ApprovalChatID / LastKnown*，验证不会被覆盖清空。
+		},
+	}); err != nil {
+		t.Fatalf("update config failed: %v", err)
+	}
+
+	cfg := n.GetConfig()
+	if cfg.Feishu == nil {
+		t.Fatal("expected feishu config after update")
+	}
+	if cfg.Feishu.ApprovalChatID != "oc_approval_group" {
+		t.Fatalf("approvalChatId should be preserved, got %q", cfg.Feishu.ApprovalChatID)
+	}
+	if cfg.Feishu.LastKnownChatID != "oc_last_chat" {
+		t.Fatalf("lastKnownChatId should be preserved, got %q", cfg.Feishu.LastKnownChatID)
+	}
+	if cfg.Feishu.LastKnownUserID != "ou_last_user" {
+		t.Fatalf("lastKnownUserId should be preserved, got %q", cfg.Feishu.LastKnownUserID)
+	}
+}
+
 // ---------- TaskPresetManager ----------
 
 func TestTaskPresetManager_AddAndList(t *testing.T) {

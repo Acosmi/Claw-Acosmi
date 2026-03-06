@@ -117,7 +117,7 @@ pub fn build_ssh_tunnel_instructions(host: &str, ssh_port: Option<u16>) -> Strin
     [
         "Start a tunnel before using the CLI:",
         &format!("ssh -N -L 19001:127.0.0.1:19001 <user>@{host}{port_arg}"),
-        "Docs: https://github.com/Acosmi/Claw-Acismi/tree/main/docs/skills/gateway/remote",
+        "Docs: https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/skills/gateway/remote",
     ]
     .join("\n")
 }

@@ -1,4 +1,4 @@
-/// Gateway log viewing commands for OpenAcosmi CLI.
+/// Gateway log viewing commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands for viewing and managing gateway logs:
 /// follow, list, show, clear, export.

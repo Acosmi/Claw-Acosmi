@@ -13,6 +13,8 @@ package gateway
 import (
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,33 +23,69 @@ import (
 
 // ---------- 类型定义 ----------
 
-// MountRequest L2 专用：临时挂载请求（工作区默认挂载不在此列）。
+// MountRequest 临时路径放行请求（工作区默认路径不在此列）。
 type MountRequest struct {
 	HostPath  string `json:"hostPath"`  // 宿主机绝对路径
 	MountMode string `json:"mountMode"` // "ro" 或 "rw"
 }
 
+func sanitizeMountRequests(reqs []MountRequest) []MountRequest {
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]MountRequest, 0, len(reqs))
+	seen := make(map[string]struct{}, len(reqs))
+	for _, r := range reqs {
+		hostPath := strings.TrimSpace(r.HostPath)
+		if hostPath == "" || !filepath.IsAbs(hostPath) {
+			continue
+		}
+		hostPath = filepath.Clean(hostPath)
+		mode := strings.ToLower(strings.TrimSpace(r.MountMode))
+		if mode != "rw" {
+			mode = "ro"
+		}
+		key := hostPath + "|" + mode
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, MountRequest{HostPath: hostPath, MountMode: mode})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mergeMountRequests(base, extra []MountRequest) []MountRequest {
+	combined := make([]MountRequest, 0, len(base)+len(extra))
+	combined = append(combined, base...)
+	combined = append(combined, extra...)
+	return sanitizeMountRequests(combined)
+}
+
 // PendingEscalationRequest 等待审批的提权请求。
 type PendingEscalationRequest struct {
 	ID             string         `json:"id"`
-	RequestedLevel string         `json:"requestedLevel"` // "sandboxed" | "full"
+	RequestedLevel string         `json:"requestedLevel"` // "allowlist" | "sandboxed" | "full"
 	Reason         string         `json:"reason"`
 	RunID          string         `json:"runId,omitempty"`
 	SessionID      string         `json:"sessionId,omitempty"`
 	RequestedAt    time.Time      `json:"requestedAt"`
 	TTLMinutes     int            `json:"ttlMinutes"`              // 建议的 TTL
-	MountRequests  []MountRequest `json:"mountRequests,omitempty"` // L2 专用
+	MountRequests  []MountRequest `json:"mountRequests,omitempty"` // 临时路径放行
 }
 
 // ActiveEscalationGrant 当前活跃的临时提权。
 type ActiveEscalationGrant struct {
 	ID            string         `json:"id"`
-	Level         string         `json:"level"` // 临时级别：sandboxed | full
+	Level         string         `json:"level"` // 临时级别：allowlist | sandboxed | full
 	GrantedAt     time.Time      `json:"grantedAt"`
 	ExpiresAt     time.Time      `json:"expiresAt"`
 	RunID         string         `json:"runId,omitempty"`
 	SessionID     string         `json:"sessionId,omitempty"`
-	MountRequests []MountRequest `json:"mountRequests,omitempty"` // L2 挂载配置
+	MountRequests []MountRequest `json:"mountRequests,omitempty"` // 临时路径放行配置
 }
 
 // EscalationStatus 提权状态快照（供 API 返回）。
@@ -97,17 +135,24 @@ func (m *EscalationManager) SetMaxAllowedLevel(level string) {
 // ---------- 请求提权 ----------
 
 // RequestEscalation 智能体请求临时提权。
-// 如果已有 pending 请求或活跃提权，返回错误。
+// 如果已有 pending 请求，返回错误。
 // originatorChatID: 触发权限请求的群聊 ID（如飞书 chat_id），用于审批卡片群发。
 // originatorUserID: 触发权限请求的远程用户 ID（如飞书 open_id），用于审批卡片私聊。
-func (m *EscalationManager) RequestEscalation(id, level, reason, runID, sessionID, originatorChatID, originatorUserID string, ttlMinutes int) error {
+// mountRequests: 临时路径放行审批请求（可选）。
+func (m *EscalationManager) RequestEscalation(id, level, reason, runID, sessionID, originatorChatID, originatorUserID string, ttlMinutes int, mountRequests ...MountRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	sanitizedMounts := sanitizeMountRequests(mountRequests)
 
 	if m.pending != nil {
 		return fmt.Errorf("already have a pending escalation request (id=%s)", m.pending.ID)
 	}
-	if m.active != nil {
+
+	allowMountExtensionOnActive := m.active != nil &&
+		m.active.Level == level &&
+		len(sanitizedMounts) > 0
+	if m.active != nil && !allowMountExtensionOnActive {
 		return fmt.Errorf("already have an active escalation grant (level=%s, expires=%s)", m.active.Level, m.active.ExpiresAt.Format(time.RFC3339))
 	}
 
@@ -118,9 +163,11 @@ func (m *EscalationManager) RequestEscalation(id, level, reason, runID, sessionI
 		return fmt.Errorf("invalid escalation level %q, must be \"allowlist\", \"sandboxed\", or \"full\"", level)
 	}
 
-	// Design Fix 3: base level 已满足请求级别时不创建 pending
+	// Design Fix 3: base level 已满足请求级别时不创建 pending。
+	// 例外: 同级路径放行扩展（mountRequests 非空）允许继续走审批。
 	baseLevel := readBaseSecurityLevel()
-	if infra.LevelOrder(infra.ExecSecurity(baseLevel)) >= infra.LevelOrder(infra.ExecSecurity(level)) {
+	baseSatisfied := infra.LevelOrder(infra.ExecSecurity(baseLevel)) >= infra.LevelOrder(infra.ExecSecurity(level))
+	if baseSatisfied && len(sanitizedMounts) == 0 {
 		return fmt.Errorf("base level %q already satisfies requested level %q", baseLevel, level)
 	}
 
@@ -141,6 +188,7 @@ func (m *EscalationManager) RequestEscalation(id, level, reason, runID, sessionI
 		SessionID:      sessionID,
 		RequestedAt:    time.Now(),
 		TTLMinutes:     ttlMinutes,
+		MountRequests:  sanitizedMounts,
 	}
 
 	m.log.Info("escalation requested",
@@ -175,6 +223,7 @@ func (m *EscalationManager) RequestEscalation(id, level, reason, runID, sessionI
 			"sessionId":      sessionID,
 			"requestedAt":    m.pending.RequestedAt.UnixMilli(),
 			"ttlMinutes":     ttlMinutes,
+			"mountRequests":  sanitizedMounts,
 		}, nil)
 	}
 
@@ -216,6 +265,7 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 	}
 
 	req := m.pending
+	existingActive := m.active
 	m.pending = nil
 
 	// Phase 4.1: 清除磁盘持久化（best-effort）
@@ -289,14 +339,26 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 	}
 
 	now := time.Now()
+	mergedMounts := req.MountRequests
+	runID := req.RunID
+	sessionID := req.SessionID
+	if existingActive != nil && existingActive.Level == req.RequestedLevel {
+		mergedMounts = mergeMountRequests(existingActive.MountRequests, req.MountRequests)
+		if runID == "" {
+			runID = existingActive.RunID
+		}
+		if sessionID == "" {
+			sessionID = existingActive.SessionID
+		}
+	}
 	m.active = &ActiveEscalationGrant{
 		ID:            req.ID,
 		Level:         req.RequestedLevel,
 		GrantedAt:     now,
 		ExpiresAt:     now.Add(time.Duration(ttlMinutes) * time.Minute),
-		RunID:         req.RunID,
-		SessionID:     req.SessionID,
-		MountRequests: req.MountRequests,
+		RunID:         runID,
+		SessionID:     sessionID,
+		MountRequests: mergedMounts,
 	}
 
 	m.log.Info("escalation approved",
@@ -372,6 +434,7 @@ func (m *EscalationManager) autoDeescalate(reason string) {
 func (m *EscalationManager) deescalateLocked(reason string) {
 	grant := m.active
 	m.active = nil
+	effectiveLevel := m.applyDeescalationFallbackLocked(grant.Level)
 
 	if m.deescalateTimer != nil {
 		m.deescalateTimer.Stop()
@@ -405,7 +468,7 @@ func (m *EscalationManager) deescalateLocked(reason string) {
 		m.broadcaster.Broadcast("exec.approval.resolved", map[string]interface{}{
 			"id":       grant.ID,
 			"approved": false,
-			"level":    string(infra.ExecSecurityDeny),
+			"level":    effectiveLevel,
 			"reason":   reason,
 		}, nil)
 	}
@@ -590,6 +653,7 @@ func (m *EscalationManager) persistPendingLocked() {
 		SessionID:      m.pending.SessionID,
 		RequestedAtMs:  m.pending.RequestedAt.UnixMilli(),
 		TTLMinutes:     m.pending.TTLMinutes,
+		MountRequests:  toPersistedMountRequests(m.pending.MountRequests),
 	}
 	if err := infra.SaveEscalationPending(req); err != nil {
 		m.log.Warn("failed to persist escalation request to disk", "id", m.pending.ID, "error", err)
@@ -645,6 +709,7 @@ func (m *EscalationManager) RestoreFromDisk() {
 		SessionID:      persisted.SessionID,
 		RequestedAt:    requestedAt,
 		TTLMinutes:     persisted.TTLMinutes,
+		MountRequests:  fromPersistedMountRequests(persisted.MountRequests),
 	}
 
 	// 用剩余审批时间重启定时器
@@ -670,9 +735,38 @@ func (m *EscalationManager) RestoreFromDisk() {
 			"sessionId":      persisted.SessionID,
 			"requestedAt":    persisted.RequestedAtMs,
 			"ttlMinutes":     persisted.TTLMinutes,
+			"mountRequests":  persisted.MountRequests,
 			"restored":       true,
 		}, nil)
 	}
+}
+
+func toPersistedMountRequests(reqs []MountRequest) []infra.PersistedMountRequest {
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]infra.PersistedMountRequest, 0, len(reqs))
+	for _, r := range reqs {
+		out = append(out, infra.PersistedMountRequest{
+			HostPath:  r.HostPath,
+			MountMode: r.MountMode,
+		})
+	}
+	return out
+}
+
+func fromPersistedMountRequests(reqs []infra.PersistedMountRequest) []MountRequest {
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]MountRequest, 0, len(reqs))
+	for _, r := range reqs {
+		out = append(out, MountRequest{
+			HostPath:  r.HostPath,
+			MountMode: r.MountMode,
+		})
+	}
+	return sanitizeMountRequests(out)
 }
 
 // ---------- 内部辅助 ----------
@@ -684,4 +778,43 @@ func readBaseSecurityLevel() string {
 		return string(snapshot.File.Defaults.Security)
 	}
 	return string(infra.ExecSecurityDeny)
+}
+
+// applyDeescalationFallbackLocked 按制度策略应用降权回落。
+// 仅当从 L3(full) 降权且 escalationFallback=sandboxed 时，保证 base 至少为 L2。
+func (m *EscalationManager) applyDeescalationFallbackLocked(grantLevel string) string {
+	snapshot := infra.ReadExecApprovalsSnapshot()
+	file := snapshot.File
+	baseLevel := infra.ExecSecurityDeny
+	if file != nil && file.Defaults != nil && file.Defaults.Security != "" {
+		baseLevel = file.Defaults.Security
+	}
+	if grantLevel != string(infra.ExecSecurityFull) {
+		return string(baseLevel)
+	}
+
+	fallback := infra.ExecEscalationFallbackBase
+	if file != nil && file.Defaults != nil && file.Defaults.EscalationFallback != "" {
+		fallback = file.Defaults.EscalationFallback
+	}
+	if fallback != infra.ExecEscalationFallbackSandboxed {
+		return string(baseLevel)
+	}
+	if infra.LevelOrder(baseLevel) >= infra.LevelOrder(infra.ExecSecuritySandboxed) {
+		return string(baseLevel)
+	}
+
+	// 需要将 base 提升到 L2，确保 L3 到期后固定回落到 sandboxed。
+	if file == nil {
+		file = &infra.ExecApprovalsFile{Version: 1}
+	}
+	if file.Defaults == nil {
+		file.Defaults = &infra.ExecApprovalsDefaults{}
+	}
+	file.Defaults.Security = infra.ExecSecuritySandboxed
+	if err := infra.SaveExecApprovals(file); err != nil {
+		m.log.Warn("failed to persist sandboxed fallback during deescalation", "error", err)
+		return string(baseLevel)
+	}
+	return string(infra.ExecSecuritySandboxed)
 }

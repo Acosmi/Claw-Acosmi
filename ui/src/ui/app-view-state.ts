@@ -41,7 +41,16 @@ import type {
 import type { ChatAttachment, ChatQueueItem, CronFormState } from "./ui-types.ts";
 import type { NostrProfileFormState } from "./views/channels.nostr-profile-form.ts";
 import type { SessionLogEntry } from "./views/usage.ts";
-import type { WizardState } from "./views/wizard.ts";
+
+
+// Phase 3: 媒体巡检心跳状态
+export type MediaHeartbeatStatus = {
+  lastPatrolAt: number | null;
+  nextPatrolAt: number | null;
+  activeJobId: string | null;
+  lastError: string | null;
+  autoSpawnCount?: number;
+};
 
 export type AppViewState = {
   settings: UiSettings;
@@ -49,9 +58,7 @@ export type AppViewState = {
   tab: Tab;
   overviewPanel: "dashboard" | "instances" | "usage";
   onboarding: boolean;
-  wizardOpen: boolean;
   wizardV2Open: boolean;
-  wizardState: WizardState;
   basePath: string;
   connected: boolean;
   theme: ThemeMode;
@@ -117,6 +124,29 @@ export type AppViewState = {
   securityConfirmOpen: boolean;
   securityPendingLevel: string | null;
   securityConfirmText: string;
+  remoteApprovalLoading: boolean;
+  remoteApprovalError: string | null;
+  remoteApprovalEnabled: boolean;
+  remoteApprovalCallbackUrl: string;
+  remoteApprovalEnabledProviders: string[];
+  remoteApprovalFeishuEnabled: boolean;
+  remoteApprovalFeishuAppId: string;
+  remoteApprovalFeishuAppSecret: string;
+  remoteApprovalFeishuChatId: string;
+  remoteApprovalDingtalkEnabled: boolean;
+  remoteApprovalDingtalkWebhookUrl: string;
+  remoteApprovalDingtalkWebhookSecret: string;
+  remoteApprovalWecomEnabled: boolean;
+  remoteApprovalWecomCorpId: string;
+  remoteApprovalWecomAgentId: string;
+  remoteApprovalWecomSecret: string;
+  remoteApprovalWecomToUser: string;
+  remoteApprovalWecomToParty: string;
+  remoteApprovalTestLoading: boolean;
+  remoteApprovalTestResult: string | null;
+  remoteApprovalTestError: string | null;
+  remoteApprovalSaving: boolean;
+  remoteApprovalSaved: boolean;
   configLoading: boolean;
   configRaw: string;
   configRawOriginal: string;
@@ -253,11 +283,12 @@ export type AppViewState = {
   addNotification: (message: string, type?: "error" | "info" | "success", sessionKey?: string) => void;
   clearCrossChannelNotification?: () => void;
 
-  // Sub-Agents (方案 C+D)
+  // Sub-Agents — 子智能体已统一到 agents 标签页侧边栏
   subagentsLoading: boolean;
   subagentsList: import("./controllers/subagents.js").SubAgentEntry[];
   subagentsError: string | null;
   subagentsBusyKey: string | null;
+  /** @deprecated 子智能体选择已由 agentsSelectedId 管理，保留用于向后兼容 */
   subagentsActiveTab: string;
   debugLoading: boolean;
   debugStatus: StatusSummary | null;
@@ -370,9 +401,7 @@ export type AppViewState = {
   handleOpenSidebar: (content: string) => void;
   handleCloseSidebar: () => void;
   handleSplitRatioChange: (ratio: number) => void;
-  handleStartWizard: () => Promise<void>;
   handleStartWizardV2?: () => void;
-  handleCancelWizard: () => Promise<void>;
   requestUpdate: () => void;
   // Phase C/D/E: STT/DocConv/Image wizard state
   sttWizard?: Record<string, unknown>;
@@ -389,6 +418,19 @@ export type AppViewState = {
   mediaDraftsSelectedPlatform: string;
   mediaPublishRecords: import("./controllers/media-dashboard.js").PublishRecord[];
   mediaPublishLoading: boolean;
+  mediaPublishPage: number;
+  mediaPublishPageSize: number;
+  mediaHeartbeat: MediaHeartbeatStatus | null;
+  mediaDraftDetail: import("./controllers/media-dashboard.js").DraftEntry | null;
+  mediaDraftDetailLoading: boolean;
+  mediaPublishDetail: import("./controllers/media-dashboard.js").PublishRecord | null;
+  mediaPublishDetailLoading: boolean;
+  mediaConfig: import("./controllers/media-dashboard.js").MediaConfig | null;
+  mediaDraftEdit: import("./controllers/media-dashboard.js").DraftEntry | null;
+  mediaPatrolJobs: import("./controllers/media-dashboard.js").CronPatrolJob[];
+  mediaTrendingHealth: import("./controllers/media-dashboard.js").SourceHealthInfo[];
+  mediaTrendingHealthLoading: boolean;
+  mediaManageSubTab: string;
   agentProgress: AgentProgress | null;
 
   // Task Kanban

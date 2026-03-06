@@ -51,7 +51,10 @@ var zhihuHeatRegex = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*万`)
 // zhihuNumRegex 纯数字提取（万匹配失败时的 fallback）。
 var zhihuNumRegex = regexp.MustCompile(`(\d+(?:\.\d+)?)`)
 
-func (z *ZhihuTrendingSource) Fetch(ctx context.Context, category string, limit int) ([]TrendingTopic, error) {
+// Fetch 拉取知乎热榜。
+// 注意: 知乎热榜 API (hot-lists/total) 不支持按 category 过滤，
+// category 参数被忽略。分类过滤由上层 TrendingAggregator 处理。
+func (z *ZhihuTrendingSource) Fetch(ctx context.Context, _ string, limit int) ([]TrendingTopic, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, zhihuHotListURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("zhihu: create request: %w", err)

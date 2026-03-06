@@ -31,6 +31,9 @@ type MediaSubsystemConfig struct {
 	// EnableInteract 启用互动工具（Phase 3+）。
 	EnableInteract bool
 
+	// EnabledSources 启用的热点源名称列表（空=全部启用）。
+	EnabledSources []string
+
 	// Publishers 各平台发布器（按 Platform 注册）。
 	// 由外部通过 RegisterPublisher() 注入。
 	Publishers map[Platform]MediaPublisher
@@ -77,9 +80,26 @@ func NewMediaSubsystem(cfg MediaSubsystemConfig) (*MediaSubsystem, error) {
 	}
 
 	aggregator := NewTrendingAggregator()
-	aggregator.AddSource(NewWeiboTrendingSource())
-	aggregator.AddSource(NewBaiduTrendingSource())
-	aggregator.AddSource(NewZhihuTrendingSource())
+	allSources := map[string]TrendingSource{
+		"weibo": NewWeiboTrendingSource(),
+		"baidu": NewBaiduTrendingSource(),
+		"zhihu": NewZhihuTrendingSource(),
+	}
+	if cfg.EnabledSources != nil {
+		// 显式配置了源列表（含空列表=全部禁用）
+		for _, name := range cfg.EnabledSources {
+			if src, ok := allSources[name]; ok {
+				aggregator.AddSource(src)
+			} else {
+				slog.Warn("media: unknown trending source in EnabledSources, skipped", "source", name)
+			}
+		}
+	} else {
+		// 未配置（nil）= 全部启用
+		for _, src := range allSources {
+			aggregator.AddSource(src)
+		}
+	}
 
 	publishers := cfg.Publishers
 	if publishers == nil {

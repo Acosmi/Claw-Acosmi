@@ -32,6 +32,28 @@ func TestSpawnArgusAgentToolDef_Schema(t *testing.T) {
 	}
 }
 
+func TestBuildArgusSubagentSystemPrompt_PrefersShortestVisualPath(t *testing.T) {
+	prompt := BuildArgusSubagentSystemPrompt(ArgusSubagentPromptParams{
+		Task: "Open Terminal and find the latest build status",
+	})
+
+	if !strings.Contains(prompt, "Pick the shortest entry") {
+		t.Fatal("prompt should instruct Argus to pick the shortest entry path first")
+	}
+	if !strings.Contains(prompt, "`argus_macos_shortcut`") {
+		t.Fatal("prompt should mention argus_macos_shortcut")
+	}
+	if !strings.Contains(prompt, "`argus_read_text` before `argus_describe_scene`") {
+		t.Fatal("prompt should prioritize OCR over full scene description")
+	}
+	if !strings.Contains(prompt, "Do not default to full-screen capture on every step") {
+		t.Fatal("prompt should explicitly reject screenshot-first loops")
+	}
+	if strings.Contains(prompt, "Always start with `argus_capture_screen`") {
+		t.Fatal("prompt should no longer force screenshot-first workflow")
+	}
+}
+
 // ---------- formatArgusSpawnResult ----------
 
 func TestFormatArgusSpawnResult_NilOutcome(t *testing.T) {

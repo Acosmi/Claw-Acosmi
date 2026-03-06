@@ -180,6 +180,26 @@ func TestDingTalkSendMessage_BinaryImageSuccess(t *testing.T) {
 	}
 }
 
+func TestDingTalkSendMessage_BinaryFilePreservesFileName(t *testing.T) {
+	t.Parallel()
+
+	sender := &fakeDingTalkSender{uploadMediaID: "mid-file"}
+	plugin := newPluginWithFakeSender(sender)
+
+	_, err := plugin.SendMessage(channels.OutboundSendParams{
+		To:            "cid_group_001",
+		MediaData:     []byte("hello"),
+		MediaMimeType: "text/markdown",
+		MediaFileName: "idlefish_agent_design.md",
+	})
+	if err != nil {
+		t.Fatalf("SendMessage unexpected error: %v", err)
+	}
+	if len(sender.uploadNames) != 1 || sender.uploadNames[0] != "idlefish_agent_design.md" {
+		t.Fatalf("expected upload name preserved, got %+v", sender.uploadNames)
+	}
+}
+
 func TestDingTalkSendMessage_BinaryUploadFailFallback(t *testing.T) {
 	t.Parallel()
 

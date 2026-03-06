@@ -1,4 +1,4 @@
-/// macOS launchd service management for OpenAcosmi gateway and node services.
+/// macOS launchd service management for Claw Acosmi gateway and node services.
 ///
 /// Provides functions to build, install, uninstall, start, stop, and query
 /// launchd launch agents using `launchctl`.

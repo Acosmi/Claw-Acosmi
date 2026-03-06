@@ -226,12 +226,15 @@ type feishuTarget struct {
 	id     string
 }
 
-// broadcastCard 群发飞书卡片到所有已配置的目标（群聊+用户）+ 可选额外目标。
-// Fix 10: 统一目标收集逻辑，消除与 SendApprovalRequest 的重复代码。
-// Fix D5: 群聊优先策略——有群聊目标时不发私聊，避免视觉"双卡片"。
+// broadcastCard 群发飞书卡片到所有已配置目标（群聊 + 私聊）+ 可选额外目标。
+// 策略：
+// 1) 优先尝试 chat_id 目标；
+// 2) 若 chat_id 全失败，则回退 open_id 目标重试；
+// 3) 若 chat_id 成功，则不再发送 open_id（避免双卡片）。
 func (p *feishuProvider) broadcastCard(ctx context.Context, token string, card map[string]interface{}, extraTargets ...feishuTarget) error {
 	seen := make(map[string]bool)
-	var targets []feishuTarget
+	var chatTargets []feishuTarget
+	var userTargets []feishuTarget
 	addTarget := func(idType, id string) {
 		if id == "" {
 			return
@@ -241,48 +244,80 @@ func (p *feishuProvider) broadcastCard(ctx context.Context, token string, card m
 			return
 		}
 		seen[key] = true
-		targets = append(targets, feishuTarget{idType, id})
+		target := feishuTarget{idType, id}
+		if idType == "chat_id" {
+			chatTargets = append(chatTargets, target)
+			return
+		}
+		if idType == "open_id" {
+			userTargets = append(userTargets, target)
+		}
 	}
 
-	// 第一步：收集群聊目标（优先级最高）
+	// 收集 chat_id 目标（优先级最高）
 	addTarget("chat_id", p.config.ChatID)
 	addTarget("chat_id", p.config.ApprovalChatID) // 固定审批群 fallback
 	addTarget("chat_id", p.config.LastKnownChatID)
-
-	// 动态额外目标中的群聊
 	for _, t := range extraTargets {
 		if t.idType == "chat_id" {
 			addTarget(t.idType, t.id)
 		}
 	}
 
-	// 第二步：仅在无群聊目标时才添加私聊目标（避免群+私双卡片）
-	hasChatTarget := false
-	for _, t := range targets {
-		if t.idType == "chat_id" {
-			hasChatTarget = true
-			break
-		}
-	}
-	if !hasChatTarget {
-		addTarget("open_id", p.config.UserID)
-		addTarget("open_id", p.config.LastKnownUserID)
-		for _, t := range extraTargets {
-			if t.idType == "open_id" {
-				addTarget(t.idType, t.id)
-			}
+	// 收集 open_id 目标（用于无群目标或群发送失败回退）
+	addTarget("open_id", p.config.UserID)
+	addTarget("open_id", p.config.LastKnownUserID)
+	for _, t := range extraTargets {
+		if t.idType == "open_id" {
+			addTarget(t.idType, t.id)
 		}
 	}
 
-	if len(targets) == 0 {
+	if len(chatTargets) == 0 && len(userTargets) == 0 {
 		return fmt.Errorf("飞书消息接收方为空: 需要配置 chatId/userId 或由飞书消息事件自动填充")
 	}
 
-	var errs []error
-	for _, t := range targets {
-		if err := p.sendMessageTo(ctx, token, card, t.idType, t.id); err != nil {
-			errs = append(errs, err)
+	sendBatch := func(targets []feishuTarget) (int, []error) {
+		if len(targets) == 0 {
+			return 0, nil
 		}
+		success := 0
+		errs := make([]error, 0, len(targets))
+		for _, t := range targets {
+			if err := p.sendMessageTo(ctx, token, card, t.idType, t.id); err != nil {
+				errs = append(errs, err)
+			} else {
+				success++
+			}
+		}
+		return success, errs
+	}
+
+	// 1) 优先尝试群聊目标
+	if len(chatTargets) > 0 {
+		success, errs := sendBatch(chatTargets)
+		if success > 0 {
+			return nil
+		}
+		// 2) 群聊全部失败，回退到私聊目标
+		if len(userTargets) > 0 {
+			userSuccess, userErrs := sendBatch(userTargets)
+			if userSuccess > 0 {
+				return nil
+			}
+			allErrs := append(errs, userErrs...)
+			return errors.Join(allErrs...)
+		}
+		return errors.Join(errs...)
+	}
+
+	// 3) 无群聊目标，直接尝试私聊目标
+	success, errs := sendBatch(userTargets)
+	if success > 0 {
+		return nil
+	}
+	if len(errs) == 0 {
+		return fmt.Errorf("飞书消息发送失败: 无可用接收目标")
 	}
 	return errors.Join(errs...)
 }

@@ -18,6 +18,7 @@ const (
 	StreamTool      AgentEventStream = "tool"
 	StreamAssistant AgentEventStream = "assistant"
 	StreamError     AgentEventStream = "error"
+	StreamProgress  AgentEventStream = "agent.progress"
 )
 
 // AgentEventPayload 事件负载。

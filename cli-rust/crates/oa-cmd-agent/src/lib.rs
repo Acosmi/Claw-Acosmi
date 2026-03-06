@@ -1,4 +1,4 @@
-/// Single agent commands for OpenAcosmi CLI.
+/// Single agent commands for Claw Acosmi CLI.
 ///
 /// This crate implements the core agent command pipeline: parsing CLI options,
 /// resolving sessions, running the agent (either locally or via gateway),

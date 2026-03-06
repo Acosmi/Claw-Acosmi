@@ -36,6 +36,7 @@ type mockWeComRoundTripper struct {
 	sendErr   bool
 
 	uploadTypes  []string
+	uploadNames  []string
 	sentMessages []map[string]interface{}
 }
 
@@ -45,8 +46,10 @@ func (m *mockWeComRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		return jsonResponse(http.StatusOK, `{"errcode":0,"errmsg":"ok","access_token":"token-1","expires_in":7200}`), nil
 
 	case "/cgi-bin/media/upload":
+		uploadName := readMultipartUploadName(req)
 		m.mu.Lock()
 		m.uploadTypes = append(m.uploadTypes, req.URL.Query().Get("type"))
+		m.uploadNames = append(m.uploadNames, uploadName)
 		uploadErr := m.uploadErr
 		m.mu.Unlock()
 		if uploadErr {
@@ -79,8 +82,39 @@ func (m *mockWeComRoundTripper) snapshot() (uploadTypes []string, messages []map
 	defer m.mu.Unlock()
 
 	uploadTypes = append(uploadTypes, m.uploadTypes...)
+	uploadNames := append([]string(nil), m.uploadNames...)
 	messages = append(messages, m.sentMessages...)
+	_ = uploadNames
 	return uploadTypes, messages
+}
+
+func (m *mockWeComRoundTripper) snapshotUploads() (uploadTypes []string, uploadNames []string, messages []map[string]interface{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	uploadTypes = append(uploadTypes, m.uploadTypes...)
+	uploadNames = append(uploadNames, m.uploadNames...)
+	messages = append(messages, m.sentMessages...)
+	return uploadTypes, uploadNames, messages
+}
+
+func readMultipartUploadName(req *http.Request) string {
+	mr, err := req.MultipartReader()
+	if err != nil {
+		return ""
+	}
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			return ""
+		}
+		if part.FormName() == "media" {
+			name := part.FileName()
+			_, _ = io.Copy(io.Discard, part)
+			return name
+		}
+		_, _ = io.Copy(io.Discard, part)
+	}
 }
 
 func jsonResponse(status int, body string) *http.Response {
@@ -272,5 +306,33 @@ func TestWeComSendMessage_TextSendFailure(t *testing.T) {
 	}
 	if sendErr.Operation != "send.text" {
 		t.Fatalf("operation=%s, want=send.text", sendErr.Operation)
+	}
+}
+
+func TestWeComSendMessage_BinaryFilePreservesFileName(t *testing.T) {
+	t.Parallel()
+
+	rt := &mockWeComRoundTripper{}
+	plugin := newWeComPluginForSendTests(rt)
+
+	_, err := plugin.SendMessage(channels.OutboundSendParams{
+		To:            "user-1",
+		MediaData:     []byte("hello"),
+		MediaMimeType: "text/markdown",
+		MediaFileName: "idlefish_agent_design.md",
+	})
+	if err != nil {
+		t.Fatalf("SendMessage unexpected error: %v", err)
+	}
+
+	uploadTypes, uploadNames, sentMessages := rt.snapshotUploads()
+	if len(uploadTypes) != 1 || uploadTypes[0] != "file" {
+		t.Fatalf("expected one file upload, got %+v", uploadTypes)
+	}
+	if len(uploadNames) != 1 || uploadNames[0] != "idlefish_agent_design.md" {
+		t.Fatalf("expected upload filename preserved, got %+v", uploadNames)
+	}
+	if len(sentMessages) != 1 {
+		t.Fatalf("expected one message request, got %d", len(sentMessages))
 	}
 }

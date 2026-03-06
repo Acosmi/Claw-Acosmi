@@ -1,5 +1,5 @@
 import type { GatewayBrowserClient } from "../gateway.ts";
-import type { AgentsListResult } from "../types.ts";
+import type { AgentsListResult, GatewayAgentRow } from "../types.ts";
 
 export type AgentsState = {
   client: GatewayBrowserClient | null;
@@ -9,6 +9,11 @@ export type AgentsState = {
   agentsList: AgentsListResult | null;
   agentsSelectedId: string | null;
 };
+
+/** 判断一条 AgentRow 是否为子智能体。 */
+export function isSubagent(row: GatewayAgentRow): boolean {
+  return row.type === "subagent";
+}
 
 export async function loadAgents(state: AgentsState) {
   if (!state.client || !state.connected) {

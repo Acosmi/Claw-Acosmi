@@ -304,7 +304,7 @@ func (p *DingTalkPlugin) SendMessage(params channels.OutboundSendParams) (*chann
 	}
 
 	if unsentBinaryMedia {
-		if err := p.sendBinaryMediaMessage(ctx, sender, params.To, isGroup, params.MediaData, params.MediaMimeType); err != nil {
+		if err := p.sendBinaryMediaMessage(ctx, sender, params.To, isGroup, params.MediaData, params.MediaFileName, params.MediaMimeType); err != nil {
 			slog.Warn("dingtalk: send binary media failed",
 				"to", params.To, "is_group", isGroup, "mimeType", params.MediaMimeType, "error", err)
 		} else {
@@ -360,6 +360,7 @@ func (p *DingTalkPlugin) sendBinaryMediaMessage(
 	to string,
 	isGroup bool,
 	data []byte,
+	fileName string,
 	mimeType string,
 ) error {
 	if len(data) == 0 {
@@ -374,7 +375,9 @@ func (p *DingTalkPlugin) sendBinaryMediaMessage(
 		effectiveMimeType = strings.ToLower(http.DetectContentType(data))
 	}
 	uploadType := dingtalkUploadTypeForMime(effectiveMimeType)
-	fileName := dingtalkDefaultUploadFileName(uploadType, effectiveMimeType)
+	if strings.TrimSpace(fileName) == "" {
+		fileName = dingtalkDefaultUploadFileName(uploadType, effectiveMimeType)
+	}
 
 	mediaID, err := sender.UploadMedia(ctx, uploadType, fileName, data)
 	if err != nil {
@@ -470,7 +473,7 @@ func (p *DingTalkPlugin) sendDispatchReplyMedia(
 			if len(item.Data) == 0 {
 				continue
 			}
-			if err := p.sendBinaryMediaMessage(ctx, sender, to, isGroup, item.Data, item.MimeType); err != nil {
+			if err := p.sendBinaryMediaMessage(ctx, sender, to, isGroup, item.Data, "", item.MimeType); err != nil {
 				return err
 			}
 		}
@@ -478,7 +481,7 @@ func (p *DingTalkPlugin) sendDispatchReplyMedia(
 	}
 
 	if len(reply.MediaData) > 0 {
-		return p.sendBinaryMediaMessage(ctx, sender, to, isGroup, reply.MediaData, reply.MediaMimeType)
+		return p.sendBinaryMediaMessage(ctx, sender, to, isGroup, reply.MediaData, "", reply.MediaMimeType)
 	}
 	return nil
 }

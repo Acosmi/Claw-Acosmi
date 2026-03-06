@@ -866,7 +866,9 @@ func (c *ExecToolConfig) executeNode(
 		ApplyPathPrepend(nodeEnv, c.defaultPathPrepend, true)
 	}
 
-	// 7. allowlist 评估 (TS L1043-1085)
+	// 7. allowlist 评估
+	// B 方案下 node 审批文件由 nodehost 本地维护，Gateway 仅做语法分析与自身 ask/security 约束，
+	// 不再尝试通过 exec.approvals.node.get 远程读取节点 allowlist。
 	baseAllowlistEval := nodehost.EvaluateShellAllowlist(
 		command,
 		nil,                       // empty allowlist
@@ -879,45 +881,6 @@ func (c *ExecToolConfig) executeNode(
 	)
 	analysisOk := baseAllowlistEval.AnalysisOk
 	allowlistSatisfied := false
-
-	if string(hostAsk) == string(infra.ExecAskOnMiss) && hostSecurity == infra.ExecSecurityAllowlist && analysisOk {
-		// 尝试从 gateway 获取 node 审批配置 (TS L1054-1084)
-		nodeApprovalsRaw, gwErr := tools.CallGateway(ctx, c.GatewayOpts, "exec.approvals.node.get",
-			map[string]any{"nodeId": nodeID})
-		if gwErr == nil && nodeApprovalsRaw != nil {
-			if fileData, ok := nodeApprovalsRaw["file"]; ok && fileData != nil {
-				if fileMap, isMap := fileData.(map[string]any); isMap {
-					nodeFile := infra.ParseExecApprovalsFileFromMap(fileMap)
-					if nodeFile != nil {
-						nodeResolved := nodehost.ResolveExecApprovalsFromFile(struct {
-							File       *infra.ExecApprovalsFile
-							AgentID    string
-							Overrides  *nodehost.ExecApprovalsDefaultOverrides
-							Path       string
-							SocketPath string
-							Token      string
-						}{
-							File:      nodeFile,
-							AgentID:   c.agentID,
-							Overrides: &nodehost.ExecApprovalsDefaultOverrides{Security: infra.ExecSecurityAllowlist},
-						})
-						allowlistEval := nodehost.EvaluateShellAllowlist(
-							command,
-							nodeResolved.Allowlist,
-							make(map[string]struct{}), // node 端 safeBins 可能不同，使用空集
-							cwd,
-							env,
-							nil,
-							false,
-							nodePlatform,
-						)
-						allowlistSatisfied = allowlistEval.AllowlistSatisfied
-						analysisOk = allowlistEval.AnalysisOk
-					}
-				}
-			}
-		}
-	}
 
 	// 8. 审批检查 (TS L1086-1090)
 	requiresAsk := nodehost.RequiresExecApproval(hostAsk, hostSecurity, analysisOk, allowlistSatisfied)

@@ -1,4 +1,4 @@
-/// Skill management commands for OpenAcosmi CLI.
+/// Skill management commands for Claw Acosmi CLI.
 ///
 /// Provides `skills` subcommands: list, info, check.
 /// Delegates to Gateway RPC: `skills.status`, `skills.bins`.

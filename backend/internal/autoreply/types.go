@@ -58,7 +58,10 @@ type GetReplyOptions struct {
 	OnModelSelected   func(ctx ModelSelectedContext)
 	// OnToolEvent 结构化工具事件回调（可选）。
 	// 用于频道广播工具名、参数、结果。参数类型: runner.ToolEvent（通过 any 传递避免循环导入）。
-	OnToolEvent           any
+	OnToolEvent any
+	// OnProgress 中间进度回调（可选）。
+	// 参数类型: func(context.Context, runner.ProgressUpdate) runner.ProgressReportStatus（通过 any 传递避免循环导入）。
+	OnProgress            any
 	DisableBlockStreaming bool
 	BlockReplyTimeoutMs   int
 	SkillFilter           []string

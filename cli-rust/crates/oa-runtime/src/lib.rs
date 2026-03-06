@@ -1,4 +1,4 @@
-/// Runtime environment abstraction for OpenAcosmi CLI.
+/// Runtime environment abstraction for Claw Acosmi CLI.
 ///
 /// Provides a trait-based abstraction for runtime environment access,
 /// enabling testing with mock environments.

@@ -172,7 +172,7 @@ pub fn build_channel_primer_text() -> String {
         "Approve with: openacosmi pairing approve <channel> <code>",
         "Public DMs require dmPolicy=\"open\" + allowFrom=[\"*\"].",
         "Multi-user DMs: set session.dmScope=\"per-channel-peer\" (or \"per-account-channel-peer\" for multi-account channels) to isolate sessions.",
-        "Docs: https://github.com/Acosmi/Claw-Acismi/tree/main/docs/skills/general/pairing",
+        "Docs: https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/skills/general/pairing",
     ]
     .join("\n")
 }

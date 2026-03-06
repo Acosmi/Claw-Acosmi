@@ -1,7 +1,7 @@
 /// Dotenv file loading utilities.
 ///
 /// Loads `.env` files from the current working directory and from the
-/// global OpenAcosmi config directory (`~/.openacosmi/.env`).
+/// global Claw Acosmi config directory (`~/.openacosmi/.env`).
 ///
 /// Source: `src/infra/dotenv.ts`
 

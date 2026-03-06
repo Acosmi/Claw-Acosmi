@@ -371,6 +371,58 @@ func TestBuildArgusSkillEntries_Empty(t *testing.T) {
 	}
 }
 
+func TestBuildArgusSkillEntries_UsesDocsSkillBindingWhenAvailable(t *testing.T) {
+	tmpDir := t.TempDir()
+	skillDir := filepath.Join(tmpDir, "tools", "argus-screen-reading")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skillFile := filepath.Join(skillDir, "SKILL.md")
+	content := "---\nname: argus-screen-reading\ndescription: Argus 读屏：先 read_text，再 describe_scene；capture_screen 只在状态不明时使用\ntools: argus_read_text, argus_capture_screen\n---\n"
+	if err := os.WriteFile(skillFile, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := os.Getenv("OPENACOSMI_DOCS_SKILLS_DIR")
+	if err := os.Setenv("OPENACOSMI_DOCS_SKILLS_DIR", tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if prev == "" {
+			_ = os.Unsetenv("OPENACOSMI_DOCS_SKILLS_DIR")
+			return
+		}
+		_ = os.Setenv("OPENACOSMI_DOCS_SKILLS_DIR", prev)
+	}()
+
+	tools := []mcpclient.MCPToolDef{
+		{Name: "read_text", Description: "OCR text"},
+		{Name: "click", Description: "Click at position"},
+	}
+
+	entries := BuildArgusSkillEntries(tools)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	if entries[0].Description != "Argus 读屏：先 read_text，再 describe_scene；capture_screen 只在状态不明时使用" {
+		t.Fatalf("expected docs-backed description, got %q", entries[0].Description)
+	}
+	if entries[0].FilePath != skillFile {
+		t.Fatalf("expected filePath %q, got %q", skillFile, entries[0].FilePath)
+	}
+	if entries[0].BaseDir != skillDir {
+		t.Fatalf("expected baseDir %q, got %q", skillDir, entries[0].BaseDir)
+	}
+
+	if entries[1].Description != "Click at position" {
+		t.Fatalf("expected MCP fallback description for unbound tool, got %q", entries[1].Description)
+	}
+	if entries[1].FilePath != "" {
+		t.Fatalf("expected empty filePath for unbound tool, got %q", entries[1].FilePath)
+	}
+}
+
 func TestBuildArgusSkillEntries_JSONSerialization(t *testing.T) {
 	tools := []mcpclient.MCPToolDef{
 		{Name: "capture_screen", Description: "Capture screenshot"},

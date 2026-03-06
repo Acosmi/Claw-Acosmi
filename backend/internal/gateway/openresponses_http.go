@@ -169,7 +169,7 @@ func handleORNonStreaming(
 
 	content := CombineReplyPayloads(result.Replies)
 	if content == "" {
-		content = "No response from OpenAcosmi."
+		content = "No response from Claw Acosmi."
 	}
 
 	usageMu.Lock()
@@ -272,7 +272,7 @@ func handleORStreaming(
 				writeMu.Lock()
 				finalText := accText.String()
 				if finalText == "" {
-					finalText = "No response from OpenAcosmi."
+					finalText = "No response from Claw Acosmi."
 				}
 				usage := collectedUsage
 				writeMu.Unlock()
@@ -304,7 +304,7 @@ func handleORStreaming(
 				writeMu.Lock()
 				finalText := accText.String()
 				if finalText == "" {
-					finalText = "No response from OpenAcosmi."
+					finalText = "No response from Claw Acosmi."
 				}
 				usage := collectedUsage
 				writeMu.Unlock()
@@ -334,7 +334,7 @@ func handleORStreaming(
 			} else {
 				content = CombineReplyPayloads(result.Replies)
 				if content == "" {
-					content = "No response from OpenAcosmi."
+					content = "No response from Claw Acosmi."
 				}
 			}
 			writeMu.Lock()

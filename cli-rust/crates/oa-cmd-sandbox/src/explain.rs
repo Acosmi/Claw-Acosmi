@@ -208,7 +208,7 @@ const INTERNAL_MESSAGE_CHANNEL: &str = "internal";
 /// The sandbox docs URL.
 ///
 /// Source: `src/commands/sandbox-explain.ts` — `SANDBOX_DOCS_URL`
-const SANDBOX_DOCS_URL: &str = "https://github.com/Acosmi/Claw-Acismi/tree/main/docs/skills/tools/sandbox";
+const SANDBOX_DOCS_URL: &str = "https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/skills/tools/sandbox";
 
 /// Normalize the session key for explain, building a full agent session key
 /// if only a partial key is given.

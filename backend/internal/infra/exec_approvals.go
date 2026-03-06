@@ -29,6 +29,16 @@ const (
 	ExecSecurityFull      ExecSecurity = "full"
 )
 
+// ExecEscalationFallback 提权到期后的回落策略。
+// - base: 回落到 defaults.security（现有语义）
+// - sandboxed: 至少回落到 L2(sandboxed)
+type ExecEscalationFallback string
+
+const (
+	ExecEscalationFallbackBase      ExecEscalationFallback = "base"
+	ExecEscalationFallbackSandboxed ExecEscalationFallback = "sandboxed"
+)
+
 // ExecAsk 询问策略。
 type ExecAsk string
 
@@ -106,11 +116,12 @@ func MaxAsk(a, b ExecAsk) ExecAsk {
 
 // ExecApprovalsDefaults 默认审批配置。
 type ExecApprovalsDefaults struct {
-	Security        ExecSecurity  `json:"security,omitempty"`
-	Ask             ExecAsk       `json:"ask,omitempty"`
-	AskFallback     ExecSecurity  `json:"askFallback,omitempty"`
-	AutoAllowSkills *bool         `json:"autoAllowSkills,omitempty"`
-	Rules           []CommandRule `json:"rules,omitempty"` // P3: Allow/Ask/Deny 命令规则
+	Security           ExecSecurity           `json:"security,omitempty"`
+	EscalationFallback ExecEscalationFallback `json:"escalationFallback,omitempty"`
+	Ask                ExecAsk                `json:"ask,omitempty"`
+	AskFallback        ExecSecurity           `json:"askFallback,omitempty"`
+	AutoAllowSkills    *bool                  `json:"autoAllowSkills,omitempty"`
+	Rules              []CommandRule          `json:"rules,omitempty"` // P3: Allow/Ask/Deny 命令规则
 }
 
 // ExecAllowlistEntry 白名单条目。
@@ -137,14 +148,20 @@ type ExecApprovalsSocket struct {
 // PersistedEscalationRequest 持久化的待审批提权请求（磁盘表示）。
 // 用于 gateway 重启后恢复未过期的审批请求。
 // 定义在 infra 包避免与 gateway 包循环依赖。
+type PersistedMountRequest struct {
+	HostPath  string `json:"hostPath"`
+	MountMode string `json:"mountMode"` // "ro" | "rw"
+}
+
 type PersistedEscalationRequest struct {
-	ID             string `json:"id"`
-	RequestedLevel string `json:"requestedLevel"` // "allowlist" | "sandboxed" | "full"
-	Reason         string `json:"reason"`
-	RunID          string `json:"runId,omitempty"`
-	SessionID      string `json:"sessionId,omitempty"`
-	RequestedAtMs  int64  `json:"requestedAtMs"` // Unix 毫秒
-	TTLMinutes     int    `json:"ttlMinutes"`
+	ID             string                  `json:"id"`
+	RequestedLevel string                  `json:"requestedLevel"` // "allowlist" | "sandboxed" | "full"
+	Reason         string                  `json:"reason"`
+	RunID          string                  `json:"runId,omitempty"`
+	SessionID      string                  `json:"sessionId,omitempty"`
+	RequestedAtMs  int64                   `json:"requestedAtMs"` // Unix 毫秒
+	TTLMinutes     int                     `json:"ttlMinutes"`
+	MountRequests  []PersistedMountRequest `json:"mountRequests,omitempty"`
 }
 
 // ExecApprovalsFile 审批配置文件结构。

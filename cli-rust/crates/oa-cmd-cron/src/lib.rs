@@ -1,4 +1,4 @@
-/// Cron scheduler commands for OpenAcosmi CLI.
+/// Cron scheduler commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands for managing scheduled jobs:
 /// status, list, add, edit, rm, enable, disable, runs, run.

@@ -17,6 +17,7 @@ import { loadCronJobs, loadCronStatus } from "./controllers/cron.ts";
 import { loadDebug } from "./controllers/debug.ts";
 import { loadDevices } from "./controllers/devices.ts";
 import { loadExecApprovals } from "./controllers/exec-approvals.ts";
+import { loadRemoteApproval } from "./controllers/remote-approval.ts";
 import { loadSecurity } from "./controllers/security.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadMemoryList, loadMemoryLLMConfig, loadMemoryStats, loadMemoryStatus } from "./controllers/memory.ts";
@@ -229,11 +230,8 @@ export async function refreshActiveTab(host: SettingsHost) {
     await loadSkills(host as unknown as OpenAcosmiApp);
   }
   if (host.tab === "subagents") {
+    // 子智能体已统一到 agents 标签页，URL 重定向会跳转。保留数据加载作为后备。
     await loadSubAgents(host as any);
-    if ((host as any).subagentsActiveTab === "media") {
-      const { loadMediaDashboard } = await import("./controllers/media-dashboard.ts");
-      await loadMediaDashboard(host as any);
-    }
   }
   if (host.tab === "media") {
     const { loadMediaDashboard } = await import("./controllers/media-dashboard.ts");
@@ -256,6 +254,8 @@ export async function refreshActiveTab(host: SettingsHost) {
   if (host.tab === "agents") {
     await loadAgents(host as unknown as OpenAcosmiApp);
     await loadConfig(host as unknown as OpenAcosmiApp);
+    // 子智能体数据也一并加载（侧边栏状态指示器 + 子智能体详情面板）
+    await loadSubAgents(host as any);
     const agentIds = host.agentsList?.agents?.map((entry) => entry.id) ?? [];
     if (agentIds.length > 0) {
       void loadAgentIdentities(host as unknown as OpenAcosmiApp, agentIds);
@@ -300,7 +300,10 @@ export async function refreshActiveTab(host: SettingsHost) {
     );
   }
   if (host.tab === "security") {
-    await loadSecurity(host as unknown as OpenAcosmiApp);
+    await Promise.all([
+      loadSecurity(host as unknown as OpenAcosmiApp),
+      loadRemoteApproval(host as unknown as OpenAcosmiApp),
+    ]);
   }
   if (host.tab === "config") {
     await loadConfigSchema(host as unknown as OpenAcosmiApp);

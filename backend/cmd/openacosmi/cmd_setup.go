@@ -24,7 +24,7 @@ func newSetupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Initial setup wizard",
-		Long:  "Run the interactive OpenAcosmi setup wizard to configure your AI agents and channels.",
+		Long:  "Run the interactive Claw Acosmi setup wizard to configure your AI agents and channels.",
 		RunE:  runSetupCommand,
 	}
 	cmd.Flags().String("workspace", "", "Agent workspace directory")
@@ -185,7 +185,7 @@ func newOnboardCmd() *cobra.Command {
 	cmd.Flags().String("zai-api-key", "", "ZAI API key")
 	cmd.Flags().String("xiaomi-api-key", "", "Xiaomi API key")
 	cmd.Flags().String("minimax-api-key", "", "MiniMax API key")
-	cmd.Flags().String("openacosmi-zen-api-key", "", "OpenAcosmi Zen API key")
+	cmd.Flags().String("openacosmi-zen-api-key", "", "Claw Acosmi Zen API key")
 	cmd.Flags().String("xai-api-key", "", "xAI API key")
 	cmd.Flags().String("qianfan-api-key", "", "Qianfan API key")
 
@@ -225,7 +225,7 @@ func runOnboardCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	cmd.Println()
-	cmd.Println(tui.HeadingStyle.Render("🧙 OpenAcosmi Onboarding"))
+	cmd.Println(tui.HeadingStyle.Render("🧙 Claw Acosmi Onboarding"))
 	cmd.Println()
 
 	// 2. 准备 auth store

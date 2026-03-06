@@ -1,4 +1,4 @@
-/// Gateway WebSocket RPC client for OpenAcosmi CLI.
+/// Gateway WebSocket RPC client for Claw Acosmi CLI.
 ///
 /// Handles WebSocket connection to the Gateway service,
 /// authentication, protocol framing, network utilities,

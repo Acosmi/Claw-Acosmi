@@ -1,4 +1,4 @@
-/// Session management commands for OpenAcosmi CLI.
+/// Session management commands for Claw Acosmi CLI.
 ///
 /// Provides the `sessions` command that lists session entries from the session
 /// store, with support for filtering by activity time, tabular display with

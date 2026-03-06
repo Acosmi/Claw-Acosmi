@@ -52,6 +52,14 @@ type GatewayAgentRow struct {
 	ID       string            `json:"id"`
 	Name     string            `json:"name,omitempty"`
 	Identity *AgentIdentityRow `json:"identity,omitempty"`
+	// 统一发现字段 — 子智能体通过 agents.list 一并返回
+	Type       string `json:"type,omitempty"`       // "agent" | "subagent"
+	Status     string `json:"status,omitempty"`     // 子智能体运行时状态
+	Error      string `json:"error,omitempty"`      // 子智能体错误信息
+	Provider   string `json:"provider,omitempty"`   // LLM provider
+	Model      string `json:"model,omitempty"`      // LLM model
+	Configured *bool  `json:"configured,omitempty"` // 是否已显式配置（指针: nil=不适用, false=未配置, true=已配置）
+	Builtin    *bool  `json:"builtin,omitempty"`    // 内置子智能体标记（指针: nil=不适用）
 }
 
 // AgentIdentityRow Agent 身份信息。

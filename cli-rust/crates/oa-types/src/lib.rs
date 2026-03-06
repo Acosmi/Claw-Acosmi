@@ -1,4 +1,4 @@
-/// Core types for OpenAcosmi CLI.
+/// Core types for Claw Acosmi CLI.
 ///
 /// This crate contains all shared type definitions used across the CLI,
 /// including configuration types, session types, health/status types,

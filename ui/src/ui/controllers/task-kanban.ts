@@ -223,7 +223,12 @@ export type TaskListEntry = {
   summary?: string;
   error?: string;
   toolName?: string;
+  phase?: string;
+  progressText?: string;
+  isError?: boolean;
+  duration?: number;
   queuedAt: number;
+  progressAt?: number;
   startedAt?: number;
   completedAt?: number;
 };
@@ -246,6 +251,10 @@ export function mergeLoadedTasks(
       summary: t.summary,
       error: t.error,
       toolName: t.toolName,
+      phase: t.phase,
+      progressText: t.progressText,
+      isError: t.isError ?? false,
+      duration: t.duration,
       queuedAt: t.queuedAt,
       startedAt: t.startedAt,
       completedAt: t.completedAt,

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/Acosmi/ClawAcosmi/internal/agents/runner"
 	"github.com/Acosmi/ClawAcosmi/internal/autoreply"
 )
 
@@ -45,6 +46,9 @@ type DispatchInboundParams struct {
 	// OnToolEvent 结构化工具事件回调（可选，由 chat.send 注入用于广播工具详情）。
 	// 实际类型: func(runner.ToolEvent)，通过 any 传递避免循环导入。
 	OnToolEvent any
+	// OnProgress 中间进度回调（可选）。
+	// 仅在显式接入远程阶段性投递时设置；nil = 仅本地实时事件。
+	OnProgress func(ctx context.Context, update runner.ProgressUpdate) runner.ProgressReportStatus
 }
 
 // DispatchInboundResult 分发结果。
@@ -82,6 +86,7 @@ func DispatchInboundMessage(ctx context.Context, params DispatchInboundParams) *
 		IsHeartbeat:  false,
 		OnToolResult: params.OnToolResult,
 		OnToolEvent:  params.OnToolEvent,
+		OnProgress:   params.OnProgress,
 	}
 
 	slog.Info("dispatch_inbound: starting pipeline",

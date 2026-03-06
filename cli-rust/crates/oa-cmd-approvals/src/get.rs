@@ -1,7 +1,7 @@
 /// Approvals get — calls `exec.approvals.get` via Gateway RPC.
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde_json::Value;
 
 use oa_gateway_rpc::call::{CallGatewayOptions, call_gateway};
@@ -12,21 +12,15 @@ pub async fn approvals_get_command(
     node: Option<&str>,
     json_out: bool,
 ) -> Result<()> {
-    let method = if node.is_some() {
-        "exec.approvals.node.get"
-    } else {
-        "exec.approvals.get"
-    };
-
-    let params = if let Some(node_id) = node {
-        Some(serde_json::json!({ "nodeId": node_id }))
-    } else {
-        None
-    };
+    if node.is_some() {
+        bail!(
+            "--node is not supported for approvals get; manage ~/.openacosmi/exec-approvals.json on the node host directly"
+        );
+    }
 
     let resp: HashMap<String, Value> = call_gateway(CallGatewayOptions {
-        method: method.to_string(),
-        params,
+        method: "exec.approvals.get".to_string(),
+        params: None,
         ..Default::default()
     })
     .await?;

@@ -1,6 +1,6 @@
 /// CLI banner display.
 ///
-/// Renders the OpenAcosmi ASCII art banner and single-line version info
+/// Renders the Claw Acosmi ASCII art banner and single-line version info
 /// to the terminal. Tracks whether the banner has already been emitted
 /// to avoid duplicate output.
 ///

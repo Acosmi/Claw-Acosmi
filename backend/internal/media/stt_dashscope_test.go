@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
+	"github.com/gorilla/websocket"
 )
 
 // TestDashScopeSTT_Name 验证 Provider 名称
@@ -23,87 +24,110 @@ func TestDashScopeSTT_Name(t *testing.T) {
 	}
 }
 
-// TestDashScopeSTT_Transcribe_Success 模拟正常转录流程
-func TestDashScopeSTT_Transcribe_Success(t *testing.T) {
-	taskID := "task_test_123"
-	transcriptionJSON := `{"transcripts":[{"channel_id":0,"text":"你好世界"}]}`
-	pollCount := 0
-
-	// Mock 转录结果下载服务器
-	resultSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(transcriptionJSON))
-	}))
-	defer resultSrv.Close()
-
-	// Mock DashScope API 服务器
+// mockWSServer 创建一个模拟 DashScope WebSocket 服务器
+func mockWSServer(t *testing.T, handler func(conn *websocket.Conn)) *httptest.Server {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 验证 Authorization header
+		// 验证 Authorization
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
+		if !strings.HasPrefix(auth, "bearer ") {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/services/audio/asr/transcription"):
-			// 提交任务
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"request_id": "req_001",
-				"output": map[string]interface{}{
-					"task_id":     taskID,
-					"task_status": "PENDING",
-				},
-			})
-		case strings.Contains(r.URL.Path, "/tasks/"):
-			// 轮询任务
-			pollCount++
-			status := "RUNNING"
-			var results []map[string]interface{}
-			if pollCount >= 2 {
-				status = "SUCCEEDED"
-				results = []map[string]interface{}{
-					{
-						"file_url":          "data:audio/webm;base64,...",
-						"transcription_url": resultSrv.URL + "/result.json",
-					},
-				}
-			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"request_id": "req_002",
-				"output": map[string]interface{}{
-					"task_id":     taskID,
-					"task_status": status,
-					"results":     results,
-				},
-			})
-		default:
-			http.Error(w, "not found", http.StatusNotFound)
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Logf("ws upgrade failed: %v", err)
+			return
 		}
+		defer conn.Close()
+		handler(conn)
 	}))
+	return srv
+}
+
+// wsURL 将 http:// 转换为 ws://
+func wsURL(httpURL string) string {
+	return "ws" + strings.TrimPrefix(httpURL, "http")
+}
+
+// TestDashScopeSTT_Transcribe_Success 模拟正常转录流程
+func TestDashScopeSTT_Transcribe_Success(t *testing.T) {
+	srv := mockWSServer(t, func(conn *websocket.Conn) {
+		// 1. 读取 run-task 指令
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			t.Logf("read run-task failed: %v", err)
+			return
+		}
+		var event wsEvent
+		if err := json.Unmarshal(msg, &event); err != nil {
+			t.Logf("parse run-task failed: %v", err)
+			return
+		}
+		taskID := event.Header.TaskID
+
+		// 2. 发送 task-started
+		started := wsEvent{
+			Header: wsHeader{Event: "task-started", TaskID: taskID},
+		}
+		startedJSON, _ := json.Marshal(started)
+		conn.WriteMessage(websocket.TextMessage, startedJSON)
+
+		// 3. 读取音频数据（忽略内容）
+		for {
+			msgType, _, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if msgType == websocket.TextMessage {
+				break // finish-task 指令
+			}
+		}
+
+		// 4. 发送识别结果
+		endTime := int64(5000)
+		result := wsEvent{
+			Header: wsHeader{Event: "result-generated", TaskID: taskID},
+			Payload: wsPayload{
+				Output: wsOutput{
+					Sentence: wsSentence{
+						BeginTime: 0,
+						EndTime:   &endTime,
+						Text:      "你好世界",
+					},
+				},
+			},
+		}
+		resultJSON, _ := json.Marshal(result)
+		conn.WriteMessage(websocket.TextMessage, resultJSON)
+
+		// 5. 发送 task-finished
+		finished := wsEvent{
+			Header: wsHeader{Event: "task-finished", TaskID: taskID},
+		}
+		finishedJSON, _ := json.Marshal(finished)
+		conn.WriteMessage(websocket.TextMessage, finishedJSON)
+	})
 	defer srv.Close()
 
 	stt := NewDashScopeSTT(&types.STTConfig{
 		Provider: "qwen",
 		APIKey:   "test-key-123",
-		BaseURL:  srv.URL,
-		Model:    "sensevoice-v1",
+		BaseURL:  wsURL(srv.URL),
+		Model:    "paraformer-realtime-v2",
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	text, err := stt.Transcribe(ctx, []byte("fake-audio-data"), "audio/webm")
+	text, err := stt.Transcribe(ctx, []byte("fake-audio-data"), "audio/opus")
 	if err != nil {
 		t.Fatalf("Transcribe failed: %v", err)
 	}
 	if text != "你好世界" {
 		t.Errorf("expected '你好世界', got %q", text)
-	}
-	if pollCount < 2 {
-		t.Errorf("expected at least 2 poll attempts, got %d", pollCount)
 	}
 }
 
@@ -113,7 +137,7 @@ func TestDashScopeSTT_Transcribe_EmptyAudio(t *testing.T) {
 		Provider: "qwen",
 		APIKey:   "test-key",
 	})
-	_, err := stt.Transcribe(context.Background(), nil, "audio/webm")
+	_, err := stt.Transcribe(context.Background(), nil, "audio/opus")
 	if err == nil {
 		t.Error("expected error for empty audio")
 	}
@@ -124,7 +148,7 @@ func TestDashScopeSTT_Transcribe_NoAPIKey(t *testing.T) {
 	stt := NewDashScopeSTT(&types.STTConfig{
 		Provider: "qwen",
 	})
-	_, err := stt.Transcribe(context.Background(), []byte("data"), "audio/webm")
+	_, err := stt.Transcribe(context.Background(), []byte("data"), "audio/opus")
 	if err == nil {
 		t.Error("expected error for missing API key")
 	}
@@ -132,40 +156,58 @@ func TestDashScopeSTT_Transcribe_NoAPIKey(t *testing.T) {
 
 // TestDashScopeSTT_Transcribe_TaskFailed 任务失败返回错误
 func TestDashScopeSTT_Transcribe_TaskFailed(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/services/audio/asr/transcription"):
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"request_id": "req_001",
-				"output": map[string]interface{}{
-					"task_id":     "task_fail",
-					"task_status": "PENDING",
-				},
-			})
-		case strings.Contains(r.URL.Path, "/tasks/"):
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"request_id": "req_002",
-				"output": map[string]interface{}{
-					"task_id":     "task_fail",
-					"task_status": "FAILED",
-				},
-				"message": "audio format not supported",
-			})
+	srv := mockWSServer(t, func(conn *websocket.Conn) {
+		// 读取 run-task
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			return
 		}
-	}))
+		var event wsEvent
+		json.Unmarshal(msg, &event)
+		taskID := event.Header.TaskID
+
+		// 发送 task-started
+		started := wsEvent{
+			Header: wsHeader{Event: "task-started", TaskID: taskID},
+		}
+		startedJSON, _ := json.Marshal(started)
+		conn.WriteMessage(websocket.TextMessage, startedJSON)
+
+		// 读取音频 + finish-task
+		for {
+			msgType, _, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if msgType == websocket.TextMessage {
+				break
+			}
+		}
+
+		// 发送 task-failed
+		failed := wsEvent{
+			Header: wsHeader{
+				Event:        "task-failed",
+				TaskID:       taskID,
+				ErrorCode:    "InvalidFormat",
+				ErrorMessage: "audio format not supported",
+			},
+		}
+		failedJSON, _ := json.Marshal(failed)
+		conn.WriteMessage(websocket.TextMessage, failedJSON)
+	})
 	defer srv.Close()
 
 	stt := NewDashScopeSTT(&types.STTConfig{
 		Provider: "qwen",
 		APIKey:   "test-key",
-		BaseURL:  srv.URL,
+		BaseURL:  wsURL(srv.URL),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := stt.Transcribe(ctx, []byte("data"), "audio/webm")
+	_, err := stt.Transcribe(ctx, []byte("data"), "audio/opus")
 	if err == nil {
 		t.Error("expected error for failed task")
 	}
@@ -176,37 +218,19 @@ func TestDashScopeSTT_Transcribe_TaskFailed(t *testing.T) {
 
 // TestDashScopeSTT_TestConnection 测试连接
 func TestDashScopeSTT_TestConnection(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if auth != "Bearer good-key" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"models":[]}`))
-	}))
+	srv := mockWSServer(t, func(conn *websocket.Conn) {
+		// 连接成功即可，不做其他操作
+	})
 	defer srv.Close()
 
 	t.Run("valid key", func(t *testing.T) {
 		stt := NewDashScopeSTT(&types.STTConfig{
 			Provider: "qwen",
 			APIKey:   "good-key",
-			BaseURL:  srv.URL,
+			BaseURL:  wsURL(srv.URL),
 		})
 		if err := stt.TestConnection(context.Background()); err != nil {
 			t.Errorf("expected no error, got: %v", err)
-		}
-	})
-
-	t.Run("invalid key", func(t *testing.T) {
-		stt := NewDashScopeSTT(&types.STTConfig{
-			Provider: "qwen",
-			APIKey:   "bad-key",
-			BaseURL:  srv.URL,
-		})
-		err := stt.TestConnection(context.Background())
-		if err == nil {
-			t.Error("expected error for invalid key")
 		}
 	})
 

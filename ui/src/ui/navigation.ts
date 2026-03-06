@@ -6,7 +6,7 @@ export function getTabGroups() {
     {
       label: t("nav.group.agent"),
       hideLabel: true,
-      tabs: ["chat", "tasks", "agents", "nodes", "subagents"] as const,
+      tabs: ["chat", "tasks", "agents", "nodes", "media"] as const,
     },
     {
       label: t("nav.group.control"),
@@ -52,7 +52,7 @@ const TAB_PATHS: Record<Tab, string> = {
   config: "/config",
   debug: "/debug",
   logs: "/logs",
-  subagents: "/subagents",
+  subagents: "/subagents", // deprecated: 重定向到 /agents
   media: "/media",
   tasks: "/tasks",
 };
@@ -116,6 +116,10 @@ export function tabFromPath(pathname: string, basePath = ""): Tab | null {
   // Legacy redirect: /sessions → memory
   if (normalized === "/sessions") {
     return "memory";
+  }
+  // Legacy redirect: /subagents → agents（子智能体已统一到代理标签页）
+  if (normalized === "/subagents") {
+    return "agents";
   }
   return PATH_TO_TAB.get(normalized) ?? null;
 }

@@ -1,4 +1,4 @@
-/// Voice call plugin commands for OpenAcosmi CLI.
+/// Voice call plugin commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands: call, status, continue, end, expose, unexpose.
 ///

@@ -13,7 +13,9 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +35,38 @@ import (
 )
 
 var wizardV2Logger = log.New("wizard-v2")
+
+// OpenURL 打开指定 URL（跨平台浏览器调用）。
+// 从 wizard_helpers.go 迁移至此，供 V2 OAuth 流程使用。
+func OpenURL(url string) bool {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		return false
+	}
+	return cmd.Start() == nil
+}
+
+// DefaultDangerousNodeDenyCommands 默认危险命令拒绝列表。
+// 从 wizard_gateway_config.go 迁移至此，供 V2 安全级别配置使用。
+var DefaultDangerousNodeDenyCommands = []string{
+	"rm -rf /",
+	"mkfs",
+	"dd if=/dev/zero",
+	":(){ :|:& };:",
+	"shutdown",
+	"reboot",
+	"halt",
+	"poweroff",
+	"init 0",
+	"init 6",
+}
 
 // ---------- Payload 类型定义 ----------
 
@@ -1305,6 +1339,19 @@ func applySubAgentsConfig(p *WizardV2Payload, cfg *types.OpenAcosmiConfig) {
 			}
 			if entry.APIKey != "" {
 				cfg.SubAgents.ScreenObserver.APIKey = entry.APIKey
+			}
+		case "media-agent", "media", "oa-media":
+			if cfg.SubAgents.MediaAgent == nil {
+				cfg.SubAgents.MediaAgent = &types.MediaAgentSettings{}
+			}
+			if entry.Provider != "" {
+				cfg.SubAgents.MediaAgent.Provider = entry.Provider
+			}
+			if entry.Model != "" {
+				cfg.SubAgents.MediaAgent.Model = entry.Model
+			}
+			if entry.APIKey != "" {
+				cfg.SubAgents.MediaAgent.APIKey = entry.APIKey
 			}
 		}
 	}

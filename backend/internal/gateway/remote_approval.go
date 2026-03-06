@@ -552,6 +552,18 @@ func (n *RemoteApprovalNotifier) UpdateConfig(cfg RemoteApprovalConfig) error {
 	if cfg.Feishu != nil && n.config.Feishu != nil && cfg.Feishu.AppSecret == "***" {
 		cfg.Feishu.AppSecret = n.config.Feishu.AppSecret
 	}
+	if cfg.Feishu != nil && n.config.Feishu != nil {
+		// 保留 fallback 路由字段，避免前端未回传时被整体覆盖清空。
+		if strings.TrimSpace(cfg.Feishu.ApprovalChatID) == "" {
+			cfg.Feishu.ApprovalChatID = n.config.Feishu.ApprovalChatID
+		}
+		if strings.TrimSpace(cfg.Feishu.LastKnownChatID) == "" {
+			cfg.Feishu.LastKnownChatID = n.config.Feishu.LastKnownChatID
+		}
+		if strings.TrimSpace(cfg.Feishu.LastKnownUserID) == "" {
+			cfg.Feishu.LastKnownUserID = n.config.Feishu.LastKnownUserID
+		}
+	}
 	if cfg.DingTalk != nil && n.config.DingTalk != nil {
 		if cfg.DingTalk.AppSecret == "***" {
 			cfg.DingTalk.AppSecret = n.config.DingTalk.AppSecret

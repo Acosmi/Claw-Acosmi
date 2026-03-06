@@ -131,7 +131,7 @@ pub fn expand_home_prefix(input: &str) -> String {
     }
 }
 
-/// Resolve the OpenAcosmi state directory.
+/// Resolve the Claw Acosmi state directory.
 ///
 /// Checks `OPENACOSMI_STATE_DIR` and `CLAWDBOT_STATE_DIR` environment variables
 /// first, then falls back to `~/.openacosmi`.
@@ -147,7 +147,7 @@ pub fn resolve_state_dir() -> String {
     Path::new(&home).join(".openacosmi").to_string_lossy().to_string()
 }
 
-/// Resolve the OpenAcosmi config directory.
+/// Resolve the Claw Acosmi config directory.
 ///
 /// This is the same as the state directory - used for loading config files
 /// and `.env` files from `~/.openacosmi/`.

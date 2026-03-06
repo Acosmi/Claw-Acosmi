@@ -28,7 +28,7 @@ func newLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs",
 		Short: "View gateway logs",
-		Long: `View and stream OpenAcosmi gateway logs.
+		Long: `View and stream Claw Acosmi gateway logs.
 
 Examples:
   openacosmi logs                    # Show last 100 lines

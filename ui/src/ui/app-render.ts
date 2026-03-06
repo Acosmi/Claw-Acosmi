@@ -40,6 +40,7 @@ import {
   saveExecApprovals,
   updateExecApprovalsFormValue,
 } from "./controllers/exec-approvals.ts";
+import { loadRemoteApproval, saveRemoteApproval, testRemoteApproval } from "./controllers/remote-approval.ts";
 import { loadSecurity, updateSecurityLevel } from "./controllers/security.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
@@ -82,7 +83,7 @@ import { renderPlugins } from "./views/plugins.ts";
 import { savePluginConfig, loadTools, loadBrowserToolConfig, saveBrowserToolConfig } from "./controllers/plugins.ts";
 import { renderChannels } from "./views/channels.ts";
 import { renderChat } from "./views/chat.ts";
-import { showPermissionPopup, hidePermissionPopup } from "./views/permission-popup.ts";
+import { showPermissionPopup, hidePermissionPopup, type PermissionDeniedEvent } from "./views/permission-popup.ts";
 import { renderConfig } from "./views/config.ts";
 import { renderCron } from "./views/cron.ts";
 import { renderDebug } from "./views/debug.ts";
@@ -99,17 +100,17 @@ import { renderLogs } from "./views/logs.ts";
 import { renderNodes } from "./views/nodes.ts";
 import { renderOverview } from "./views/overview.ts";
 import { renderSecurity } from "./views/security.ts";
+import { renderRemoteApproval } from "./views/remote-approval-view.ts";
 import { renderMemory, renderMemoryTypeCapsules, resetLLMDraft } from "./views/memory.ts";
 import { renderSessions } from "./views/sessions.ts";
 import { renderSkills } from "./views/skills.ts";
-import { renderSubAgents } from "./views/subagents.ts";
+// renderSubAgents 已迁移到 agents 标签页内的子智能体详情面板
+// import { renderSubAgents } from "./views/subagents.ts";
 import { renderUsage } from "./views/usage.ts";
-import { renderWizard } from "./views/wizard.ts";
 import { renderWizardV2 } from "./views/wizard-v2.ts";
-import { renderChannelWizard, openChannelWizard } from "./views/wizard-channel.ts";
 import { renderNotificationCenter } from "./views/notification-center.ts";
 import { renderMediaConfig, loadMediaConfig } from "./views/media-config.ts";
-import { renderMediaDashboard } from "./views/media-dashboard.ts";
+import { renderMediaManage } from "./views/media-manage.ts";
 import { loadMediaDashboard } from "./controllers/media-dashboard.ts";
 import { renderTaskKanban } from "./views/task-kanban.ts";
 
@@ -169,11 +170,8 @@ export function renderApp(state: AppViewState) {
       installSkill(state, skillKey, name, installId),
     onDistribute: () => distributeSkills(state),
   });
-  const subagentTabIds = new Set((state.subagentsList ?? []).map((agent) => agent.id));
-  const activeSubagentsTab =
-    subagentTabIds.has(state.subagentsActiveTab) || state.subagentsActiveTab === "media"
-      ? state.subagentsActiveTab
-      : state.subagentsList?.[0]?.id ?? "media";
+  // subagentsActiveTab 已迁移到 agents 标签页侧边栏，保留计算供向后兼容
+  void state.subagentsActiveTab;
   const overviewPanel = state.overviewPanel ?? "dashboard";
   const showOverviewTabs = state.tab === "overview";
   const showingOverviewDashboard = showOverviewTabs && overviewPanel === "dashboard";
@@ -224,10 +222,10 @@ export function renderApp(state: AppViewState) {
               <button
                 class="btn btn--sm btn--icon"
                 @click=${() => {
-          state.memoryPanel = "media";
-          state.setTab("memory");
-          loadMediaConfig(state);
-        }}
+        state.memoryPanel = "media";
+        state.setTab("memory");
+        loadMediaConfig(state);
+      }}
                 title=${t("media.configTitle")}
               >
                 ${icons.mic}
@@ -235,8 +233,8 @@ export function renderApp(state: AppViewState) {
               <button
                 class="btn btn--sm btn--icon"
                 @click=${() => {
-          state.setTab("memory");
-        }}
+        state.setTab("memory");
+      }}
                 title=${t("memory.memoryManagement")}
               >
                 ${icons.brainMemory}
@@ -256,22 +254,22 @@ export function renderApp(state: AppViewState) {
               <button
                 class="notification-bell"
                 @click=${(e: Event) => {
-        e.preventDefault();
-        e.stopPropagation();
-        state.notificationsOpen = !state.notificationsOpen;
-        (state as any).requestUpdate?.();
-      }}
+      e.preventDefault();
+      e.stopPropagation();
+      state.notificationsOpen = !state.notificationsOpen;
+      (state as any).requestUpdate?.();
+    }}
                 title="Notifications"
                 aria-label="Notifications"
               >
                 ${icons.bell}
                 ${(() => {
-        const unreadCount = state.notifications?.filter((n) => !n.read).length || 0;
-        if (unreadCount > 0) {
-          return html`<span class="notification-badge">${unreadCount > 99 ? '99+' : unreadCount}</span>`;
-        }
-        return nothing;
-      })()}
+      const unreadCount = state.notifications?.filter((n) => !n.read).length || 0;
+      if (unreadCount > 0) {
+        return html`<span class="notification-badge">${unreadCount > 99 ? '99+' : unreadCount}</span>`;
+      }
+      return nothing;
+    })()}
               </button>
               ${renderNotificationCenter(state)}
             </div>
@@ -307,14 +305,14 @@ export function renderApp(state: AppViewState) {
                   `}
               <div class="nav-group__items">
                 ${group.tabs.map((tab) => {
-          if (tab === "tasks") {
-            const activeCount = [...state.taskKanbanState.tasks.values()]
-              .filter(t => t.status === "queued" || t.status === "started" || t.status === "progress")
-              .length;
-            return renderTab(state, tab, activeCount);
-          }
-          return renderTab(state, tab);
-        })}
+              if (tab === "tasks") {
+                const activeCount = [...state.taskKanbanState.tasks.values()]
+                  .filter(t => t.status === "queued" || t.status === "started" || t.status === "progress")
+                  .length;
+                return renderTab(state, tab, activeCount);
+              }
+              return renderTab(state, tab);
+            })}
               </div>
             </div>
           `;
@@ -420,7 +418,7 @@ export function renderApp(state: AppViewState) {
         },
         onConnect: () => state.connect(),
         onRefresh: () => state.loadOverview(),
-        onStartWizard: () => void state.handleStartWizard(),
+        onStartWizard: () => state.handleStartWizardV2?.(),
         onStartWizardV2: state.handleStartWizardV2 ? () => state.handleStartWizardV2!() : undefined,
       })
       : nothing
@@ -460,21 +458,14 @@ export function renderApp(state: AppViewState) {
         onNostrProfileSave: () => state.handleNostrProfileSave(),
         onNostrProfileImport: () => state.handleNostrProfileImport(),
         onNostrProfileToggleAdvanced: () => state.handleNostrProfileToggleAdvanced(),
-        onConfigureChannel: (channelId: string) => {
-          openChannelWizard(state);
-          // Skip platform select, go directly to credentials step
-          (state as any).channelWizardState = {
-            ...(state as any).channelWizardState,
-            selectedPlatform: channelId,
-            step: 1,
-            skippedPlatformSelect: true,
-          };
+        onConfigureChannel: (_channelId: string) => {
+          // V1 channel wizard removed — configure via Config panel
         },
         requestUpdate: () => { (state as unknown as { requestUpdate: () => void }).requestUpdate?.(); },
       })
       : nothing
     }
-    ${state.tab === "channels" ? renderChannelWizard(state) : nothing}
+    ${nothing /* channel wizard removed with V1 */}
 
         ${state.tab === "plugins"
       ? renderPlugins({
@@ -852,12 +843,58 @@ export function renderApp(state: AppViewState) {
         agentSkillsError: state.agentSkillsError,
         agentSkillsAgentId: state.agentSkillsAgentId,
         skillsFilter: state.skillsFilter,
+        // 子智能体统一发现 props
+        subagentsList: state.subagentsList ?? [],
+        subagentsLoading: state.subagentsLoading,
+        subagentsError: state.subagentsError ?? null,
+        subagentsBusyKey: state.subagentsBusyKey ?? null,
+        onSubagentToggle: (agentId: string, enabled: boolean) => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.toggleSubAgent(state as any, agentId, enabled),
+          );
+        },
+        onSubagentSetInterval: (agentId: string, ms: number) => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.setSubAgentInterval(state as any, agentId, ms),
+          );
+        },
+        onSubagentSetGoal: (agentId: string, goal: string) => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.setSubAgentGoal(state as any, agentId, goal),
+          );
+        },
+        onSubagentSetModel: (agentId: string, model: string) => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.setSubAgentModel(state as any, agentId, model),
+          );
+        },
+        onSubagentRefresh: () => {
+          import("./controllers/subagents.ts").then((m) =>
+            m.loadSubAgents(state as any),
+          );
+        },
+        onStartOpenCoderWizard: () => {
+          // V1 wizard removed — Open Coder uses config panel
+        },
+        onStartMediaWizard: () => {
+          state.mediaManageSubTab = "llm";
+          state.setTab("media");
+          void loadMediaDashboard(state);
+        },
+        onNavigateToMedia: () => {
+          state.setTab("media");
+          void loadMediaDashboard(state);
+        },
         onRefresh: async () => {
           await loadAgents(state);
           const agentIds = state.agentsList?.agents?.map((entry) => entry.id) ?? [];
           if (agentIds.length > 0) {
             void loadAgentIdentities(state, agentIds);
           }
+          // 刷新子智能体数据
+          import("./controllers/subagents.ts").then((m) =>
+            m.loadSubAgents(state as any),
+          );
         },
         onSelectAgent: (agentId) => {
           if (state.agentsSelectedId === agentId) {
@@ -873,12 +910,20 @@ export function renderApp(state: AppViewState) {
           state.agentSkillsReport = null;
           state.agentSkillsError = null;
           state.agentSkillsAgentId = null;
-          void loadAgentIdentity(state, agentId);
-          if (state.agentsPanel === "files") {
-            void loadAgentFiles(state, agentId);
-          }
-          if (state.agentsPanel === "skills") {
-            void loadAgentSkills(state, agentId);
+          // 子智能体选中时刷新数据确保详情面板展示最新状态
+          const selectedRow = state.agentsList?.agents?.find((a) => a.id === agentId);
+          if (selectedRow?.type === "subagent") {
+            import("./controllers/subagents.ts").then((m) =>
+              m.loadSubAgents(state as any),
+            );
+          } else {
+            void loadAgentIdentity(state, agentId);
+            if (state.agentsPanel === "files") {
+              void loadAgentFiles(state, agentId);
+            }
+            if (state.agentsPanel === "skills") {
+              void loadAgentSkills(state, agentId);
+            }
           }
         },
         onSelectPanel: (panel) => {
@@ -1168,59 +1213,14 @@ export function renderApp(state: AppViewState) {
       : nothing
     }
 
-        ${state.tab === "subagents"
-      ? renderSubAgents({
-        loading: state.subagentsLoading,
-        agents: state.subagentsList ?? [],
-        error: state.subagentsError ?? null,
-        busyKey: state.subagentsBusyKey ?? null,
-        activeTab: activeSubagentsTab,
-        onTabChange: (tabId) => {
-          state.subagentsActiveTab = tabId;
-          if (tabId === "media") {
-            void loadMediaDashboard(state);
-          }
-        },
-        renderMediaTab: () => renderMediaDashboard(state),
-        onToggle: (agentId, enabled) => {
-          import("./controllers/subagents.ts").then((m) =>
-            m.toggleSubAgent(state as any, agentId, enabled),
-          );
-        },
-        onSetInterval: (agentId, ms) => {
-          import("./controllers/subagents.ts").then((m) =>
-            m.setSubAgentInterval(state as any, agentId, ms),
-          );
-        },
-        onSetGoal: (agentId, goal) => {
-          import("./controllers/subagents.ts").then((m) =>
-            m.setSubAgentGoal(state as any, agentId, goal),
-          );
-        },
-        onSetModel: (agentId, model) => {
-          import("./controllers/subagents.ts").then((m) =>
-            m.setSubAgentModel(state as any, agentId, model),
-          );
-        },
-        onRefresh: () => {
-          import("./controllers/subagents.ts").then((m) =>
-            m.loadSubAgents(state as any),
-          );
-          if (activeSubagentsTab === "media") {
-            void loadMediaDashboard(state);
-          }
-        },
-        onStartOpenCoderWizard: () => {
-          import("./views/wizard.ts").then((m) =>
-            m.startOpenCoderWizard(state as any),
-          );
-        },
-      })
+        ${/* subagents tab 已统一到 agents 标签页，保留空分支用于向后兼容重定向 */
+      state.tab === "subagents"
+      ? nothing
       : nothing
     }
 
         ${state.tab === "media"
-      ? renderMediaDashboard(state)
+      ? renderMediaManage(state)
       : nothing
     }
 
@@ -1515,7 +1515,10 @@ export function renderApp(state: AppViewState) {
                 approve: true,
                 ttlMinutes: 1,
               });
-            } catch { /* pending 可能已超时 */ }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              state.addNotification(`允许一次失败: ${message}`, "error", state.sessionKey);
+            }
           },
           onAllowSession: async () => {
             try {
@@ -1523,24 +1526,39 @@ export function renderApp(state: AppViewState) {
                 approve: true,
                 ttlMinutes: 60,
               });
-            } catch { /* pending 可能已超时 */ }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              state.addNotification(`会话授权失败: ${message}`, "error", state.sessionKey);
+            }
           },
-          onAllowPermanent: async () => {
+          onAllowPermanent: async (event: PermissionDeniedEvent) => {
+            void event;
+            // 永久授权 = 持久化 base level 到 full（L3）。
             await updateSecurityLevel(state, "full");
+            if (state.securityError) {
+              state.addNotification(`永久授权配置失败: ${state.securityError}`, "error", state.sessionKey);
+              return;
+            }
             // 同时批准当前 pending 请求
             try {
               await state.client?.request("security.escalation.resolve", {
                 approve: true,
-                ttlMinutes: 0, // 永久变更，TTL 无意义
+                ttlMinutes: 1, // 仅用于唤醒当前等待中的 run，长期权限由 base level 决定
               });
-            } catch { /* ignore */ }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              state.addNotification(`永久授权生效失败: ${message}`, "error", state.sessionKey);
+            }
           },
           onDeny: () => {
             hidePermissionPopup();
             // 明确拒绝当前 pending 请求，让 WaitForApproval 立即退出
             void state.client?.request("security.escalation.resolve", {
               approve: false,
-            }).catch(() => {/* ignore */ });
+            }).catch((err) => {
+              const message = err instanceof Error ? err.message : String(err);
+              state.addNotification(`拒绝授权失败: ${message}`, "error", state.sessionKey);
+            });
           },
         },
       })}
@@ -1568,7 +1586,8 @@ export function renderApp(state: AppViewState) {
     }
 
         ${state.tab === "security"
-      ? renderSecurity({
+      ? html`
+        ${renderSecurity({
         loading: state.securityLoading,
         error: state.securityError,
         currentLevel: state.securityLevel,
@@ -1596,7 +1615,102 @@ export function renderApp(state: AppViewState) {
           }
         },
         onRefresh: () => loadSecurity(state),
-      })
+      })}
+        ${renderRemoteApproval({
+        loading: state.remoteApprovalLoading,
+        error: state.remoteApprovalError,
+        enabled: state.remoteApprovalEnabled,
+        callbackUrl: state.remoteApprovalCallbackUrl,
+        enabledProviders: state.remoteApprovalEnabledProviders,
+        feishuEnabled: state.remoteApprovalFeishuEnabled,
+        feishuAppId: state.remoteApprovalFeishuAppId,
+        feishuAppSecret: state.remoteApprovalFeishuAppSecret,
+        feishuChatId: state.remoteApprovalFeishuChatId,
+        dingtalkEnabled: state.remoteApprovalDingtalkEnabled,
+        dingtalkWebhookUrl: state.remoteApprovalDingtalkWebhookUrl,
+        dingtalkWebhookSecret: state.remoteApprovalDingtalkWebhookSecret,
+        wecomEnabled: state.remoteApprovalWecomEnabled,
+        wecomCorpId: state.remoteApprovalWecomCorpId,
+        wecomAgentId: state.remoteApprovalWecomAgentId,
+        wecomSecret: state.remoteApprovalWecomSecret,
+        wecomToUser: state.remoteApprovalWecomToUser,
+        wecomToParty: state.remoteApprovalWecomToParty,
+        testLoading: state.remoteApprovalTestLoading,
+        testResult: state.remoteApprovalTestResult,
+        testError: state.remoteApprovalTestError,
+        saving: state.remoteApprovalSaving,
+        saved: state.remoteApprovalSaved,
+        onEnabledChange: (v) => {
+          state.remoteApprovalEnabled = v;
+          state.remoteApprovalSaved = false;
+        },
+        onCallbackUrlChange: (v) => {
+          state.remoteApprovalCallbackUrl = v;
+          state.remoteApprovalSaved = false;
+        },
+        onFeishuEnabledChange: (v) => {
+          state.remoteApprovalFeishuEnabled = v;
+          state.remoteApprovalSaved = false;
+        },
+        onFeishuAppIdChange: (v) => {
+          state.remoteApprovalFeishuAppId = v;
+          state.remoteApprovalSaved = false;
+        },
+        onFeishuAppSecretChange: (v) => {
+          state.remoteApprovalFeishuAppSecret = v;
+          state.remoteApprovalSaved = false;
+        },
+        onFeishuChatIdChange: (v) => {
+          state.remoteApprovalFeishuChatId = v;
+          state.remoteApprovalSaved = false;
+        },
+        onDingtalkEnabledChange: (v) => {
+          state.remoteApprovalDingtalkEnabled = v;
+          state.remoteApprovalSaved = false;
+        },
+        onDingtalkWebhookUrlChange: (v) => {
+          state.remoteApprovalDingtalkWebhookUrl = v;
+          state.remoteApprovalSaved = false;
+        },
+        onDingtalkWebhookSecretChange: (v) => {
+          state.remoteApprovalDingtalkWebhookSecret = v;
+          state.remoteApprovalSaved = false;
+        },
+        onWecomEnabledChange: (v) => {
+          state.remoteApprovalWecomEnabled = v;
+          state.remoteApprovalSaved = false;
+        },
+        onWecomCorpIdChange: (v) => {
+          state.remoteApprovalWecomCorpId = v;
+          state.remoteApprovalSaved = false;
+        },
+        onWecomAgentIdChange: (v) => {
+          state.remoteApprovalWecomAgentId = v;
+          state.remoteApprovalSaved = false;
+        },
+        onWecomSecretChange: (v) => {
+          state.remoteApprovalWecomSecret = v;
+          state.remoteApprovalSaved = false;
+        },
+        onWecomToUserChange: (v) => {
+          state.remoteApprovalWecomToUser = v;
+          state.remoteApprovalSaved = false;
+        },
+        onWecomToPartyChange: (v) => {
+          state.remoteApprovalWecomToParty = v;
+          state.remoteApprovalSaved = false;
+        },
+        onTest: (platform: string) => {
+          void testRemoteApproval(state, platform);
+        },
+        onSave: () => {
+          void saveRemoteApproval(state);
+        },
+        onRefresh: () => {
+          void loadRemoteApproval(state);
+        },
+      })}
+      `
       : nothing
     }
 
@@ -1729,7 +1843,7 @@ export function renderApp(state: AppViewState) {
       onRespond: (id, response) => state.handleSubagentHelpRespond(id, response),
     })}
       ${renderGatewayUrlConfirmation(state)}
-        ${renderWizard(state)}
+
         ${renderWizardV2(state)}
     </div>
   `;

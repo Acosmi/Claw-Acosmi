@@ -9,9 +9,12 @@ import type {
   ChannelsStatusSnapshot,
   CronJob,
   CronStatus,
+  GatewayAgentRow,
   SkillStatusEntry,
   SkillStatusReport,
 } from "../types.ts";
+import { isSubagent } from "../controllers/agents.ts";
+import type { SubAgentEntry } from "../controllers/subagents.ts";
 import {
   expandToolGroups,
   normalizeToolName,
@@ -81,6 +84,19 @@ export type AgentsProps = {
   onAgentSkillToggle: (agentId: string, skillName: string, enabled: boolean) => void;
   onAgentSkillsClear: (agentId: string) => void;
   onAgentSkillsDisableAll: (agentId: string) => void;
+  // 子智能体统一发现 props
+  subagentsList: SubAgentEntry[];
+  subagentsLoading: boolean;
+  subagentsError: string | null;
+  subagentsBusyKey: string | null;
+  onSubagentToggle: (agentId: string, enabled: boolean) => void;
+  onSubagentSetInterval: (agentId: string, ms: number) => void;
+  onSubagentSetGoal: (agentId: string, goal: string) => void;
+  onSubagentSetModel: (agentId: string, model: string) => void;
+  onSubagentRefresh: () => void;
+  onStartOpenCoderWizard?: () => void;
+  onStartMediaWizard?: () => void;
+  onNavigateToMedia?: () => void;
 };
 
 function getToolSections() {
@@ -540,12 +556,16 @@ function matchesList(name: string, list?: string[]) {
 }
 
 export function renderAgents(props: AgentsProps) {
-  const agents = props.agentsList?.agents ?? [];
+  const allAgents = props.agentsList?.agents ?? [];
+  const configAgents = allAgents.filter((a) => !isSubagent(a));
+  const subagentAgents = allAgents.filter((a) => isSubagent(a));
+  const agents = allAgents;
   const defaultId = props.agentsList?.defaultId ?? null;
   const selectedId = props.selectedAgentId ?? defaultId ?? agents[0]?.id ?? null;
   const selectedAgent = selectedId
     ? (agents.find((agent) => agent.id === selectedId) ?? null)
     : null;
+  const selectedIsSubagent = selectedAgent ? isSubagent(selectedAgent) : false;
 
   return html`
     <div class="agents-layout">
@@ -564,11 +584,9 @@ export function renderAgents(props: AgentsProps) {
       : nothing
     }
         <div class="agent-list" style="margin-top: 12px;">
-          ${agents.length === 0
-      ? html`
-                  <div class="muted">${t("agents.noAgents")}</div>
-                `
-      : agents.map((agent) => {
+          ${configAgents.length === 0
+      ? html`<div class="muted">${t("agents.noAgents")}</div>`
+      : configAgents.map((agent) => {
         const badge = agentBadgeText(agent.id, defaultId);
         const emoji = resolveAgentEmoji(agent, props.agentIdentityById[agent.id] ?? null);
         return html`
@@ -589,6 +607,36 @@ export function renderAgents(props: AgentsProps) {
                   `;
       })
     }
+          ${subagentAgents.length > 0
+      ? html`
+            <div style="margin: 12px 0 6px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">
+              ${t("subagents.title")}
+            </div>
+            ${subagentAgents.map((agent) => {
+              const emoji = agent.identity?.emoji || (agent.id === "argus-screen" ? "👁️" : agent.id === "oa-coder" ? "🔧" : "🎬");
+              const statusColor = agent.status === "running" || agent.status === "available"
+                ? "var(--color-success, #22c55e)"
+                : agent.status === "error" || agent.status === "degraded"
+                  ? "var(--color-danger, #ef4444)"
+                  : "var(--text-muted)";
+              return html`
+                <button
+                  type="button"
+                  class="agent-row ${selectedId === agent.id ? "active" : ""}"
+                  @click=${() => props.onSelectAgent(agent.id)}
+                >
+                  <div class="agent-avatar">${emoji}</div>
+                  <div class="agent-info">
+                    <div class="agent-title">${agent.name || agent.id}</div>
+                    <div class="agent-sub mono">${agent.id}</div>
+                  </div>
+                  <span style="width: 8px; height: 8px; border-radius: 50%; background: ${statusColor}; flex-shrink: 0;"></span>
+                </button>
+              `;
+            })}
+          `
+      : nothing
+    }
         </div>
       </section>
       <section class="agents-main">
@@ -599,7 +647,9 @@ export function renderAgents(props: AgentsProps) {
                   <div class="card-sub">${t("agents.selectAgentSub")}</div>
                 </div>
               `
-      : html`
+      : selectedIsSubagent
+        ? renderSubagentDetailPanel(selectedAgent, props)
+        : html`
               ${renderAgentHeader(
         selectedAgent,
         defaultId,
@@ -713,6 +763,188 @@ export function renderAgents(props: AgentsProps) {
     }
       </section>
     </div>
+  `;
+}
+
+// ---------- 子智能体详情面板（嵌入 agents 标签页） ----------
+
+function renderSubagentDetailPanel(agent: GatewayAgentRow, props: AgentsProps) {
+  // 从 subagentsList 中匹配完整的 SubAgentEntry（含 enabled/model/intervalMs/goal 等控制字段）
+  const subEntry = props.subagentsList.find((e) => e.id === agent.id);
+  if (!subEntry) {
+    return html`
+      <div class="card">
+        <div class="card-title">${agent.name || agent.id}</div>
+        <div class="card-sub muted">${t("subagents.empty")}</div>
+      </div>
+    `;
+  }
+
+  const busy = props.subagentsBusyKey === agent.id;
+  const statusClass =
+    subEntry.status === "running" || subEntry.status === "available"
+      ? "chip-ok"
+      : subEntry.status === "error" || subEntry.status === "degraded"
+        ? "chip-danger"
+        : subEntry.status === "starting"
+          ? "chip-warn"
+          : "chip-muted";
+  const statusLabel =
+    subEntry.status === "running" ? t("subagents.status.running")
+      : subEntry.status === "available" ? t("subagents.status.available")
+        : subEntry.status === "degraded" ? t("subagents.status.degraded")
+          : subEntry.status === "starting" ? t("subagents.status.starting")
+            : subEntry.status === "error" ? t("subagents.status.error")
+              : t("subagents.status.stopped");
+
+  const emoji = agent.identity?.emoji || (agent.id === "argus-screen" ? "👁️" : agent.id === "oa-coder" ? "🔧" : "🎬");
+
+  return html`
+    <div class="card" style="margin-bottom: 16px;">
+      <div class="row" style="justify-content: space-between; align-items: center;">
+        <div class="row" style="gap: 12px; align-items: center;">
+          <span style="font-size: 28px;">${emoji}</span>
+          <div>
+            <div class="card-title">${subEntry.label}</div>
+            <div class="card-sub mono">${agent.id}</div>
+          </div>
+        </div>
+        <div class="row" style="gap: 8px; align-items: center;">
+          <span class="chip ${statusClass}">${statusLabel}</span>
+          <button
+            class="btn ${subEntry.enabled ? "" : "primary"}"
+            ?disabled=${busy}
+            @click=${() => props.onSubagentToggle(agent.id, !subEntry.enabled)}
+          >
+            ${busy
+              ? t("common.loading")
+              : subEntry.enabled
+                ? t("subagents.disable")
+                : t("subagents.enable")}
+          </button>
+          <button class="btn btn--sm" ?disabled=${props.subagentsLoading} @click=${props.onSubagentRefresh}>
+            ${props.subagentsLoading ? t("common.loading") : t("common.refresh")}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    ${props.subagentsError
+      ? html`<div class="callout danger" style="margin-bottom: 12px;">${props.subagentsError}</div>`
+      : nothing}
+
+    ${agent.id === "argus-screen"
+      ? html`
+        <div class="card">
+          <div class="card-title">${t("subagents.model")}</div>
+          <div class="subagent-controls" style="margin-top: 8px;">
+            <label class="field">
+              <span>${t("subagents.model")}</span>
+              <select
+                .value=${subEntry.model}
+                @change=${(e: Event) => props.onSubagentSetModel(agent.id, (e.target as HTMLSelectElement).value)}
+                ?disabled=${busy}
+              >
+                ${[
+                  { value: "none", label: "None (Screenshot Only)" },
+                  { value: "anthropic", label: "Claude Vision" },
+                  { value: "gemini", label: "Gemini Flash" },
+                  { value: "qwen", label: "Qwen VL" },
+                  { value: "ollama", label: "Ollama (Local)" },
+                ].map(
+                  (m) => html`<option value=${m.value} ?selected=${m.value === subEntry.model}>${m.label}</option>`,
+                )}
+              </select>
+            </label>
+            <label class="field">
+              <span>${t("subagents.interval")}</span>
+              <div class="row" style="gap: 8px; align-items: center;">
+                <input
+                  type="range" min="200" max="5000" step="100"
+                  .value=${String(subEntry.intervalMs)}
+                  @change=${(e: Event) => props.onSubagentSetInterval(agent.id, parseInt((e.target as HTMLInputElement).value, 10))}
+                  ?disabled=${busy} style="flex: 1;"
+                />
+                <span class="muted" style="min-width: 50px; text-align: right;">${subEntry.intervalMs}ms</span>
+              </div>
+            </label>
+            <label class="field">
+              <span>${t("subagents.goal")}</span>
+              <input
+                type="text"
+                .value=${subEntry.goal}
+                @change=${(e: Event) => props.onSubagentSetGoal(agent.id, (e.target as HTMLInputElement).value)}
+                ?disabled=${busy}
+                placeholder=${t("subagents.goalPlaceholder")}
+              />
+            </label>
+          </div>
+        </div>
+      `
+      : nothing}
+
+    ${agent.id === "oa-coder"
+      ? html`
+        <div class="card">
+          <div class="card-title">Open Coder</div>
+          <div class="subagent-controls" style="gap: 10px; margin-top: 8px;">
+            <div class="row" style="gap: 12px; flex-wrap: wrap; align-items: center;">
+              <div class="row" style="gap: 6px; align-items: center;">
+                <span class="muted" style="font-size: 12px;">${t("subagents.openCoder.provider")}</span>
+                <span class="chip chip-muted">${subEntry.configured ? (subEntry.provider || "—") : t("subagents.openCoder.followsMain")}</span>
+              </div>
+              <div class="row" style="gap: 6px; align-items: center;">
+                <span class="muted" style="font-size: 12px;">${t("subagents.openCoder.model")}</span>
+                <span class="chip chip-muted">${subEntry.configured ? (subEntry.model || "—") : t("subagents.openCoder.followsMain")}</span>
+              </div>
+              <span class="chip ${subEntry.configured ? "chip-ok" : "chip-muted"}">${subEntry.configured ? t("subagents.openCoder.configured") : t("subagents.openCoder.notConfigured")}</span>
+            </div>
+            ${props.onStartOpenCoderWizard
+              ? html`
+                <button class="btn primary" style="align-self: flex-start; margin-top: 4px;"
+                  @click=${() => props.onStartOpenCoderWizard!()}>
+                  ${subEntry.configured ? t("subagents.openCoder.reconfigure") : t("subagents.openCoder.setup")}
+                </button>
+              ` : nothing}
+          </div>
+        </div>
+      `
+      : nothing}
+
+    ${agent.id === "oa-media"
+      ? html`
+        <div class="card">
+          <div class="card-title">${t("subagents.media.manage")}</div>
+          <div class="subagent-controls" style="gap: 10px; margin-top: 8px;">
+            <div class="row" style="gap: 12px; flex-wrap: wrap; align-items: center;">
+              <div class="row" style="gap: 6px; align-items: center;">
+                <span class="muted" style="font-size: 12px;">${t("subagents.media.provider")}</span>
+                <span class="chip chip-muted">${subEntry.configured ? (subEntry.provider || "—") : t("subagents.media.followsMain")}</span>
+              </div>
+              <div class="row" style="gap: 6px; align-items: center;">
+                <span class="muted" style="font-size: 12px;">${t("subagents.media.model")}</span>
+                <span class="chip chip-muted">${subEntry.configured ? (subEntry.model || "—") : t("subagents.media.followsMain")}</span>
+              </div>
+              <span class="chip ${subEntry.configured ? "chip-ok" : "chip-muted"}">${subEntry.configured ? t("subagents.media.configured") : t("subagents.media.notConfigured")}</span>
+            </div>
+            <div class="row" style="gap: 8px; margin-top: 4px;">
+              ${props.onNavigateToMedia
+                ? html`<button class="btn" @click=${() => props.onNavigateToMedia!()}>${t("subagents.media.manage")}</button>`
+                : nothing}
+              ${props.onStartMediaWizard
+                ? html`<button class="btn primary" @click=${() => props.onStartMediaWizard!()}>
+                    ${subEntry.configured ? t("subagents.media.reconfigure") : t("subagents.media.setup")}
+                  </button>`
+                : nothing}
+            </div>
+          </div>
+        </div>
+      `
+      : nothing}
+
+    ${subEntry.error
+      ? html`<div class="callout danger" style="margin-top: 8px;">${subEntry.error}</div>`
+      : nothing}
   `;
 }
 

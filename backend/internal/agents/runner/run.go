@@ -165,6 +165,7 @@ func RunEmbeddedPiAgent(ctx context.Context, params RunEmbeddedPiAgentParams, de
 			DelegationContract: params.DelegationContract,
 			PromptMode:         params.PromptMode,
 			OnToolEvent:        params.OnToolEvent,
+			OnProgress:         params.OnProgress,
 			AgentChannel:       params.AgentChannel,
 			AgentType:          params.AgentType,
 			SuppressTranscript: params.SuppressTranscript,

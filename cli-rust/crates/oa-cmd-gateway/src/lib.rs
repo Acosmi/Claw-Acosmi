@@ -1,4 +1,4 @@
-/// Gateway lifecycle commands for OpenAcosmi CLI.
+/// Gateway lifecycle commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands for managing the Gateway service: start, stop,
 /// restart, status, install, uninstall, call, usage-cost, health, probe,

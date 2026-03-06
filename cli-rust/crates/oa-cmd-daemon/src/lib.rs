@@ -1,4 +1,4 @@
-/// Daemon commands for OpenAcosmi CLI (legacy alias for gateway service).
+/// Daemon commands for Claw Acosmi CLI (legacy alias for gateway service).
 ///
 /// Provides subcommands that mirror the gateway service lifecycle:
 /// status, start, stop, restart, install, uninstall.

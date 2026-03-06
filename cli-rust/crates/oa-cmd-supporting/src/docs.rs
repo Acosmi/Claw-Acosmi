@@ -1,6 +1,6 @@
 /// Docs search command implementation.
 ///
-/// Searches the OpenAcosmi documentation using the `mcporter` MCP tool
+/// Searches the Claw Acosmi documentation using the `mcporter` MCP tool
 /// and formats the results for CLI output. Supports both rich (terminal)
 /// and plain markdown output modes.
 ///
@@ -16,7 +16,7 @@ use oa_cli_shared::command_format::format_cli_command;
 /// The MCP tool identifier for searching docs.
 ///
 /// Source: `src/commands/docs.ts` - `SEARCH_TOOL`
-const SEARCH_TOOL: &str = "https://github.com/Acosmi/Claw-Acismi/tree/main/docs/mcp.SearchOpenAcosmi";
+const SEARCH_TOOL: &str = "https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/mcp.SearchOpenAcosmi";
 
 /// Default timeout for doc search in milliseconds.
 ///
@@ -209,7 +209,7 @@ fn has_binary(name: &str) -> bool {
 
 /// Run the docs search command.
 ///
-/// Searches the OpenAcosmi documentation and prints results. When called
+/// Searches the Claw Acosmi documentation and prints results. When called
 /// without a query, prints links to the docs site and search usage.
 ///
 /// Source: `src/commands/docs.ts` - `docsSearchCommand`
@@ -223,7 +223,7 @@ pub async fn docs_search_command(query_parts: &[String]) -> Result<()> {
         .to_owned();
 
     if query.is_empty() {
-        info!("Docs: https://github.com/Acosmi/Claw-Acismi/tree/main/docs");
+        info!("Docs: https://github.com/Acosmi/Claw-Acosmi/tree/main/docs");
         info!(
             "Search: {}",
             format_cli_command("openacosmi docs \"your query\"")
@@ -329,11 +329,11 @@ mod tests {
 
     #[test]
     fn parse_single_result() {
-        let raw = "Title: Getting Started\nLink: https://github.com/Acosmi/Claw-Acismi/tree/main/docs/start\nContent: Quick start guide\n";
+        let raw = "Title: Getting Started\nLink: https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/start\nContent: Quick start guide\n";
         let results = parse_search_output(raw);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Getting Started");
-        assert_eq!(results[0].link, "https://github.com/Acosmi/Claw-Acismi/tree/main/docs/start");
+        assert_eq!(results[0].link, "https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/start");
         assert_eq!(results[0].snippet, Some("Quick start guide".to_owned()));
     }
 

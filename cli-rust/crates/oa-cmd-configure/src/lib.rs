@@ -1,4 +1,4 @@
-/// Configuration management commands for OpenAcosmi CLI.
+/// Configuration management commands for Claw Acosmi CLI.
 ///
 /// Provides the `configure` command and its sub-wizards for managing
 /// gateway, auth, channels, skills, daemon, and workspace settings.

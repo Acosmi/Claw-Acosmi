@@ -1,4 +1,4 @@
-/// Supporting commands for OpenAcosmi CLI.
+/// Supporting commands for Claw Acosmi CLI.
 ///
 /// This crate implements ancillary commands that are not part of the core
 /// agent/model/channel pipelines: dashboard, docs search, reset, setup,

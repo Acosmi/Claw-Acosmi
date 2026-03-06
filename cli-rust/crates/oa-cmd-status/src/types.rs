@@ -1,4 +1,4 @@
-/// Status types for OpenAcosmi CLI.
+/// Status types for Claw Acosmi CLI.
 ///
 /// Source: `src/commands/status.types.ts`
 

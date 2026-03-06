@@ -1,4 +1,4 @@
-/// Service naming constants and profile resolution for OpenAcosmi daemon services.
+/// Service naming constants and profile resolution for Claw Acosmi daemon services.
 ///
 /// Provides canonical service labels for launchd (macOS), systemd (Linux),
 /// and Windows scheduled tasks, plus functions to resolve profile-specific
@@ -141,7 +141,7 @@ pub fn resolve_gateway_systemd_service_name(profile: Option<&str>) -> String {
 /// Resolve the Windows scheduled task name for a given gateway profile.
 ///
 /// Returns the default task name for default/unset profiles, or
-/// `OpenAcosmi Gateway ({profile})` for custom profiles.
+/// `Claw Acosmi Gateway ({profile})` for custom profiles.
 ///
 /// Source: `src/daemon/constants.ts` - `resolveGatewayWindowsTaskName`
 pub fn resolve_gateway_windows_task_name(profile: Option<&str>) -> String {

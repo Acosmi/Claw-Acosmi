@@ -1,4 +1,4 @@
-/// Cross-platform daemon service interface for OpenAcosmi.
+/// Cross-platform daemon service interface for Claw Acosmi.
 ///
 /// Provides a unified API for managing gateway services across macOS (launchd),
 /// Linux (systemd), and Windows (scheduled tasks). Platform-specific code is

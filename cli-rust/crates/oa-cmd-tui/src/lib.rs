@@ -1,4 +1,4 @@
-/// Terminal UI commands for OpenAcosmi CLI.
+/// Terminal UI commands for Claw Acosmi CLI.
 ///
 /// Provides subcommand: launch (opens TUI connected to Gateway).
 ///

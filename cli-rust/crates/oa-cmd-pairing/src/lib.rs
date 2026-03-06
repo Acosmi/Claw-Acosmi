@@ -1,4 +1,4 @@
-/// DM pairing approval commands for OpenAcosmi CLI.
+/// DM pairing approval commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands: list, approve.
 ///

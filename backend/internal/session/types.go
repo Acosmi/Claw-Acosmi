@@ -113,13 +113,18 @@ type SessionEntry struct {
 
 // TaskMeta 任务看板元数据（仅 task: session 使用）。
 type TaskMeta struct {
-	Status      string `json:"status"`                // "queued" | "started" | "completed" | "failed"
-	Async       bool   `json:"async,omitempty"`       // 是否异步执行
-	Summary     string `json:"summary,omitempty"`     // 完成摘要
-	Error       string `json:"error,omitempty"`       // 错误信息
-	ToolName    string `json:"toolName,omitempty"`    // 当前/最后工具名
-	StartedAt   int64  `json:"startedAt,omitempty"`   // 开始时间 (UnixMilli)
-	CompletedAt int64  `json:"completedAt,omitempty"` // 完成时间 (UnixMilli)
+	Status           string `json:"status"`                     // "queued" | "started" | "progress" | "completed" | "failed"
+	Async            bool   `json:"async,omitempty"`            // 是否异步执行
+	Summary          string `json:"summary,omitempty"`          // 完成摘要
+	Error            string `json:"error,omitempty"`            // 终态错误信息
+	ToolName         string `json:"toolName,omitempty"`         // 当前/最后工具名
+	ProgressPhase    string `json:"progressPhase,omitempty"`    // 最近一个工具阶段
+	ProgressText     string `json:"progressText,omitempty"`     // 最近一个工具步骤摘要
+	ProgressIsError  bool   `json:"progressIsError,omitempty"`  // 最近一个工具步骤是否报错
+	ProgressDuration int64  `json:"progressDuration,omitempty"` // 最近一个工具步骤耗时 ms
+	ProgressAt       int64  `json:"progressAt,omitempty"`       // 最近一个工具步骤时间 (UnixMilli)
+	StartedAt        int64  `json:"startedAt,omitempty"`        // 开始时间 (UnixMilli)
+	CompletedAt      int64  `json:"completedAt,omitempty"`      // 完成时间 (UnixMilli)
 }
 
 // SessionOrigin 会话来源信息（与 TS SessionOrigin 完全对齐）。

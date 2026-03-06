@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -121,13 +123,28 @@ func (b *BaiduTrendingSource) Fetch(ctx context.Context, category string, limit 
 }
 
 // parseBaiduHotScore 解析百度热度字符串为数值。
+// 支持纯数字（"5678901"）和带"万"后缀（"5.2万"）两种格式。
 func parseBaiduHotScore(s string) float64 {
-	var score float64
-	// 百度 hotScore 可能是纯数字字符串
+	hasSuffix := strings.Contains(s, "万")
+
+	// 提取数字部分（含小数点）
+	var buf strings.Builder
 	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			score = score*10 + float64(c-'0')
+		if (c >= '0' && c <= '9') || c == '.' {
+			buf.WriteRune(c)
 		}
 	}
-	return score
+	numStr := buf.String()
+	if numStr == "" {
+		return 0
+	}
+
+	v, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0
+	}
+	if hasSuffix {
+		return v * 10000
+	}
+	return v
 }

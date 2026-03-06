@@ -1,4 +1,4 @@
-/// Plugin management commands for OpenAcosmi CLI.
+/// Plugin management commands for Claw Acosmi CLI.
 ///
 /// Provides `plugins` subcommands: list, info, install, enable, disable, doctor.
 /// Delegates to Gateway RPC: `plugins.list`, `plugins.config.set`.

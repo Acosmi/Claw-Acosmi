@@ -1,4 +1,4 @@
-/// Daemon directory path resolution for OpenAcosmi services.
+/// Daemon directory path resolution for Claw Acosmi services.
 ///
 /// Resolves state directories for the gateway and node services,
 /// supporting profile-based suffixes and environment variable overrides.

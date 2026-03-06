@@ -101,9 +101,9 @@ func ApplyAuthChoice(params ApplyAuthChoiceParams) (*ApplyAuthChoiceResult, erro
 		}
 		return result, err
 
-	// OpenAcosmi Zen
+	// Claw Acosmi Zen
 	case AuthChoiceAcosmiZen:
-		return applyGenericApiKey(params, "openacosmi", "OPENACOSMI_API_KEY", "Enter OpenAcosmi Zen API key")
+		return applyGenericApiKey(params, "openacosmi", "OPENACOSMI_API_KEY", "Enter Claw Acosmi Zen API key")
 
 	// OAuth-only providers
 	case AuthChoiceQwenPortal:

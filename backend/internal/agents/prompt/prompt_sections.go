@@ -132,8 +132,8 @@ func buildSafetySection() string {
 }
 
 func buildCLISection() string {
-	return "## OpenAcosmi CLI Quick Reference\n" +
-		"OpenAcosmi is controlled via subcommands. Do not invent commands.\n" +
+	return "## Claw Acosmi CLI Quick Reference\n" +
+		"Claw Acosmi is controlled via subcommands. Do not invent commands.\n" +
 		"To manage the Gateway daemon: openacosmi gateway status|start|stop|restart\n" +
 		"If unsure, ask the user to run `openacosmi help`."
 }
@@ -181,11 +181,11 @@ func buildSelfUpdateSection(hasGateway, isMinimal bool) string {
 	if !hasGateway || isMinimal {
 		return ""
 	}
-	return "## OpenAcosmi Self-Update\n" +
+	return "## Claw Acosmi Self-Update\n" +
 		"Get Updates (self-update) is ONLY allowed when the user explicitly asks for it.\n" +
 		"Do not run config.apply or update.run unless the user explicitly requests; if not explicit, ask first.\n" +
 		"Actions: config.get, config.schema, config.apply (validate + write full config, then restart), update.run.\n" +
-		"After restart, OpenAcosmi pings the last active session automatically."
+		"After restart, Claw Acosmi pings the last active session automatically."
 }
 
 func buildModelAliasesSection(lines []string, isMinimal bool) string {

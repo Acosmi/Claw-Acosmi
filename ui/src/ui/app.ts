@@ -96,12 +96,7 @@ import { loadAssistantIdentity as loadAssistantIdentityInternal } from "./contro
 import { loadSettings, type UiSettings } from "./storage.ts";
 import { initLocale, onLocaleChange } from "./i18n.ts";
 import { type ChatAttachment, type ChatQueueItem, type CronFormState } from "./ui-types.ts";
-import {
-  WIZARD_INITIAL_STATE,
-  startWizard as startWizardInternal,
-  cancelWizard as cancelWizardInternal,
-  type WizardState,
-} from "./views/wizard.ts";
+
 import { startWizardV2 as startWizardV2Internal } from "./views/wizard-v2.ts";
 
 declare global {
@@ -132,9 +127,7 @@ export class OpenAcosmiApp extends LitElement {
   @state() tab: Tab = "chat";
   @state() overviewPanel: "dashboard" | "instances" | "usage" = "dashboard";
   @state() onboarding = resolveOnboardingMode();
-  @state() wizardOpen = false;
   @state() wizardV2Open = false;
-  @state() wizardState: WizardState = { ...WIZARD_INITIAL_STATE };
   @state() connected = false;
   @state() theme: ThemeMode = this.settings.theme ?? "system";
   @state() themeResolved: ResolvedTheme = "dark";
@@ -212,6 +205,29 @@ export class OpenAcosmiApp extends LitElement {
   @state() securityConfirmOpen = false;
   @state() securityPendingLevel: string | null = null;
   @state() securityConfirmText = "";
+  @state() remoteApprovalLoading = false;
+  @state() remoteApprovalError: string | null = null;
+  @state() remoteApprovalEnabled = false;
+  @state() remoteApprovalCallbackUrl = "";
+  @state() remoteApprovalEnabledProviders: string[] = [];
+  @state() remoteApprovalFeishuEnabled = false;
+  @state() remoteApprovalFeishuAppId = "";
+  @state() remoteApprovalFeishuAppSecret = "";
+  @state() remoteApprovalFeishuChatId = "";
+  @state() remoteApprovalDingtalkEnabled = false;
+  @state() remoteApprovalDingtalkWebhookUrl = "";
+  @state() remoteApprovalDingtalkWebhookSecret = "";
+  @state() remoteApprovalWecomEnabled = false;
+  @state() remoteApprovalWecomCorpId = "";
+  @state() remoteApprovalWecomAgentId = "";
+  @state() remoteApprovalWecomSecret = "";
+  @state() remoteApprovalWecomToUser = "";
+  @state() remoteApprovalWecomToParty = "";
+  @state() remoteApprovalTestLoading = false;
+  @state() remoteApprovalTestResult: string | null = null;
+  @state() remoteApprovalTestError: string | null = null;
+  @state() remoteApprovalSaving = false;
+  @state() remoteApprovalSaved = false;
 
   @state() configLoading = false;
   @state() configRaw = "{\n}\n";
@@ -463,13 +479,28 @@ export class OpenAcosmiApp extends LitElement {
   @state() mediaDrafts: import("./controllers/media-dashboard.js").DraftEntry[] = [];
   @state() mediaDraftsLoading = false;
   @state() mediaDraftsSelectedPlatform = "";
+  @state() mediaPublishRecords: import("./controllers/media-dashboard.js").PublishRecord[] = [];
+  @state() mediaPublishLoading = false;
+  @state() mediaPublishPage = 0;
+  @state() mediaPublishPageSize = 10;
+  @state() mediaHeartbeat: import("./app-view-state.js").MediaHeartbeatStatus | null = null;
+  @state() mediaDraftDetail: import("./controllers/media-dashboard.js").DraftEntry | null = null;
+  @state() mediaDraftDetailLoading = false;
+  @state() mediaPublishDetail: import("./controllers/media-dashboard.js").PublishRecord | null = null;
+  @state() mediaPublishDetailLoading = false;
+  @state() mediaConfig: import("./controllers/media-dashboard.js").MediaConfig | null = null;
+  @state() mediaDraftEdit: import("./controllers/media-dashboard.js").DraftEntry | null = null;
+  @state() mediaPatrolJobs: import("./controllers/media-dashboard.js").CronPatrolJob[] = [];
+  @state() mediaTrendingHealth: import("./controllers/media-dashboard.js").SourceHealthInfo[] = [];
+  @state() mediaTrendingHealthLoading = false;
+  @state() mediaManageSubTab = "overview";
 
   // Sub-Agents
   @state() subagentsLoading = false;
   @state() subagentsList: import("./controllers/subagents.js").SubAgentEntry[] = [];
   @state() subagentsError: string | null = null;
   @state() subagentsBusyKey: string | null = null;
-  @state() subagentsActiveTab = "media";
+  @state() subagentsActiveTab = "";
 
   // Task Kanban
   @state() taskKanbanState: import("./controllers/task-kanban.js").TaskKanbanState = { tasks: new Map(), sortedIds: [] };
@@ -851,16 +882,8 @@ export class OpenAcosmiApp extends LitElement {
     this.applySettings({ ...this.settings, splitRatio: newRatio });
   }
 
-  async handleStartWizard() {
-    await startWizardInternal(this as unknown as AppViewState);
-  }
-
   async handleStartWizardV2() {
     await startWizardV2Internal(this as unknown as AppViewState);
-  }
-
-  async handleCancelWizard() {
-    await cancelWizardInternal(this as unknown as AppViewState);
   }
 
   render() {

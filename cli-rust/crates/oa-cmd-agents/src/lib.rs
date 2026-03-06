@@ -1,4 +1,4 @@
-/// Agent management commands (plural) for OpenAcosmi CLI.
+/// Agent management commands (plural) for Claw Acosmi CLI.
 ///
 /// Provides subcommands for listing, adding, deleting agents, and
 /// managing agent identity and bindings. Mirrors the TypeScript commands

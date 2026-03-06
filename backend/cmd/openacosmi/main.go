@@ -19,8 +19,8 @@ import (
 // rootCmd 根命令（对应 TS buildProgram() + configureProgramHelp()）
 var rootCmd = &cobra.Command{
 	Use:   cli.CLIName,
-	Short: "🦜 OpenAcosmi — AI Agent 管理平台",
-	Long: `🦜 OpenAcosmi — 你的 AI Agent 管理平台
+	Short: "🦜 Claw Acosmi — AI Agent 管理平台",
+	Long: `🦜 Claw Acosmi — 你的 AI Agent 管理平台
 
 管理 AI Agent、消息频道、插件和服务。
 支持 WhatsApp、Telegram、Discord、Slack、Signal、iMessage 等频道。`,

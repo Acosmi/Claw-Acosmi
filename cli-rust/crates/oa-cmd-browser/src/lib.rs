@@ -1,4 +1,4 @@
-/// Browser automation commands for OpenAcosmi CLI.
+/// Browser automation commands for Claw Acosmi CLI.
 ///
 /// All commands delegate to the Gateway via `browser.request` RPC, which
 /// proxies to the local browser control HTTP service or a remote node.

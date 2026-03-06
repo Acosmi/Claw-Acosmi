@@ -1,4 +1,4 @@
-/// Linux systemd user service management for OpenAcosmi gateway and node services.
+/// Linux systemd user service management for Claw Acosmi gateway and node services.
 ///
 /// Provides functions to build systemd unit files, and install, uninstall,
 /// start, stop, and query systemd user services using `systemctl --user`.

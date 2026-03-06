@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/llmclient"
+	"github.com/Acosmi/ClawAcosmi/internal/infra"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
@@ -137,6 +139,99 @@ func TestBash_ContextCancel(t *testing.T) {
 	// Should not hang — context already cancelled
 	if err != nil {
 		t.Logf("got error (expected): %v", err)
+	}
+}
+
+func TestReportProgress_EmitsAgentProgressEvent(t *testing.T) {
+	infra.ResetAgentRunContextForTest()
+	defer infra.ResetAgentRunContextForTest()
+	infra.RegisterAgentRunContext("run-progress", infra.AgentRunContext{SessionKey: "sess-progress"})
+
+	events := make(chan infra.AgentEventPayload, 1)
+	unsub := infra.OnAgentEvent(func(evt infra.AgentEventPayload) {
+		events <- evt
+	})
+	defer unsub()
+
+	result, err := ExecuteToolCall(context.Background(), "report_progress",
+		json.RawMessage(`{"summary":"Build finished, starting tests","percent":60,"phase":"testing"}`),
+		ToolExecParams{RunID: "run-progress"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Progress reported to live surfaces." {
+		t.Fatalf("unexpected result: %q", result)
+	}
+
+	select {
+	case evt := <-events:
+		if evt.RunID != "run-progress" {
+			t.Fatalf("run id = %q, want run-progress", evt.RunID)
+		}
+		if evt.Stream != infra.StreamProgress {
+			t.Fatalf("stream = %q, want %q", evt.Stream, infra.StreamProgress)
+		}
+		if evt.SessionKey != "sess-progress" {
+			t.Fatalf("sessionKey = %q, want sess-progress", evt.SessionKey)
+		}
+		if got, _ := evt.Data["summary"].(string); got != "Build finished, starting tests" {
+			t.Fatalf("summary = %q", got)
+		}
+		if got, _ := evt.Data["phase"].(string); got != "testing" {
+			t.Fatalf("phase = %q", got)
+		}
+		if got, _ := evt.Data["percent"].(int); got != 60 {
+			t.Fatalf("percent = %d", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected agent.progress event")
+	}
+}
+
+func TestReportProgress_RemoteDeliveryStatuses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status ProgressReportStatus
+		want   string
+	}{
+		{
+			name:   "remote delivered",
+			status: ProgressReportStatus{RemoteDelivered: true},
+			want:   "Progress reported to live surfaces and remote channel.",
+		},
+		{
+			name:   "throttled",
+			status: ProgressReportStatus{Throttled: true},
+			want:   "Progress reported to live surfaces. Remote update skipped (throttled).",
+		},
+		{
+			name:   "remote failed",
+			status: ProgressReportStatus{Error: "send failed"},
+			want:   "Progress reported to live surfaces. Remote delivery failed.",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := ExecuteToolCall(context.Background(), "report_progress",
+				json.RawMessage(`{"summary":"waiting for tests","phase":"testing"}`),
+				ToolExecParams{
+					OnProgress: func(context.Context, ProgressUpdate) ProgressReportStatus {
+						return tc.status
+					},
+				})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result != tc.want {
+				t.Fatalf("result = %q, want %q", result, tc.want)
+			}
+		})
 	}
 }
 
@@ -670,13 +765,76 @@ func TestWriteFile_PathEscapeBlocked(t *testing.T) {
 	if callbackTool != "write_file" {
 		t.Errorf("expected OnPermissionDenied callback tool=write_file, got %q", callbackTool)
 	}
-	if callbackDetail != outsidePath {
-		t.Errorf("expected OnPermissionDenied callback detail=%q, got %q", outsidePath, callbackDetail)
+	expectedDetail := filepath.Clean(outsidePath)
+	if callbackDetail != expectedDetail {
+		t.Errorf("expected OnPermissionDenied callback detail=%q, got %q", expectedDetail, callbackDetail)
 	}
 	// 确认文件没有被创建
 	if _, statErr := os.Stat(outsidePath); statErr == nil {
 		os.Remove(outsidePath)
 		t.Error("file was created outside workspace — security breach!")
+	}
+}
+
+func TestWriteFile_PathGrantAllowsOutsideWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "granted.txt")
+	inputJSON, _ := json.Marshal(map[string]string{
+		"path":    outsidePath,
+		"content": "approved write",
+	})
+	params := testToolParams(workspace)
+	params.MountRequests = []MountRequestForSandbox{
+		{HostPath: outsideDir, MountMode: "rw"},
+	}
+
+	result, err := ExecuteToolCall(context.Background(), "write_file", inputJSON, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Successfully wrote") {
+		t.Fatalf("expected successful write, got %q", result)
+	}
+	data, readErr := os.ReadFile(outsidePath)
+	if readErr != nil {
+		t.Fatalf("expected outside file to be written: %v", readErr)
+	}
+	if string(data) != "approved write" {
+		t.Fatalf("outside file content mismatch: %q", string(data))
+	}
+}
+
+func TestWriteFile_ReadOnlyPathGrantStillBlocked(t *testing.T) {
+	workspace := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "blocked.txt")
+	var callbackTool, callbackDetail string
+	inputJSON, _ := json.Marshal(map[string]string{
+		"path":    outsidePath,
+		"content": "should fail",
+	})
+	params := testToolParams(workspace)
+	params.MountRequests = []MountRequestForSandbox{
+		{HostPath: outsideDir, MountMode: "ro"},
+	}
+	params.OnPermissionDenied = func(tool, detail string) {
+		callbackTool = tool
+		callbackDetail = detail
+	}
+
+	result, err := ExecuteToolCall(context.Background(), "write_file", inputJSON, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !IsPermissionDeniedOutput(result) {
+		t.Fatalf("expected permission denied output, got %q", result)
+	}
+	if callbackTool != "write_file" {
+		t.Fatalf("expected callback tool write_file, got %q", callbackTool)
+	}
+	if callbackDetail != filepath.Clean(outsidePath) {
+		t.Fatalf("expected callback detail %q, got %q", filepath.Clean(outsidePath), callbackDetail)
 	}
 }
 
@@ -1144,10 +1302,16 @@ func TestScreenshotCommand_ReturnsNonEmpty(t *testing.T) {
 
 // mockMediaSender 用于测试 send_media 的 mock 实现。
 type mockMediaSender struct {
-	sendErr error // 非 nil 时 SendMedia 返回此错误
+	sendErr      error // 非 nil 时 SendMedia 返回此错误
+	lastFileName string
+	lastMimeType string
+	lastSize     int
 }
 
-func (m *mockMediaSender) SendMedia(_ context.Context, _, _ string, _ []byte, _, _ string) error {
+func (m *mockMediaSender) SendMedia(_ context.Context, _, _ string, data []byte, fileName, mimeType, _ string) error {
+	m.lastFileName = fileName
+	m.lastMimeType = mimeType
+	m.lastSize = len(data)
 	return m.sendErr
 }
 
@@ -1230,6 +1394,41 @@ func TestSendMedia_BadFilePath_HelpfulError(t *testing.T) {
 	}
 }
 
+func TestSendMedia_PathEscapeBlocked_RequestsPermission(t *testing.T) {
+	workspace := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "desktop-image.png")
+	if err := os.WriteFile(outsidePath, []byte("fake-png-data"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	var callbackTool, callbackDetail string
+	p := ToolExecParams{
+		SessionKey:   "feishu:oc_test123",
+		MediaSender:  &mockMediaSender{},
+		WorkspaceDir: workspace,
+		OnPermissionDenied: func(tool, detail string) {
+			callbackTool = tool
+			callbackDetail = detail
+		},
+	}
+
+	result, err := ExecuteToolCall(context.Background(), "send_media",
+		json.RawMessage(fmt.Sprintf(`{"file_path":%q}`, outsidePath)), p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !IsPermissionDeniedOutput(result) {
+		t.Fatalf("expected permission denied output, got %q", result)
+	}
+	if callbackTool != "send_media" {
+		t.Fatalf("expected callback tool send_media, got %q", callbackTool)
+	}
+	if callbackDetail != filepath.Clean(outsidePath) {
+		t.Fatalf("expected callback detail %q, got %q", filepath.Clean(outsidePath), callbackDetail)
+	}
+}
+
 func TestSendMedia_FabricatedTarget_SendError(t *testing.T) {
 	// 模拟原始 bug 场景: agent 编造 target ID "feishu:oc_xxx"，
 	// parseSendMediaTarget 解析成功，但 MediaSender.SendMedia 因目标不存在返回错误。
@@ -1307,6 +1506,95 @@ func TestSendMedia_ChannelSendError_UsesStructuredMessage(t *testing.T) {
 	}
 	if !strings.Contains(result, "暂不支持") {
 		t.Fatalf("expected actionable hint in result, got %q", result)
+	}
+}
+
+func TestSendMedia_FilePathPreservesFileNameAndReturnsJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "idlefish_agent_design.md")
+	if err := os.WriteFile(testFile, []byte("# design\nhello\n"), 0o644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+
+	sender := &mockMediaSender{}
+	p := ToolExecParams{
+		SessionKey:   "feishu:oc_test123",
+		MediaSender:  sender,
+		WorkspaceDir: tmpDir,
+		ScopePaths:   []string{tmpDir},
+	}
+	result, err := ExecuteToolCall(context.Background(), "send_media",
+		json.RawMessage(fmt.Sprintf(`{"file_path":%q}`, testFile)), p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.HasPrefix(result, "__MULTIMODAL__") {
+		t.Fatalf("markdown file should not be wrapped as multimodal image, got %q", result)
+	}
+	if sender.lastFileName != "idlefish_agent_design.md" {
+		t.Fatalf("fileName=%q, want idlefish_agent_design.md", sender.lastFileName)
+	}
+	if !strings.Contains(result, `"fileName":"idlefish_agent_design.md"`) {
+		t.Fatalf("expected status json to include fileName, got %q", result)
+	}
+	if !strings.Contains(result, `"size":15`) {
+		t.Fatalf("expected status json to include actual size, got %q", result)
+	}
+}
+
+func TestSendMedia_PathGrantAllowsOutsideWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	outsideDir := t.TempDir()
+	testFile := filepath.Join(outsideDir, "desktop-plan.md")
+	if err := os.WriteFile(testFile, []byte("# outside\n"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	sender := &mockMediaSender{}
+	p := ToolExecParams{
+		SessionKey:   "feishu:oc_test123",
+		MediaSender:  sender,
+		WorkspaceDir: workspace,
+		MountRequests: []MountRequestForSandbox{
+			{HostPath: outsideDir, MountMode: "ro"},
+		},
+	}
+
+	result, err := ExecuteToolCall(context.Background(), "send_media",
+		json.RawMessage(fmt.Sprintf(`{"file_path":%q}`, testFile)), p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if IsPermissionDeniedOutput(result) {
+		t.Fatalf("expected approved path to bypass permission denied, got %q", result)
+	}
+	if sender.lastFileName != "desktop-plan.md" {
+		t.Fatalf("fileName=%q, want desktop-plan.md", sender.lastFileName)
+	}
+	if !strings.Contains(result, `"status":"sent"`) {
+		t.Fatalf("expected success json, got %q", result)
+	}
+}
+
+func TestSendMedia_Base64UsesExplicitFileName(t *testing.T) {
+	sender := &mockMediaSender{}
+	p := ToolExecParams{
+		SessionKey:  "feishu:oc_test123",
+		MediaSender: sender,
+	}
+	result, err := ExecuteToolCall(context.Background(), "send_media",
+		json.RawMessage(`{"media_base64":"SGVsbG8=","file_name":"notes.md","mime_type":"text/markdown"}`), p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sender.lastFileName != "notes.md" {
+		t.Fatalf("fileName=%q, want notes.md", sender.lastFileName)
+	}
+	if sender.lastMimeType != "text/markdown" {
+		t.Fatalf("mimeType=%q, want text/markdown", sender.lastMimeType)
+	}
+	if !strings.Contains(result, `"fileName":"notes.md"`) {
+		t.Fatalf("expected result to include explicit fileName, got %q", result)
 	}
 }
 

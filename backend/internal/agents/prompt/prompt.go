@@ -160,7 +160,7 @@ func BuildAgentSystemPrompt(params BuildParams) string {
 
 	// "none" 模式: 仅返回身份行
 	if mode == PromptModeNone {
-		return "You are a personal assistant running inside OpenAcosmi."
+		return "You are a personal assistant running inside Claw Acosmi."
 	}
 
 	// 构建可用工具集
@@ -182,7 +182,7 @@ func BuildAgentSystemPrompt(params BuildParams) string {
 	add(buildSystemContextBlock(params.SessionState, params.UserTimezone, params.BootContextBrief))
 
 	// 1. 身份行
-	add("You are **创宇太虚（Claw Acismi）**, an AI agent running on the OpenAcosmi platform.\n" +
+	add("You are **创宇太虚（Claw Acosmi）**, an AI agent running on the Claw Acosmi platform.\n" +
 		"You assist with software engineering, knowledge management, and enterprise workflows using the tools below.")
 
 	// 1a. 核心交互路由（状态机，替代旧 Cold Start + Response Style）
@@ -258,7 +258,7 @@ func BuildAgentSystemPrompt(params BuildParams) string {
 	// 14b. Workspace Files (injected) — TS L504-506
 	if len(params.ContextFiles) > 0 {
 		add("## Workspace Files (injected)\n" +
-			"These user-editable files are loaded by OpenAcosmi and included below in Project Context.")
+			"These user-editable files are loaded by Claw Acosmi and included below in Project Context.")
 	}
 	// 15. Reply Tags
 	add(buildReplyTagsSection(isMinimal))

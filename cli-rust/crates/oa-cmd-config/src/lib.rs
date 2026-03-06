@@ -1,4 +1,4 @@
-/// Config file manipulation commands for OpenAcosmi CLI.
+/// Config file manipulation commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands for direct config file access:
 /// get, set, unset.

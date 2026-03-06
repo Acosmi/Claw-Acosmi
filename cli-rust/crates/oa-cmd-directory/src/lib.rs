@@ -1,4 +1,4 @@
-/// Directory lookup commands for OpenAcosmi CLI.
+/// Directory lookup commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands: self, peers list, groups list/members.
 ///

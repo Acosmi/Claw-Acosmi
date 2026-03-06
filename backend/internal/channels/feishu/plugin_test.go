@@ -68,6 +68,7 @@ type feishuUploadRoundTripper struct {
 
 	imageUploadCount int
 	fileUploadCount  int
+	fileUploadNames  []string
 }
 
 func (rt *feishuUploadRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -81,6 +82,9 @@ func (rt *feishuUploadRoundTripper) RoundTrip(req *http.Request) (*http.Response
 
 	case "/open-apis/im/v1/files":
 		rt.fileUploadCount++
+		if name := readMultipartFileName(req); name != "" {
+			rt.fileUploadNames = append(rt.fileUploadNames, name)
+		}
 		if rt.uploadFileErr {
 			return jsonHTTPResponse(http.StatusOK, `{"code":999,"msg":"upload file failed"}`), nil
 		}
@@ -88,6 +92,24 @@ func (rt *feishuUploadRoundTripper) RoundTrip(req *http.Request) (*http.Response
 
 	default:
 		return jsonHTTPResponse(http.StatusNotFound, `{"code":404,"msg":"not found"}`), nil
+	}
+}
+
+func readMultipartFileName(req *http.Request) string {
+	mr, err := req.MultipartReader()
+	if err != nil {
+		return ""
+	}
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			return ""
+		}
+		if part.FormName() == "file_name" {
+			body, _ := io.ReadAll(part)
+			return string(body)
+		}
+		_, _ = io.Copy(io.Discard, part)
 	}
 }
 
@@ -227,6 +249,36 @@ func TestFeishuSendMessage_BinaryAudioSuccess(t *testing.T) {
 	}
 	if len(sender.textCalls) != 0 {
 		t.Fatalf("unexpected text send for media-only success: %+v", sender.textCalls)
+	}
+}
+
+func TestFeishuSendMessage_BinaryFilePreservesFileName(t *testing.T) {
+	rt := &feishuUploadRoundTripper{}
+	installFeishuHTTPClientForTest(t, &http.Client{
+		Transport: rt,
+		Timeout:   3 * time.Second,
+	})
+
+	sender := &fakeFeishuSender{}
+	plugin := newFeishuPluginForSendTests(sender, newFeishuClientForSendTests())
+
+	_, err := plugin.SendMessage(channels.OutboundSendParams{
+		To:            "oc_chat_1",
+		MediaData:     []byte("# report\n"),
+		MediaFileName: "idlefish_agent_design.md",
+		MediaMimeType: "text/markdown",
+	})
+	if err != nil {
+		t.Fatalf("SendMessage unexpected error: %v", err)
+	}
+	if rt.fileUploadCount != 1 {
+		t.Fatalf("expected file upload, got %d", rt.fileUploadCount)
+	}
+	if len(rt.fileUploadNames) != 1 || rt.fileUploadNames[0] != "idlefish_agent_design.md" {
+		t.Fatalf("expected uploaded file name to be preserved, got %+v", rt.fileUploadNames)
+	}
+	if len(sender.fileCalls) != 1 || sender.fileCalls[0].key != "file-key-1" {
+		t.Fatalf("expected one file send with uploaded key, got %+v", sender.fileCalls)
 	}
 }
 

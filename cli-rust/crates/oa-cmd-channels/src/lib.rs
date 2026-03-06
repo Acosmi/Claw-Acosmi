@@ -1,4 +1,4 @@
-/// Channel management commands for OpenAcosmi CLI.
+/// Channel management commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands for listing, adding, removing, resolving,
 /// inspecting capabilities, viewing logs, and checking status of chat

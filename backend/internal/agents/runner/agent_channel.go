@@ -283,7 +283,7 @@ func RequestHelpToolDef() llmclient.ToolDef {
 }
 
 // ReportProgressToolDef 返回 report_progress 的 LLM 工具定义。
-// 智能体使用此工具主动汇报中间进度，实时推送到前端和远程渠道。
+// 智能体使用此工具主动汇报中间进度，更新实时事件流；最终结果仍需正常回复/投递。
 func ReportProgressToolDef() llmclient.ToolDef {
 	return llmclient.ToolDef{
 		Name: "report_progress",
@@ -291,7 +291,7 @@ func ReportProgressToolDef() llmclient.ToolDef {
 - After completing a significant step (e.g., finished reading files, built the code, ran tests)
 - When starting a new phase of work
 - When encountering delays or waiting for resources
-The report is non-blocking — the message is broadcast immediately and you continue working.`,
+This is best for real-time progress surfaces. It is not the final answer. Remote chat channels only receive these updates when the gateway entrypoint explicitly enables throttled progress delivery; otherwise assume live UI/task surfaces only. The report is non-blocking — the event is emitted immediately and you continue working.`,
 		InputSchema: json.RawMessage(`{
 	"type": "object",
 	"properties": {

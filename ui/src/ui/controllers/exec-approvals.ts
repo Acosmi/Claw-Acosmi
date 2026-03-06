@@ -3,6 +3,7 @@ import { cloneConfigObject, removePathValue, setPathValue } from "./config/form-
 
 export type ExecApprovalsDefaults = {
   security?: string;
+  escalationFallback?: "base" | "sandboxed";
   ask?: string;
   askFallback?: string;
   autoAllowSkills?: boolean;

@@ -92,6 +92,21 @@ type OpenAcosmiConfig struct {
 type SubAgentConfig struct {
 	ScreenObserver *ScreenObserverSettings `json:"screenObserver,omitempty"`
 	OpenCoder      *OpenCoderSettings      `json:"openCoder,omitempty"`
+	MediaAgent     *MediaAgentSettings     `json:"mediaAgent,omitempty"`
+}
+
+// MediaAgentSettings 媒体子智能体配置。
+type MediaAgentSettings struct {
+	AutoSpawnEnabled    bool     `json:"autoSpawnEnabled,omitempty"`    // 自动 spawn 开关（默认 false）
+	MaxAutoSpawnsPerDay int      `json:"maxAutoSpawnsPerDay,omitempty"` // 每日最大自动 spawn 次数（默认 5）
+	Provider            string   `json:"provider,omitempty"`            // LLM provider: "deepseek"/"anthropic" 等
+	Model               string   `json:"model,omitempty"`               // LLM model: "deepseek-chat" 等
+	APIKey              string   `json:"apiKey,omitempty"`              // 独立 API key（自动脱敏）
+	BaseURL             string   `json:"baseUrl,omitempty"`             // OpenAI 兼容端点
+	EnabledSources      []string `json:"enabledSources,omitempty"`      // 启用的热点源（空=全部启用）
+	EnablePublish       *bool    `json:"enablePublish,omitempty"`       // 是否启用发布工具（nil=默认true）
+	EnableInteract      *bool    `json:"enableInteract,omitempty"`      // 是否启用互动工具（nil=默认false）
+	WizardCompleted     bool     `json:"wizardCompleted,omitempty"`     // 向导是否已完成
 }
 
 // OpenCoderSettings open-coder 编程子智能体独立配置。

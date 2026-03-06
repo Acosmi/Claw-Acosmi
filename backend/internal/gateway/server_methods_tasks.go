@@ -18,17 +18,22 @@ func TaskKanbanHandlers() map[string]GatewayMethodHandler {
 
 // TaskListEntry tasks.list 响应条目。
 type TaskListEntry struct {
-	TaskID      string `json:"taskId"`
-	SessionKey  string `json:"sessionKey"`
-	Text        string `json:"text"`
-	Status      string `json:"status"`
-	Async       bool   `json:"async,omitempty"`
-	Summary     string `json:"summary,omitempty"`
-	Error       string `json:"error,omitempty"`
-	ToolName    string `json:"toolName,omitempty"`
-	QueuedAt    int64  `json:"queuedAt"`
-	StartedAt   int64  `json:"startedAt,omitempty"`
-	CompletedAt int64  `json:"completedAt,omitempty"`
+	TaskID       string `json:"taskId"`
+	SessionKey   string `json:"sessionKey"`
+	Text         string `json:"text"`
+	Status       string `json:"status"`
+	Async        bool   `json:"async,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	Error        string `json:"error,omitempty"`
+	ToolName     string `json:"toolName,omitempty"`
+	Phase        string `json:"phase,omitempty"`
+	ProgressText string `json:"progressText,omitempty"`
+	IsError      bool   `json:"isError,omitempty"`
+	Duration     int64  `json:"duration,omitempty"`
+	QueuedAt     int64  `json:"queuedAt"`
+	ProgressAt   int64  `json:"progressAt,omitempty"`
+	StartedAt    int64  `json:"startedAt,omitempty"`
+	CompletedAt  int64  `json:"completedAt,omitempty"`
 }
 
 func handleTasksList(ctx *MethodHandlerContext) {
@@ -45,6 +50,7 @@ func handleTasksList(ctx *MethodHandlerContext) {
 	}
 
 	statusFilter, _ := ctx.Params["status"].(string)
+	taskIDFilter, _ := ctx.Params["taskId"].(string)
 
 	entries := store.List()
 	var tasks []TaskListEntry
@@ -61,19 +67,27 @@ func handleTasksList(ctx *MethodHandlerContext) {
 		}
 
 		taskId := strings.TrimPrefix(entry.SessionKey, "task:")
+		if taskIDFilter != "" && taskId != taskIDFilter {
+			continue
+		}
 
 		tasks = append(tasks, TaskListEntry{
-			TaskID:      taskId,
-			SessionKey:  entry.SessionKey,
-			Text:        entry.Label,
-			Status:      entry.TaskMeta.Status,
-			Async:       entry.TaskMeta.Async,
-			Summary:     entry.TaskMeta.Summary,
-			Error:       entry.TaskMeta.Error,
-			ToolName:    entry.TaskMeta.ToolName,
-			QueuedAt:    entry.CreatedAt,
-			StartedAt:   entry.TaskMeta.StartedAt,
-			CompletedAt: entry.TaskMeta.CompletedAt,
+			TaskID:       taskId,
+			SessionKey:   entry.SessionKey,
+			Text:         entry.Label,
+			Status:       entry.TaskMeta.Status,
+			Async:        entry.TaskMeta.Async,
+			Summary:      entry.TaskMeta.Summary,
+			Error:        entry.TaskMeta.Error,
+			ToolName:     entry.TaskMeta.ToolName,
+			Phase:        entry.TaskMeta.ProgressPhase,
+			ProgressText: entry.TaskMeta.ProgressText,
+			IsError:      entry.TaskMeta.ProgressIsError,
+			Duration:     entry.TaskMeta.ProgressDuration,
+			QueuedAt:     entry.CreatedAt,
+			ProgressAt:   entry.TaskMeta.ProgressAt,
+			StartedAt:    entry.TaskMeta.StartedAt,
+			CompletedAt:  entry.TaskMeta.CompletedAt,
 		})
 	}
 

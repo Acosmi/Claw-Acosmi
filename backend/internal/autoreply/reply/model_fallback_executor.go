@@ -116,6 +116,7 @@ func (e *ModelFallbackExecutor) RunTurn(ctx context.Context, params AgentTurnPar
 				SecurityLevelFunc:   e.SecurityLevelFunc,
 				MountRequestsFunc:   e.MountRequestsFunc,
 				OnToolEvent:         e.OnToolEvent,
+				OnProgress:          params.OnProgress,
 			}, e.RunnerDeps)
 		},
 		func(fbProvider, fbModel string, fbErr error, attempt, total int) {

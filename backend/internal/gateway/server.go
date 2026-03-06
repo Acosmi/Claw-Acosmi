@@ -308,12 +308,13 @@ type mediaSenderAdapter struct {
 	channelMgr *channels.Manager
 }
 
-func (a *mediaSenderAdapter) SendMedia(ctx context.Context, channelID, to string, data []byte, mimeType, message string) error {
+func (a *mediaSenderAdapter) SendMedia(ctx context.Context, channelID, to string, data []byte, fileName, mimeType, message string) error {
 	_, err := a.channelMgr.SendMessage(channels.ChannelID(channelID), channels.OutboundSendParams{
 		Ctx:           ctx,
 		To:            to,
 		Text:          message,
 		MediaData:     data,
+		MediaFileName: fileName,
 		MediaMimeType: mimeType,
 	})
 	return err
@@ -666,6 +667,39 @@ func resolveArgusConfig(cfg *types.OpenAcosmiConfig) (provider, model, apiKey, b
 	return
 }
 
+// resolveMediaConfig 解析媒体子智能体的 provider/model/apiKey/baseURL。
+// 三级 fallback: 1) subAgents.mediaAgent 显式配置 → 2) agents.defaults.model.primary → 3) 硬编码默认值
+func resolveMediaConfig(cfg *types.OpenAcosmiConfig) (provider, model, apiKey, baseURL string) {
+	// Level 3: 硬编码默认值
+	provider = runner.DefaultProvider // "anthropic"
+	model = runner.DefaultModel       // "claude-sonnet-4-20250514"
+
+	// Level 2: 主 agent 默认配置
+	if cfg != nil && cfg.Agents != nil && cfg.Agents.Defaults != nil &&
+		cfg.Agents.Defaults.Model != nil && cfg.Agents.Defaults.Model.Primary != "" {
+		primary := cfg.Agents.Defaults.Model.Primary
+		if parts := strings.SplitN(primary, "/", 2); len(parts) == 2 {
+			provider, model = parts[0], parts[1]
+		} else {
+			model = primary
+		}
+	}
+
+	// Level 1: mediaAgent 显式配置（最高优先级）
+	if cfg != nil && cfg.SubAgents != nil && cfg.SubAgents.MediaAgent != nil {
+		ma := cfg.SubAgents.MediaAgent
+		if ma.Provider != "" {
+			provider = ma.Provider
+		}
+		if ma.Model != "" {
+			model = ma.Model
+		}
+		apiKey = ma.APIKey
+		baseURL = ma.BaseURL
+	}
+	return
+}
+
 // configToUHMSConfig converts types.MemoryUHMSConfig → uhms.UHMSConfig.
 func configToUHMSConfig(c *types.MemoryUHMSConfig) uhms.UHMSConfig {
 	cfg := uhms.DefaultUHMSConfig()
@@ -937,8 +971,8 @@ const coldStartIdentity = `
 [Cold Start — 首次对话]
 这是系统重启后的第一次对话，无历史上下文。
 如果用户发来问候（你好/hi/hello），请做一次完整自我介绍（3-5 句话）：
-  - 你的名字：创宇太虚（Claw Acismi）
-  - 你是什么：运行于 OpenAcosmi 的多模态 AI 代理
+  - 你的名字：创宇太虚（Claw Acosmi）
+  - 你是什么：运行于 Claw Acosmi 的多模态 AI 代理
   - 你能做什么：截屏分析、执行命令、搜索网页、读写文件、发送消息、管理记忆等
   - 你的接入渠道：飞书、网页、API
   - 用一句话邀请用户告诉你需要做什么
@@ -996,6 +1030,10 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	// ---------- 1. 创建运行时状态 ----------
 	state := NewGatewayState()
 	state.SetPhase(BootPhaseStarting)
+	if escMgr := state.EscalationMgr(); escMgr != nil {
+		// 默认启用 L3 提权上限，实际是否长期保持 L3 由 base level/审批策略决定。
+		escMgr.SetMaxAllowedLevel(string(infra.ExecSecurityFull))
+	}
 
 	// ---------- 1b. 启用文件日志 ----------
 	applog.EnableFileLogging("")
@@ -1205,16 +1243,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		loadedCfg = cfg
 	}
 
-	// ---------- 4a-wizard. 注册 Wizard 方法（替代 stub） ----------
-	wizardTracker := NewWizardSessionTracker()
-	registry.RegisterAll(WizardHandlers(WizardHandlerDeps{
-		Tracker:      wizardTracker,
-		ConfigLoader: cfgLoader,
-		ModelCatalog: modelCatalog,
-		State:        state,
-	}))
-
-	// 注册 Wizard V2 配置应用方法
+	// ---------- 4a-wizard. 注册 Wizard V2 方法 ----------
 	registry.Register("wizard.v2.providers.list", WizardV2ProvidersListHandler())
 	registry.Register("wizard.v2.apply", WizardV2ApplyHandler())
 	registry.Register("wizard.v2.oauth", WizardV2OAuthHandler())
@@ -1414,10 +1443,25 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	{
 		mediaWorkspace := config.ResolveStateDir()
 		var mErr error
+		// 从配置读取媒体子系统设置
+		mediaEnablePublish := true
+		mediaEnableInteract := false // nil=默认false（与 types_openacosmi.go 注释一致）
+		var mediaEnabledSources []string
+		if loadedCfg != nil && loadedCfg.SubAgents != nil && loadedCfg.SubAgents.MediaAgent != nil {
+			ma := loadedCfg.SubAgents.MediaAgent
+			if ma.EnablePublish != nil {
+				mediaEnablePublish = *ma.EnablePublish
+			}
+			if ma.EnableInteract != nil {
+				mediaEnableInteract = *ma.EnableInteract
+			}
+			mediaEnabledSources = ma.EnabledSources
+		}
 		mediaSub, mErr = media.NewMediaSubsystem(media.MediaSubsystemConfig{
 			Workspace:      mediaWorkspace,
-			EnablePublish:  true,
-			EnableInteract: true,
+			EnablePublish:  mediaEnablePublish,
+			EnableInteract: mediaEnableInteract,
+			EnabledSources: mediaEnabledSources,
 		})
 		if mErr != nil {
 			slog.Warn("media subsystem init failed (non-fatal)", "error", mErr)
@@ -1427,6 +1471,10 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			slog.Info("media subsystem configured for agent", "tools", mediaSub.ToolNames())
 		}
 	}
+
+	// MediaEventManager — 媒体事件触发器管理（Phase 3: 心跳巡检）
+	var mediaEventMgr *media.MediaEventManager
+	_ = mediaEventMgr // 后续 cron 注册后使用
 
 	// 注入联网搜索 Provider（博查搜索）
 	if loadedCfg != nil && loadedCfg.Tools != nil && loadedCfg.Tools.Web != nil && loadedCfg.Tools.Web.Search != nil {
@@ -1579,10 +1627,13 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 
 		// Phase 5: 按 AgentType 分流模型配置解析
 		var subProvider, subModel, subAPIKey, subBaseURL string
-		if sp.AgentType == "argus" {
+		switch sp.AgentType {
+		case "argus":
 			subProvider, subModel, subAPIKey, subBaseURL = resolveArgusConfig(currentCfg)
-		} else {
-			// coder / media / 其他 — 统一使用 Open Coder 配置
+		case "media":
+			subProvider, subModel, subAPIKey, subBaseURL = resolveMediaConfig(currentCfg)
+		default:
+			// coder / 其他 — 使用 Open Coder 配置
 			subProvider, subModel, subAPIKey, subBaseURL = resolveOpenCoderConfig(currentCfg)
 		}
 
@@ -1832,15 +1883,56 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 					if tool == "bash" || tool == "write_file" || tool == "write" || tool == "edit" {
 						escLevel = "sandboxed"
 					}
-					// Design Fix 2: effective level 已满足则跳过提权
+
+					// 路径放行扩展：路径型工具指向绝对路径时，自动携带最小目录范围的临时放行审批请求。
+					var mountRequests []MountRequest
+					if tool == "write_file" || tool == "send_media" {
+						pathCandidate := strings.TrimSpace(detail)
+						if pathCandidate != "" && filepath.IsAbs(pathCandidate) {
+							mountPath := filepath.Clean(pathCandidate)
+							if fi, err := os.Stat(mountPath); err == nil && !fi.IsDir() {
+								mountPath = filepath.Dir(mountPath)
+							} else if filepath.Ext(mountPath) != "" {
+								mountPath = filepath.Dir(mountPath)
+							}
+							if mountPath != "/" && mountPath != "." {
+								mode := "ro"
+								if tool == "write_file" {
+									mode = "rw"
+								}
+								mountRequests = []MountRequest{{HostPath: mountPath, MountMode: mode}}
+							}
+						}
+					}
+
 					effectiveLevel := escMgr.GetEffectiveLevel()
-					if infra.LevelOrder(infra.ExecSecurity(effectiveLevel)) >= infra.LevelOrder(infra.ExecSecurity(escLevel)) {
+					effectiveRank := infra.LevelOrder(infra.ExecSecurity(effectiveLevel))
+					if len(mountRequests) > 0 && effectiveLevel != "" && effectiveLevel != string(infra.ExecSecurityDeny) &&
+						effectiveRank > infra.LevelOrder(infra.ExecSecurity(escLevel)) {
+						escLevel = effectiveLevel
+					}
+
+					// Design Fix 2: effective level 已满足则跳过提权。
+					// 例外：同级路径放行扩展请求（mountRequests 非空）仍需审批。
+					effectiveRank = infra.LevelOrder(infra.ExecSecurity(effectiveLevel))
+					neededRank := infra.LevelOrder(infra.ExecSecurity(escLevel))
+					needsMountExtension := len(mountRequests) > 0 && effectiveRank >= neededRank
+					if effectiveRank >= neededRank && !needsMountExtension {
 						slog.Debug("auto-escalation skipped: effective level already sufficient",
 							"effective", effectiveLevel, "needed", escLevel)
 					} else {
 						reason := fmt.Sprintf("工具 %s 需要权限: %s", tool, truncateStr(detail, 200))
+						if len(mountRequests) > 0 {
+							reason = fmt.Sprintf("工具 %s 需要临时挂载: %s", tool, mountRequests[0].HostPath)
+						}
 						escId := fmt.Sprintf("esc_auto_%d", time.Now().UnixNano())
-						if err := escMgr.RequestEscalation(escId, escLevel, reason, "", "", msgCtx.ChannelID, msgCtx.SenderID, 30); err != nil {
+						originatorChatID := ""
+						originatorUserID := ""
+						if msgCtx != nil {
+							originatorChatID = msgCtx.ChannelID
+							originatorUserID = msgCtx.SenderID
+						}
+						if err := escMgr.RequestEscalation(escId, escLevel, reason, "", "", originatorChatID, originatorUserID, 30, mountRequests...); err != nil {
 							slog.Debug("auto-escalation skipped (expected if already pending)", "error", err)
 						}
 					}
@@ -2053,6 +2145,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 					MsgCtx:     msgCtx,
 					SessionKey: sessionKey,
 					Dispatcher: pipelineDispatcher,
+					OnProgress: buildMsgContextProgressCallback(state, msgCtx),
 				})
 
 				var replyText string
@@ -2261,6 +2354,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 					MsgCtx:     msgCtx,
 					SessionKey: sessionKey,
 					Dispatcher: pipelineDispatcher,
+					OnProgress: buildMsgContextProgressCallback(state, msgCtx),
 				})
 
 				var reply string
@@ -2462,6 +2556,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 					MsgCtx:     msgCtx,
 					SessionKey: sessionKey,
 					Dispatcher: pipelineDispatcher,
+					OnProgress: buildMsgContextProgressCallback(state, msgCtx),
 				})
 
 				var reply string
@@ -2752,6 +2847,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	}
 
 	// ---------- 4f. 创建 CronService ----------
+	mediaCronJobIDs := make(map[string]string) // Phase 3+4: 媒体巡检 job ID → job name 映射
 	cronStorePath := filepath.Join(storePath, "cron", "jobs.json")
 	cronSvc := cron.NewCronService(cron.CronServiceDeps{
 		StorePath: cronStorePath,
@@ -2760,6 +2856,23 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			bc := state.Broadcaster()
 			if bc != nil {
 				bc.Broadcast("cron.event", event, nil)
+				// Phase 3: 媒体巡检心跳 — 检查 job ID 是否属于媒体巡检
+				if jobName, ok := mediaCronJobIDs[event.JobID]; ok && event.JobID != "" {
+					if event.Kind == cron.EventKindJobRun || event.Kind == cron.EventKindJobDone || event.Kind == cron.EventKindJobError {
+						bc.Broadcast("media.heartbeat", map[string]any{
+							"jobId": event.JobID,
+							"kind":  string(event.Kind),
+							"error": event.Error,
+						}, nil)
+					}
+					// Phase 4: 仅热点巡检完成时广播 auto_spawn 事件通知前端
+					if event.Kind == cron.EventKindJobDone && jobName == "media.patrol.trending" {
+						bc.Broadcast("media.auto_spawn", map[string]any{
+							"jobId":  event.JobID,
+							"status": "completed",
+						}, nil)
+					}
+				}
 			}
 		},
 		EnqueueSystemEvent: func(text string) error {
@@ -2777,6 +2890,22 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		} else {
 			slog.Info("gateway: cron service started")
 		}
+	}
+
+	// ---------- 4f-2. 注册媒体巡检 Cron 任务 (Phase 3) ----------
+	if mediaSub != nil && !config.SkipCron {
+		cronCfg := media.DefaultMediaCronConfig()
+		jobRefs, err := media.RegisterMediaCronJobs(cronSvc, cronCfg)
+		if err != nil {
+			slog.Warn("gateway: media cron jobs registration failed (non-fatal)", "error", err)
+		} else if len(jobRefs) > 0 {
+			for _, ref := range jobRefs {
+				mediaCronJobIDs[ref.JobID] = ref.JobName
+			}
+			slog.Info("gateway: media cron jobs registered", "count", len(jobRefs))
+		}
+
+		mediaEventMgr = media.NewMediaEventManager()
 	}
 
 	// ---------- 4g. 创建技能商店客户端 ----------
@@ -2950,7 +3079,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			return
 		}
 		SendJSON(w, http.StatusOK, map[string]interface{}{
-			"name":    "OpenAcosmi Gateway",
+			"name":    "Claw Acosmi Gateway",
 			"version": cli.Version,
 			"status":  "ok",
 		})
@@ -3165,6 +3294,20 @@ func handleFeishuEscalationAction(state *GatewayState, escalationID, actionStr s
 		slog.Warn("feishu card action: escalation manager not available")
 		return &callback.CardActionTriggerResponse{
 			Toast: &callback.Toast{Type: "error", Content: "审批系统未初始化"},
+		}, nil
+	}
+	// 防止历史卡片误处理当前 pending 请求。
+	pendingID := escMgr.GetPendingID()
+	if pendingID == "" {
+		slog.Warn("feishu card action: no pending escalation", "id", escalationID, "action", actionStr)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "warning", Content: "审批请求已过期或已处理"},
+		}, nil
+	}
+	if pendingID != escalationID {
+		slog.Warn("feishu card action: escalation id mismatch", "expected", pendingID, "got", escalationID, "action", actionStr)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "warning", Content: "卡片已过期，请使用最新审批卡片"},
 		}, nil
 	}
 

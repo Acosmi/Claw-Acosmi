@@ -247,7 +247,7 @@ async fn build_status_all_lines(scan: &StatusScanResult) -> Vec<String> {
     lines.push(Theme::muted(
         "Pasteable debug report. Auth tokens redacted.",
     ));
-    lines.push("Troubleshooting: https://github.com/Acosmi/Claw-Acismi/tree/main/docs/skills/general/troubleshooting".to_string());
+    lines.push("Troubleshooting: https://github.com/Acosmi/Claw-Acosmi/tree/main/docs/skills/general/troubleshooting".to_string());
     lines.push(String::new());
 
     lines

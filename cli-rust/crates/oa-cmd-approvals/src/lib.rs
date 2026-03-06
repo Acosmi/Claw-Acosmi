@@ -1,4 +1,4 @@
-/// Exec approval management commands for OpenAcosmi CLI.
+/// Exec approval management commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands: get, set, allowlist add/remove.
 ///

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Acosmi/ClawAcosmi/internal/cli"
 	"github.com/Acosmi/ClawAcosmi/internal/config"
 	"github.com/Acosmi/ClawAcosmi/internal/gateway"
 	"github.com/Acosmi/ClawAcosmi/pkg/i18n"
@@ -46,6 +47,10 @@ func main() {
 
 	// 初始化日志系统
 	logger := log.New("acosmi")
+
+	// 输出彩色启动 Logo
+	cli.EmitBanner()
+
 	logger.Info(i18n.T("app.starting", map[string]string{"version": version}))
 
 	// 注入构建版本到 config 包

@@ -1,6 +1,6 @@
 /// Configuration guard for ensuring valid config before command execution.
 ///
-/// Validates that the OpenAcosmi configuration file exists and is parseable
+/// Validates that the Claw Acosmi configuration file exists and is parseable
 /// before allowing a command to proceed. Certain safe commands (e.g.,
 /// `doctor`, `health`, `status`) bypass validation.
 ///

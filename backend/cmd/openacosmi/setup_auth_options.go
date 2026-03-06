@@ -31,7 +31,7 @@ var authChoiceGroupDefs = []authChoiceGroupDef{
 	{GroupQwen, "Qwen", "OAuth", []AuthChoice{AuthChoiceQwenPortal}},
 	{GroupZAI, "Z.AI (GLM)", "API key", []AuthChoice{AuthChoiceZaiApiKey}},
 	{GroupCopilot, "GitHub Copilot", "GitHub device login", []AuthChoice{AuthChoiceGitHubCopilot}},
-	{GroupAcosmiZen, "OpenAcosmi Zen", "API key", []AuthChoice{AuthChoiceAcosmiZen}},
+	{GroupAcosmiZen, "Claw Acosmi Zen", "API key", []AuthChoice{AuthChoiceAcosmiZen}},
 }
 
 // ---------- 选项构建 ----------
@@ -53,7 +53,7 @@ var allAuthChoiceOptionDefs = []AuthChoiceOption{
 	{AuthChoiceMinimaxApi, "MiniMax M2.1", ""},
 	{AuthChoiceMinimaxApiLightning, "MiniMax M2.1 Lightning", "Faster, higher output cost"},
 	{AuthChoiceQwenPortal, "Qwen OAuth", ""},
-	{AuthChoiceAcosmiZen, "OpenAcosmi Zen (multi-model proxy)", "Claude, GPT, Gemini via openacosmi.com/zen"},
+	{AuthChoiceAcosmiZen, "Claw Acosmi Zen (multi-model proxy)", "Claude, GPT, Gemini via openacosmi.com/zen"},
 }
 
 // BuildAuthChoiceOptions 构建完整选项列表。

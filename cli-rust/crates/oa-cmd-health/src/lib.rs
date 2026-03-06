@@ -1,4 +1,4 @@
-/// Health check commands for OpenAcosmi CLI.
+/// Health check commands for Claw Acosmi CLI.
 ///
 /// Provides the `health` command that queries the running gateway for health
 /// status, displays channel probes, agent heartbeat intervals, session store

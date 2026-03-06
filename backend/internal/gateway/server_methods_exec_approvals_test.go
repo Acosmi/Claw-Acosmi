@@ -141,9 +141,9 @@ func TestExecApprovalsHandlers_SetConflict(t *testing.T) {
 	}
 }
 
-// ---------- exec.approvals.node.get (stub) ----------
+// ---------- exec.approvals.node.get / node.set ----------
 
-func TestExecApprovalsHandlers_NodeGetStub(t *testing.T) {
+func TestExecApprovalsHandlers_NodeGetUnsupported(t *testing.T) {
 	r := NewMethodRegistry()
 	r.RegisterAll(ExecApprovalsHandlers())
 
@@ -151,18 +151,20 @@ func TestExecApprovalsHandlers_NodeGetStub(t *testing.T) {
 		"nodeId": "test-node",
 	}}
 	var gotOK bool
-	var gotPayload interface{}
-	respond := func(ok bool, payload interface{}, _ *ErrorShape) {
+	var gotErr *ErrorShape
+	respond := func(ok bool, _ interface{}, err *ErrorShape) {
 		gotOK = ok
-		gotPayload = payload
+		gotErr = err
 	}
 	HandleGatewayRequest(r, req, nil, &GatewayMethodContext{}, respond)
-	if !gotOK {
-		t.Fatal("exec.approvals.node.get should succeed (stub)")
+	if gotOK {
+		t.Fatal("exec.approvals.node.get should fail with unsupported_feature")
 	}
-	result := gotPayload.(map[string]interface{})
-	if result["stub"] != true {
-		t.Error("expected stub=true")
+	if gotErr == nil || gotErr.Code != ErrCodeUnsupportedFeature {
+		t.Fatalf("expected unsupported_feature, got %v", gotErr)
+	}
+	if gotErr.Details == nil {
+		t.Fatal("expected details on unsupported node approvals error")
 	}
 }
 
@@ -183,6 +185,29 @@ func TestExecApprovalsHandlers_NodeGetMissingNodeId(t *testing.T) {
 	}
 	if gotErr == nil || gotErr.Code != ErrCodeBadRequest {
 		t.Errorf("expected bad_request, got %v", gotErr)
+	}
+}
+
+func TestExecApprovalsHandlers_NodeSetUnsupported(t *testing.T) {
+	r := NewMethodRegistry()
+	r.RegisterAll(ExecApprovalsHandlers())
+
+	req := &RequestFrame{Method: "exec.approvals.node.set", Params: map[string]interface{}{
+		"nodeId": "test-node",
+		"file":   map[string]interface{}{"version": float64(1)},
+	}}
+	var gotOK bool
+	var gotErr *ErrorShape
+	respond := func(ok bool, _ interface{}, err *ErrorShape) {
+		gotOK = ok
+		gotErr = err
+	}
+	HandleGatewayRequest(r, req, nil, &GatewayMethodContext{}, respond)
+	if gotOK {
+		t.Fatal("exec.approvals.node.set should fail with unsupported_feature")
+	}
+	if gotErr == nil || gotErr.Code != ErrCodeUnsupportedFeature {
+		t.Fatalf("expected unsupported_feature, got %v", gotErr)
 	}
 }
 

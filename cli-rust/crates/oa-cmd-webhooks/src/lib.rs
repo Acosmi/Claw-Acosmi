@@ -1,4 +1,4 @@
-/// Webhook and Gmail Pub/Sub integration commands for OpenAcosmi CLI.
+/// Webhook and Gmail Pub/Sub integration commands for Claw Acosmi CLI.
 ///
 /// Provides subcommands: list, test, gmail (setup/run).
 ///

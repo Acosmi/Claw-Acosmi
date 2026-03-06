@@ -2,7 +2,7 @@
 ///
 /// Generates and persists a unique device identity based on a SHA-256 hash
 /// of system information (hostname, OS, etc.) combined with a UUID salt.
-/// The identity is stored as a JSON file in the OpenAcosmi state directory.
+/// The identity is stored as a JSON file in the Claw Acosmi state directory.
 ///
 /// Source: `src/infra/device-identity.ts`
 

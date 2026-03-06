@@ -13,6 +13,7 @@ package gateway
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"path/filepath"
 	"strings"
 )
 
@@ -58,11 +59,12 @@ func handleEscalationRequest(ctx *MethodHandlerContext) {
 	if ttlRaw, ok := ctx.Params["ttlMinutes"].(float64); ok && ttlRaw > 0 {
 		ttlMinutes = int(ttlRaw)
 	}
+	mountRequests := parseMountRequests(ctx.Params["mountRequests"])
 
 	// 生成请求 ID
 	id := generateEscalationID()
 
-	if err := mgr.RequestEscalation(id, level, reason, runID, sessionID, originatorChatID, originatorUserID, ttlMinutes); err != nil {
+	if err := mgr.RequestEscalation(id, level, reason, runID, sessionID, originatorChatID, originatorUserID, ttlMinutes, mountRequests...); err != nil {
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, err.Error()))
 		return
 	}
@@ -71,6 +73,7 @@ func handleEscalationRequest(ctx *MethodHandlerContext) {
 		"id":             id,
 		"requestedLevel": level,
 		"ttlMinutes":     ttlMinutes,
+		"mountRequests":  mountRequests,
 		"status":         "pending",
 	}, nil)
 }
@@ -183,4 +186,36 @@ func generateEscalationID() string {
 	buf := make([]byte, 8)
 	_, _ = rand.Read(buf)
 	return "esc_" + hex.EncodeToString(buf)
+}
+
+func parseMountRequests(raw interface{}) []MountRequest {
+	items, ok := raw.([]interface{})
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	out := make([]MountRequest, 0, len(items))
+	for _, item := range items {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		hostPath, _ := m["hostPath"].(string)
+		hostPath = strings.TrimSpace(hostPath)
+		if hostPath == "" || !filepath.IsAbs(hostPath) {
+			continue
+		}
+		mode, _ := m["mountMode"].(string)
+		mode = strings.ToLower(strings.TrimSpace(mode))
+		if mode != "rw" {
+			mode = "ro"
+		}
+		out = append(out, MountRequest{
+			HostPath:  filepath.Clean(hostPath),
+			MountMode: mode,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

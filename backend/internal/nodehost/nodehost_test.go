@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Acosmi/ClawAcosmi/internal/infra"
 )
 
 // ---------- config_test ----------
@@ -332,6 +334,201 @@ func TestNodeHostService_HandleWhich(t *testing.T) {
 	}
 }
 
+func TestNodeHostService_HandleSystemRun_DeniesAllowlistMiss(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix only")
+	}
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	if err := infra.SaveExecApprovals(&infra.ExecApprovalsFile{
+		Version: 1,
+		Defaults: &infra.ExecApprovalsDefaults{
+			Security: infra.ExecSecurityAllowlist,
+			Ask:      infra.ExecAskOff,
+		},
+		Agents: map[string]*infra.ExecApprovalsAgent{},
+	}); err != nil {
+		t.Fatalf("save exec approvals: %v", err)
+	}
+
+	var sent []capturedNodeRequest
+	svc := NewNodeHostService(
+		&Config{Version: 1, NodeID: "test"},
+		nil,
+		func(method string, params interface{}) error {
+			sent = append(sent, capturedNodeRequest{method: method, params: params})
+			return nil
+		},
+		nil,
+	)
+	svc.logger = newTestLogger()
+
+	frame := &NodeInvokeRequest{
+		ID:      "inv-allowlist-miss",
+		NodeID:  "n-1",
+		Command: "system.run",
+		ParamsJSON: `{
+			"command":["/bin/echo","hello"],
+			"rawCommand":"/bin/echo hello",
+			"agentId":"main",
+			"sessionKey":"sess-1",
+			"runId":"run-1"
+		}`,
+	}
+
+	svc.handleSystemRun(frame)
+
+	result := findInvokeResult(t, sent)
+	if result.OK {
+		t.Fatal("expected system.run allowlist miss to be denied")
+	}
+	if result.Error == nil || result.Error.Code != "FORBIDDEN" {
+		t.Fatalf("expected FORBIDDEN error, got %+v", result.Error)
+	}
+	if result.Error == nil || !strings.Contains(result.Error.Message, "allowlist miss") {
+		t.Fatalf("expected allowlist miss error message, got %+v", result.Error)
+	}
+	if event := findNodeEvent(t, sent); event != "exec.denied" {
+		t.Fatalf("expected exec.denied event, got %q", event)
+	}
+}
+
+func TestNodeHostService_HandleSystemRun_AllowsApprovedAllowOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix only")
+	}
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	if err := infra.SaveExecApprovals(&infra.ExecApprovalsFile{
+		Version: 1,
+		Defaults: &infra.ExecApprovalsDefaults{
+			Security: infra.ExecSecurityAllowlist,
+			Ask:      infra.ExecAskOnMiss,
+		},
+		Agents: map[string]*infra.ExecApprovalsAgent{},
+	}); err != nil {
+		t.Fatalf("save exec approvals: %v", err)
+	}
+
+	var sent []capturedNodeRequest
+	svc := NewNodeHostService(
+		&Config{Version: 1, NodeID: "test"},
+		nil,
+		func(method string, params interface{}) error {
+			sent = append(sent, capturedNodeRequest{method: method, params: params})
+			return nil
+		},
+		nil,
+	)
+	svc.logger = newTestLogger()
+
+	frame := &NodeInvokeRequest{
+		ID:      "inv-approved-once",
+		NodeID:  "n-1",
+		Command: "system.run",
+		ParamsJSON: `{
+			"command":["/bin/echo","hello"],
+			"rawCommand":"/bin/echo hello",
+			"agentId":"main",
+			"sessionKey":"sess-1",
+			"runId":"run-2",
+			"approved":true,
+			"approvalDecision":"allow-once"
+		}`,
+	}
+
+	svc.handleSystemRun(frame)
+
+	result := findInvokeResult(t, sent)
+	if !result.OK {
+		t.Fatalf("expected approved system.run to succeed, got %+v", result.Error)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(result.PayloadJSON), &payload); err != nil {
+		t.Fatalf("unmarshal invoke payload: %v", err)
+	}
+	if success, _ := payload["success"].(bool); !success {
+		t.Fatalf("expected success payload, got %+v", payload)
+	}
+	if stdout, _ := payload["stdout"].(string); strings.TrimSpace(stdout) != "hello" {
+		t.Fatalf("expected stdout=hello, got %+v", payload)
+	}
+	if event := findNodeEvent(t, sent); event != "exec.finished" {
+		t.Fatalf("expected exec.finished event, got %q", event)
+	}
+}
+
+func TestNodeHostService_HandleSystemRun_PersistsAllowAlways(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix only")
+	}
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	if err := infra.SaveExecApprovals(&infra.ExecApprovalsFile{
+		Version: 1,
+		Defaults: &infra.ExecApprovalsDefaults{
+			Security: infra.ExecSecurityAllowlist,
+			Ask:      infra.ExecAskOnMiss,
+		},
+		Agents: map[string]*infra.ExecApprovalsAgent{},
+	}); err != nil {
+		t.Fatalf("save exec approvals: %v", err)
+	}
+
+	var sent []capturedNodeRequest
+	svc := NewNodeHostService(
+		&Config{Version: 1, NodeID: "test"},
+		nil,
+		func(method string, params interface{}) error {
+			sent = append(sent, capturedNodeRequest{method: method, params: params})
+			return nil
+		},
+		nil,
+	)
+	svc.logger = newTestLogger()
+
+	frame := &NodeInvokeRequest{
+		ID:      "inv-approved-always",
+		NodeID:  "n-1",
+		Command: "system.run",
+		ParamsJSON: `{
+			"command":["/bin/echo","hello"],
+			"rawCommand":"/bin/echo hello",
+			"agentId":"main",
+			"sessionKey":"sess-1",
+			"runId":"run-3",
+			"approved":true,
+			"approvalDecision":"allow-always"
+		}`,
+	}
+
+	svc.handleSystemRun(frame)
+
+	result := findInvokeResult(t, sent)
+	if !result.OK {
+		t.Fatalf("expected allow-always system.run to succeed, got %+v", result.Error)
+	}
+
+	snapshot := infra.ReadExecApprovalsSnapshot()
+	agent := snapshot.File.Agents["main"]
+	if agent == nil {
+		t.Fatal("expected main agent approvals after allow-always")
+	}
+	found := false
+	for _, entry := range agent.Allowlist {
+		if entry.Pattern == "/bin/echo" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected /bin/echo in allowlist after allow-always, got %+v", agent.Allowlist)
+	}
+}
+
 // ---------- config file permission test ----------
 
 func TestConfigFilePermissions(t *testing.T) {
@@ -360,4 +557,43 @@ func TestConfigFilePermissions(t *testing.T) {
 
 func newTestLogger() *slog.Logger {
 	return slog.Default()
+}
+
+type capturedNodeRequest struct {
+	method string
+	params interface{}
+}
+
+func findInvokeResult(t *testing.T, sent []capturedNodeRequest) *InvokeResult {
+	t.Helper()
+	for _, entry := range sent {
+		if entry.method == "node.invoke.result" {
+			result, ok := entry.params.(*InvokeResult)
+			if !ok {
+				t.Fatalf("expected *InvokeResult, got %T", entry.params)
+			}
+			return result
+		}
+	}
+	t.Fatal("missing node.invoke.result")
+	return nil
+}
+
+func findNodeEvent(t *testing.T, sent []capturedNodeRequest) string {
+	t.Helper()
+	for _, entry := range sent {
+		if entry.method != "node.event" {
+			continue
+		}
+		params, ok := entry.params.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected map params for node.event, got %T", entry.params)
+		}
+		event, _ := params["event"].(string)
+		if event != "" {
+			return event
+		}
+	}
+	t.Fatal("missing node.event")
+	return ""
 }

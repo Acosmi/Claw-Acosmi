@@ -1,7 +1,7 @@
-/// Daemon service management for OpenAcosmi CLI.
+/// Daemon service management for Claw Acosmi CLI.
 ///
 /// Handles launchd (macOS) and systemd (Linux) service management
-/// for the OpenAcosmi gateway and node services. Uses conditional
+/// for the Claw Acosmi gateway and node services. Uses conditional
 /// compilation for platform-specific code.
 ///
 /// Source: `src/daemon/*.ts`

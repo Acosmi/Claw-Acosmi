@@ -33,6 +33,8 @@ type OutboundSendParams struct {
 	MediaData []byte
 	// MediaMimeType 媒体 MIME 类型（如 "image/png"），配合 MediaData 使用。
 	MediaMimeType string
+	// MediaFileName 原始文件名（如 "report.md"），用于上传到支持文件名的渠道。
+	MediaFileName string
 }
 
 // OutboundSendResult 出站发送结果

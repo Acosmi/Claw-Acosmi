@@ -176,8 +176,7 @@ export function renderOverview(props: OverviewProps) {
         <div class="row" style="margin-top: 14px;">
           <button class="btn" @click=${() => props.onConnect()}>${t("overview.connect")}</button>
           <button class="btn" @click=${() => props.onRefresh()}>${t("overview.refresh")}</button>
-          ${props.connected ? html`<button class="btn" @click=${() => props.onStartWizard()}>🧙 ${t("overview.startWizard")}</button>` : ""}
-          ${props.connected && props.onStartWizardV2 ? html`<button class="btn" style="background:#FF4D4F;border-color:#FF4D4F;" @click=${() => props.onStartWizardV2?.()}>🚀 体验新版向导 (V2)</button>` : ""}
+          ${props.connected ? html`<button class="btn" style="background:#FF4D4F;border-color:#FF4D4F;" @click=${() => props.onStartWizard()}>🚀 ${t("overview.startWizard")}</button>` : ""}
           <span class="muted">${t("overview.connectHint")}</span>
         </div>
       </div>

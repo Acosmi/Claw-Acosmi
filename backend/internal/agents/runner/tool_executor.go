@@ -140,7 +140,7 @@ type ToolExecParams struct {
 	}
 	// MediaSender 媒体文件发送器（可选，nil = send_media 工具不可用）
 	MediaSender interface {
-		SendMedia(ctx context.Context, channelID, to string, data []byte, mimeType, message string) error
+		SendMedia(ctx context.Context, channelID, to string, data []byte, fileName, mimeType, message string) error
 	}
 	// QualityReviewFn 质量审核回调（可选，nil = 跳过 LLM 语义审核，只做规则预检）
 	// Phase 2: 三级指挥体系 — 子智能体结果质量审核
@@ -156,6 +156,8 @@ type ToolExecParams struct {
 	// MediaSubsystem 媒体子系统（可选，nil = 媒体工具不可用）。
 	// 提供 trending_topics / content_compose / media_publish / social_interact 工具。
 	MediaSubsystem MediaSubsystemForAgent
+	// OnProgress 中间进度回调（可选，nil = 仅本地实时事件）。
+	OnProgress func(ctx context.Context, update ProgressUpdate) ProgressReportStatus
 }
 
 // ExecuteToolCall 执行工具调用并返回文本结果。
@@ -298,7 +300,7 @@ func ExecuteToolCall(ctx context.Context, name string, inputJSON json.RawMessage
 	case "request_help":
 		return ExecuteRequestHelp(inputJSON, params.AgentChannel)
 	case "report_progress":
-		return executeReportProgress(inputJSON, params)
+		return executeReportProgress(ctx, inputJSON, params)
 	case "web_search":
 		return executeWebSearch(ctx, inputJSON, params)
 	case "browser":
@@ -332,8 +334,8 @@ func ExecuteToolCall(ctx context.Context, name string, inputJSON json.RawMessage
 
 // ---------- report_progress ----------
 
-// executeReportProgress 执行 report_progress 工具——广播中间进度事件到前端和远程渠道。
-func executeReportProgress(inputJSON json.RawMessage, params ToolExecParams) (string, error) {
+// executeReportProgress 执行 report_progress 工具——发出中间进度事件供实时界面消费。
+func executeReportProgress(ctx context.Context, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
 	var input struct {
 		Summary string `json:"summary"`
 		Percent int    `json:"percent"`
@@ -362,10 +364,20 @@ func executeReportProgress(inputJSON json.RawMessage, params ToolExecParams) (st
 	if input.Phase != "" {
 		progressData["phase"] = input.Phase
 	}
+	update := ProgressUpdate{
+		Summary: input.Summary,
+		Percent: input.Percent,
+		Phase:   input.Phase,
+	}
 
-	// 广播 agent.progress 事件
+	// 发出 agent.progress 事件；当前稳定消费面是 UI/WebSocket 一类实时界面。
 	if params.RunID != "" {
-		infra.EmitAgentEvent(params.RunID, "agent.progress", progressData, "")
+		infra.EmitAgentEvent(params.RunID, infra.StreamProgress, progressData, "")
+	}
+
+	status := ProgressReportStatus{}
+	if params.OnProgress != nil {
+		status = params.OnProgress(ctx, update)
 	}
 
 	slog.Debug("report_progress emitted",
@@ -374,7 +386,17 @@ func executeReportProgress(inputJSON json.RawMessage, params ToolExecParams) (st
 		"phase", input.Phase,
 	)
 
-	return "Progress reported successfully.", nil
+	switch {
+	case status.RemoteDelivered:
+		return "Progress reported to live surfaces and remote channel.", nil
+	case status.Throttled:
+		return "Progress reported to live surfaces. Remote update skipped (throttled).", nil
+	case status.Error != "":
+		slog.Warn("report_progress remote delivery failed", "error", status.Error)
+		return "Progress reported to live surfaces. Remote delivery failed.", nil
+	default:
+		return "Progress reported to live surfaces.", nil
+	}
 }
 
 // ---------- Process group management ----------
@@ -769,9 +791,9 @@ func executeWriteFile(inputJSON json.RawMessage, params ToolExecParams) (string,
 	path := resolveToolPath(input.Path, params.WorkspaceDir)
 
 	// 路径安全验证（合约 scope 优先，fallback 到 workspace 单根）
-	if err := validateToolPathScoped(path, params.ScopePaths, params.WorkspaceDir); err != nil {
+	if err := validateToolPathScoped(path, params.ScopePaths, params.WorkspaceDir, params.MountRequests, true); err != nil {
 		if params.OnPermissionDenied != nil {
-			params.OnPermissionDenied("write_file", input.Path)
+			params.OnPermissionDenied("write_file", path)
 		}
 		return formatPermissionDenied("write_file", input.Path, params.SecurityLevel), nil
 	}
@@ -1667,10 +1689,41 @@ func validateToolPath(path, workspaceDir string) error {
 	return fmt.Errorf("path %q is outside workspace %q — access denied", path, workspaceDir)
 }
 
+func pathAllowedByMountRequests(path string, mountRequests []MountRequestForSandbox, requireWrite bool) bool {
+	if len(mountRequests) == 0 {
+		return false
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	for _, mr := range mountRequests {
+		hostPath := strings.TrimSpace(mr.HostPath)
+		if hostPath == "" {
+			continue
+		}
+		absMount, err := filepath.Abs(hostPath)
+		if err != nil {
+			continue
+		}
+		mode := strings.ToLower(strings.TrimSpace(mr.MountMode))
+		if requireWrite && mode != "rw" {
+			continue
+		}
+		if absPath == absMount || strings.HasPrefix(absPath, absMount+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // validateToolPathScoped 合约多路径校验。
 // 当 ScopePaths 非空时使用此函数替代 validateToolPath（单根）。
-// 路径必须在至少一个 scope path 下才放行。
-func validateToolPathScoped(path string, scopePaths []string, workspaceDir string) error {
+// 路径必须在至少一个 scope path、工作区，或已批准的临时挂载路径下才放行。
+func validateToolPathScoped(path string, scopePaths []string, workspaceDir string, mountRequests []MountRequestForSandbox, requireWrite bool) error {
+	if pathAllowedByMountRequests(path, mountRequests, requireWrite) {
+		return nil
+	}
 	if len(scopePaths) == 0 {
 		// 无合约 scope → 回退到 workspace 单根校验
 		return validateToolPath(path, workspaceDir)
@@ -1726,6 +1779,8 @@ func formatPermissionDenied(tool, detail, level string) string {
 		toolDesc = "bash (命令执行)"
 	case "write_file":
 		toolDesc = "write_file (文件写入)"
+	case "send_media":
+		toolDesc = "send_media (文件发送)"
 	}
 
 	return fmt.Sprintf(`🚫 权限不足 | Permission Denied
@@ -1746,6 +1801,7 @@ func formatPermissionDenied(tool, detail, level string) string {
 type sendMediaInput struct {
 	Target      string `json:"target"`       // "channel:id" 格式，空值时使用 SessionKey
 	FilePath    string `json:"file_path"`    // 本地文件路径（优先）
+	FileName    string `json:"file_name"`    // 显式文件名（media_base64 模式建议提供）
 	MediaBase64 string `json:"media_base64"` // base64 编码数据
 	MimeType    string `json:"mime_type"`    // MIME 类型（file_path 模式下可自动检测）
 	Message     string `json:"message"`      // 随文件一起发送的文字
@@ -1772,13 +1828,21 @@ func executeSendMedia(ctx context.Context, inputJSON json.RawMessage, params Too
 	}
 
 	var data []byte
+	fileName := strings.TrimSpace(input.FileName)
 	mimeType := input.MimeType
 
 	switch {
 	case input.FilePath != "":
 		// 路径安全校验：workspace/scope 边界（与 read_file/write_file 一致）
-		if err := validateToolPathScoped(input.FilePath, params.ScopePaths, params.WorkspaceDir); err != nil {
-			return fmt.Sprintf("[send_media] Path access denied: %v", err), nil
+		if err := validateToolPathScoped(input.FilePath, params.ScopePaths, params.WorkspaceDir, params.MountRequests, false); err != nil {
+			detail := strings.TrimSpace(input.FilePath)
+			if absPath, absErr := filepath.Abs(detail); absErr == nil {
+				detail = absPath
+			}
+			if params.OnPermissionDenied != nil {
+				params.OnPermissionDenied("send_media", detail)
+			}
+			return formatPermissionDenied("send_media", input.FilePath, params.SecurityLevel), nil
 		}
 
 		// 先检查文件大小，避免大文件 OOM
@@ -1795,6 +1859,9 @@ func executeSendMedia(ctx context.Context, inputJSON json.RawMessage, params Too
 			return fmt.Sprintf("[send_media] Failed to read file: %v", err), nil
 		}
 		data = fileData
+		if fileName == "" {
+			fileName = filepath.Base(input.FilePath)
+		}
 
 		// MIME 自动检测
 		if mimeType == "" {
@@ -1818,14 +1885,18 @@ func executeSendMedia(ctx context.Context, inputJSON json.RawMessage, params Too
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
+	if fileName == "" {
+		fileName = defaultSendMediaFileName(mimeType)
+	}
 
 	slog.Info("send_media: sending file",
 		"target", channelID+":"+to,
+		"fileName", fileName,
 		"mimeType", mimeType,
 		"size", len(data),
 	)
 
-	if err := params.MediaSender.SendMedia(ctx, channelID, to, data, mimeType, input.Message); err != nil {
+	if err := params.MediaSender.SendMedia(ctx, channelID, to, data, fileName, mimeType, input.Message); err != nil {
 		return formatSendMediaDeliveryError(err), nil
 	}
 
@@ -1853,6 +1924,7 @@ func executeSendMedia(ctx context.Context, inputJSON json.RawMessage, params Too
 	statusResult := map[string]interface{}{
 		"status":   "sent",
 		"target":   channelID + ":" + to,
+		"fileName": fileName,
 		"size":     len(data),
 		"mimeType": mimeType,
 	}
@@ -1863,7 +1935,7 @@ func executeSendMedia(ctx context.Context, inputJSON json.RawMessage, params Too
 
 	// 小于 5MB 时返回 __MULTIMODAL__，触发 mediaBlocks 传播链 → 前端显示图片。
 	const maxMultimodalBytes = 5 * 1024 * 1024
-	if len(data) <= maxMultimodalBytes {
+	if len(data) <= maxMultimodalBytes && strings.HasPrefix(strings.ToLower(mimeType), "image/") {
 		blocks := []map[string]interface{}{
 			{"type": "text", "text": string(statusJSON)},
 			{"type": "image", "source": map[string]interface{}{
@@ -1970,6 +2042,14 @@ func detectMimeType(filePath string) string {
 	}
 
 	return "application/octet-stream"
+}
+
+func defaultSendMediaFileName(mimeType string) string {
+	mimeType = strings.TrimSpace(mimeType)
+	if exts, _ := mime.ExtensionsByType(mimeType); len(exts) > 0 {
+		return "upload" + exts[0]
+	}
+	return "upload.bin"
 }
 
 // ---------- memory tools (UHMS 记忆系统) ----------

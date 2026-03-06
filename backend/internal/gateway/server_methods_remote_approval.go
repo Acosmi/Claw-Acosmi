@@ -182,6 +182,15 @@ func parseFeishuConfig(raw map[string]interface{}) *FeishuProviderConfig {
 	if v, ok := raw["userId"].(string); ok {
 		cfg.UserID = v
 	}
+	if v, ok := raw["approvalChatId"].(string); ok {
+		cfg.ApprovalChatID = v
+	}
+	if v, ok := raw["lastKnownChatId"].(string); ok {
+		cfg.LastKnownChatID = v
+	}
+	if v, ok := raw["lastKnownUserId"].(string); ok {
+		cfg.LastKnownUserID = v
+	}
 	return cfg
 }
 

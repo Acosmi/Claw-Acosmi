@@ -28,6 +28,159 @@ import (
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
+const (
+	skillStatusSourceWorkspace = "openacosmi-workspace"
+	skillStatusSourceBundled   = "openacosmi-bundled"
+	skillStatusSourceManaged   = "openacosmi-managed"
+	skillStatusSourceExtra     = "openacosmi-extra"
+)
+
+type skillStatusPaths struct {
+	WorkspaceDir  string
+	DocsSkillsDir string
+	SyncedDir     string
+	BundledDir    string
+	ExtraDirs     []string
+}
+
+// skillStatusEntry 匹配 UI SkillStatusReport.skills 结构。
+type skillStatusEntry struct {
+	Name               string                   `json:"name"`
+	Description        string                   `json:"description"`
+	Source             string                   `json:"source"`
+	FilePath           string                   `json:"filePath"`
+	BaseDir            string                   `json:"baseDir"`
+	SkillKey           string                   `json:"skillKey"`
+	Bundled            bool                     `json:"bundled,omitempty"`
+	PrimaryEnv         string                   `json:"primaryEnv,omitempty"`
+	Emoji              string                   `json:"emoji,omitempty"`
+	Homepage           string                   `json:"homepage,omitempty"`
+	Always             bool                     `json:"always"`
+	Disabled           bool                     `json:"disabled"`
+	BlockedByAllowlist bool                     `json:"blockedByAllowlist"`
+	Eligible           bool                     `json:"eligible"`
+	Distributed        bool                     `json:"distributed"`
+	DistributedAt      string                   `json:"distributedAt,omitempty"`
+	Requirements       map[string][]string      `json:"requirements"`
+	Missing            map[string][]string      `json:"missing"`
+	ConfigChecks       []map[string]interface{} `json:"configChecks"`
+	Install            []map[string]interface{} `json:"install"`
+}
+
+func resolveSkillStatusPaths(workspaceDir, bundledDir string, cfg *types.OpenAcosmiConfig) skillStatusPaths {
+	paths := skillStatusPaths{
+		WorkspaceDir:  workspaceDir,
+		DocsSkillsDir: skills.ResolveDocsSkillsDir(workspaceDir),
+		BundledDir:    bundledDir,
+	}
+	if paths.DocsSkillsDir != "" {
+		paths.SyncedDir = filepath.Join(paths.DocsSkillsDir, "synced")
+	}
+	if cfg != nil && cfg.Skills != nil && cfg.Skills.Load != nil {
+		for _, dir := range cfg.Skills.Load.ExtraDirs {
+			if trimmed := strings.TrimSpace(dir); trimmed != "" {
+				paths.ExtraDirs = append(paths.ExtraDirs, trimmed)
+			}
+		}
+	}
+	return paths
+}
+
+func normalizeSkillStatusSource(sourceHint, skillDir string, paths skillStatusPaths) string {
+	hint := strings.ToLower(strings.TrimSpace(sourceHint))
+	switch hint {
+	case skillStatusSourceWorkspace, skillStatusSourceBundled, skillStatusSourceManaged, skillStatusSourceExtra:
+		return hint
+	}
+
+	if dir := strings.TrimSpace(skillDir); dir != "" {
+		if pathWithinDir(dir, paths.BundledDir) {
+			return skillStatusSourceBundled
+		}
+		if pathWithinDir(dir, paths.SyncedDir) {
+			return skillStatusSourceManaged
+		}
+		for _, extraDir := range paths.ExtraDirs {
+			if pathWithinDir(dir, extraDir) {
+				return skillStatusSourceExtra
+			}
+		}
+		if pathWithinDir(dir, filepath.Join(paths.WorkspaceDir, ".agent", "skills")) {
+			return skillStatusSourceWorkspace
+		}
+		if pathWithinDir(dir, paths.DocsSkillsDir) {
+			return skillStatusSourceWorkspace
+		}
+		if pathWithinDir(dir, paths.WorkspaceDir) {
+			return skillStatusSourceWorkspace
+		}
+	}
+
+	switch hint {
+	case "bundled":
+		return skillStatusSourceBundled
+	case "synced", "managed":
+		return skillStatusSourceManaged
+	case "workspace", "docs":
+		return skillStatusSourceWorkspace
+	case "argus":
+		if paths.DocsSkillsDir != "" {
+			return skillStatusSourceWorkspace
+		}
+	}
+	return skillStatusSourceExtra
+}
+
+func pathWithinDir(path, root string) bool {
+	path = strings.TrimSpace(path)
+	root = strings.TrimSpace(root)
+	if path == "" || root == "" {
+		return false
+	}
+	cleanPath := filepath.Clean(path)
+	cleanRoot := filepath.Clean(root)
+	if cleanPath == cleanRoot {
+		return true
+	}
+	return strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
+}
+
+func argusSkillEntryDir(entry argus.ArgusSkillEntry) string {
+	if strings.TrimSpace(entry.BaseDir) != "" {
+		return entry.BaseDir
+	}
+	if strings.TrimSpace(entry.FilePath) != "" {
+		return filepath.Dir(entry.FilePath)
+	}
+	return ""
+}
+
+func appendArgusSkillStatusEntries(skillEntries []skillStatusEntry, argusEntries []argus.ArgusSkillEntry, paths skillStatusPaths) []skillStatusEntry {
+	for _, ae := range argusEntries {
+		dir := argusSkillEntryDir(ae)
+		skillEntries = append(skillEntries, skillStatusEntry{
+			Name:               ae.Name,
+			Description:        ae.Description,
+			Source:             normalizeSkillStatusSource(ae.Source, dir, paths),
+			FilePath:           ae.FilePath,
+			BaseDir:            ae.BaseDir,
+			SkillKey:           ae.SkillKey,
+			Bundled:            ae.Bundled,
+			PrimaryEnv:         ae.PrimaryEnv,
+			Emoji:              ae.Emoji,
+			Always:             ae.Always,
+			Disabled:           ae.Disabled,
+			BlockedByAllowlist: ae.BlockedByAllowlist,
+			Eligible:           ae.Eligible,
+			Requirements:       ae.Requirements,
+			Missing:            ae.Missing,
+			ConfigChecks:       ae.ConfigChecks,
+			Install:            ae.Install,
+		})
+	}
+	return skillEntries
+}
+
 // SkillsHandlers 返回 skills.* 方法映射。
 func SkillsHandlers() map[string]GatewayMethodHandler {
 	return map[string]GatewayMethodHandler{
@@ -84,40 +237,10 @@ func handleSkillsStatus(ctx *MethodHandlerContext) {
 
 	workspaceDir := scope.ResolveAgentWorkspaceDir(cfg, agentID)
 	bundledDir := skills.ResolveBundledSkillsDir("")
-
-	// 解析 docs/skills/ 目录用于 source 判定
-	docsSkillsDir := skills.ResolveDocsSkillsDir(workspaceDir)
-	syncedDir := ""
-	if docsSkillsDir != "" {
-		syncedDir = docsSkillsDir + "/synced"
-	}
+	statusPaths := resolveSkillStatusPaths(workspaceDir, bundledDir, cfg)
 
 	// 加载所有技能条目
 	entries := skills.LoadSkillEntries(workspaceDir, "", bundledDir, cfg)
-
-	// 构建 SkillStatusEntry 列表（匹配 UI SkillStatusReport.skills 格式）
-	type skillStatusEntry struct {
-		Name               string                   `json:"name"`
-		Description        string                   `json:"description"`
-		Source             string                   `json:"source"`
-		FilePath           string                   `json:"filePath"`
-		BaseDir            string                   `json:"baseDir"`
-		SkillKey           string                   `json:"skillKey"`
-		Bundled            bool                     `json:"bundled,omitempty"`
-		PrimaryEnv         string                   `json:"primaryEnv,omitempty"`
-		Emoji              string                   `json:"emoji,omitempty"`
-		Homepage           string                   `json:"homepage,omitempty"`
-		Always             bool                     `json:"always"`
-		Disabled           bool                     `json:"disabled"`
-		BlockedByAllowlist bool                     `json:"blockedByAllowlist"`
-		Eligible           bool                     `json:"eligible"`
-		Distributed        bool                     `json:"distributed"`
-		DistributedAt      string                   `json:"distributedAt,omitempty"`
-		Requirements       map[string][]string      `json:"requirements"`
-		Missing            map[string][]string      `json:"missing"`
-		ConfigChecks       []map[string]interface{} `json:"configChecks"`
-		Install            []map[string]interface{} `json:"install"`
-	}
 
 	skillEntries := make([]skillStatusEntry, 0, len(entries))
 	for _, e := range entries {
@@ -127,20 +250,7 @@ func handleSkillsStatus(ctx *MethodHandlerContext) {
 		}
 
 		// 判断是否 bundled
-		isBundled := false
-		if bundledDir != "" && strings.HasPrefix(e.Skill.Dir, bundledDir) {
-			isBundled = true
-		}
-
-		// 确定 source
-		source := "workspace"
-		if isBundled {
-			source = "bundled"
-		} else if syncedDir != "" && strings.HasPrefix(e.Skill.Dir, syncedDir) {
-			source = "synced"
-		} else if docsSkillsDir != "" && strings.HasPrefix(e.Skill.Dir, docsSkillsDir) {
-			source = "docs"
-		}
+		isBundled := pathWithinDir(e.Skill.Dir, bundledDir)
 
 		// 检查是否被配置禁用
 		disabled := false
@@ -172,7 +282,7 @@ func handleSkillsStatus(ctx *MethodHandlerContext) {
 		skillEntries = append(skillEntries, skillStatusEntry{
 			Name:          e.Skill.Name,
 			Description:   e.Skill.Description,
-			Source:        source,
+			Source:        normalizeSkillStatusSource("", e.Skill.Dir, statusPaths),
 			FilePath:      skillFile,
 			BaseDir:       e.Skill.Dir,
 			SkillKey:      e.Skill.Name,
@@ -202,34 +312,13 @@ func handleSkillsStatus(ctx *MethodHandlerContext) {
 
 	// 追加 Argus 视觉子智能体技能条目
 	if bridge := ctx.Context.ArgusBridge; bridge != nil {
-		argusEntries := argus.BuildArgusSkillEntries(bridge.Tools())
-		for _, ae := range argusEntries {
-			skillEntries = append(skillEntries, skillStatusEntry{
-				Name:               ae.Name,
-				Description:        ae.Description,
-				Source:             ae.Source,
-				FilePath:           ae.FilePath,
-				BaseDir:            ae.BaseDir,
-				SkillKey:           ae.SkillKey,
-				Bundled:            ae.Bundled,
-				PrimaryEnv:         ae.PrimaryEnv,
-				Emoji:              ae.Emoji,
-				Always:             ae.Always,
-				Disabled:           ae.Disabled,
-				BlockedByAllowlist: ae.BlockedByAllowlist,
-				Eligible:           ae.Eligible,
-				Requirements:       ae.Requirements,
-				Missing:            ae.Missing,
-				ConfigChecks:       ae.ConfigChecks,
-				Install:            ae.Install,
-			})
-		}
+		skillEntries = appendArgusSkillStatusEntries(skillEntries, argus.BuildArgusSkillEntries(bridge.Tools()), statusPaths)
 	}
 
 	// 构建报告（匹配 UI SkillStatusReport 类型）
 	report := map[string]interface{}{
 		"workspaceDir":     workspaceDir,
-		"managedSkillsDir": "",
+		"managedSkillsDir": statusPaths.SyncedDir,
 		"skills":           skillEntries,
 	}
 

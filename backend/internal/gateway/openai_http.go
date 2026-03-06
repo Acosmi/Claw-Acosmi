@@ -180,7 +180,7 @@ func handleNonStreaming(
 
 	content := CombineReplyPayloads(result.Replies)
 	if content == "" {
-		content = "No response from OpenAcosmi."
+		content = "No response from Claw Acosmi."
 	}
 
 	SendJSON(w, http.StatusOK, map[string]interface{}{
@@ -334,7 +334,7 @@ func handleStreaming(
 			} else {
 				content = CombineReplyPayloads(result.Replies)
 				if content == "" {
-					content = "No response from OpenAcosmi."
+					content = "No response from Claw Acosmi."
 				}
 			}
 			writeSSEChunk(w, runID, model, nil, content)
