@@ -119,6 +119,103 @@ var Registry = []CapabilitySpec{
 		SkillBindable: true,
 	},
 
+	// --- Web tools ---
+	{
+		ID: "web_fetch", Kind: KindTool, ToolName: "web_fetch",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Fetch and extract readable content from a URL",
+		ToolGroups:    []string{"group:web"},
+		SkillBindable: true,
+	},
+
+	// --- System tools ---
+	{
+		ID: "canvas", Kind: KindTool, ToolName: "canvas",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Display, evaluate and snapshot Canvas artifacts",
+		ToolGroups:    []string{"group:ui"},
+		SkillBindable: true,
+	},
+	{
+		ID: "nodes", Kind: KindTool, ToolName: "nodes",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "List/describe/notify/control paired node devices",
+		ToolGroups:    []string{"group:system"},
+		SkillBindable: true,
+	},
+	{
+		ID: "cron", Kind: KindTool, ToolName: "cron",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Manage scheduled tasks and wake events",
+		ToolGroups:    []string{"group:system"},
+		SkillBindable: true,
+	},
+	{
+		ID: "message", Kind: KindTool, ToolName: "message",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Send messages and channel operations",
+		ToolGroups:    []string{"group:messaging"},
+		SkillBindable: true,
+	},
+	{
+		ID: "gateway", Kind: KindTool, ToolName: "gateway",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Restart, apply config or run updates",
+		ToolGroups:    []string{"group:system"},
+		SkillBindable: true,
+	},
+	{
+		ID: "image", Kind: KindTool, ToolName: "image",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Analyze images using configured image model",
+		ToolGroups:    []string{"group:ai"},
+		SkillBindable: true,
+	},
+
+	// --- Session tools ---
+	{
+		ID: "agents_list", Kind: KindTool, ToolName: "agents_list",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "List available agent IDs for sessions_spawn",
+		ToolGroups:    []string{"group:sessions"},
+		SkillBindable: true,
+	},
+	{
+		ID: "sessions_list", Kind: KindTool, ToolName: "sessions_list",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "List other sessions with filters and pagination",
+		ToolGroups:    []string{"group:sessions"},
+		SkillBindable: true,
+	},
+	{
+		ID: "sessions_history", Kind: KindTool, ToolName: "sessions_history",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Fetch history for another session or sub-agent",
+		ToolGroups:    []string{"group:sessions"},
+		SkillBindable: true,
+	},
+	{
+		ID: "sessions_send", Kind: KindTool, ToolName: "sessions_send",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Send a message to another session or sub-agent",
+		ToolGroups:    []string{"group:sessions"},
+		SkillBindable: true,
+	},
+	{
+		ID: "sessions_spawn", Kind: KindTool, ToolName: "sessions_spawn",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Spawn a sub-agent session",
+		ToolGroups:    []string{"group:sessions"},
+		SkillBindable: true,
+	},
+	{
+		ID: "session_status", Kind: KindTool, ToolName: "session_status",
+		RuntimeOwner: "attempt_runner", EnabledWhen: "always",
+		PromptSummary: "Show session status card (usage, time, mode)",
+		ToolGroups:    []string{"group:sessions"},
+		SkillBindable: true,
+	},
+
 	// --- Sub-agent entries ---
 	{
 		ID: "spawn_coder_agent", Kind: KindSubagentEntry, ToolName: "spawn_coder_agent",
@@ -176,6 +273,16 @@ func AllToolGroups() map[string][]string {
 		}
 	}
 	return groups
+}
+
+// LookupByToolName returns the CapabilitySpec for the given tool name, or nil if not found.
+func LookupByToolName(toolName string) *CapabilitySpec {
+	for i := range Registry {
+		if Registry[i].ToolName == toolName {
+			return &Registry[i]
+		}
+	}
+	return nil
 }
 
 // IsRegistered checks if a tool name exists in the registry.

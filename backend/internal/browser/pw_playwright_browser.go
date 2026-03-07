@@ -10,15 +10,23 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"sync"
 	"time"
 )
 
-// PlaywrightBrowserController implements tools.BrowserController using
+// PlaywrightBrowserController implements BrowserController using
 // a PlaywrightTools backend (either CDP or Playwright-native).
 type PlaywrightBrowserController struct {
 	tools   PlaywrightTools
 	target  PWTargetOpts
 	planner AIPlanner // Phase 4: 可选 AI 规划器，通过 SetAIPlanner 注入
+
+	cdpOnce sync.Once
+	cdp     *CDPClient // cached CDP client for direct CDP operations
+
+	// Phase 4.4: GIF recording state.
+	gifRecorder *GIFRecorder
 }
 
 // NewPlaywrightBrowserController creates a BrowserController backed by
@@ -32,16 +40,29 @@ func NewPlaywrightBrowserController(tools PlaywrightTools, cdpURL string) *Playw
 	}
 }
 
+// cdpClient returns the cached CDPClient, creating it on first use.
+func (c *PlaywrightBrowserController) cdpClient() *CDPClient {
+	c.cdpOnce.Do(func() {
+		c.cdp = NewCDPClient(c.target.CDPURL, nil)
+	})
+	return c.cdp
+}
+
 // Navigate navigates to the given URL.
 func (c *PlaywrightBrowserController) Navigate(ctx context.Context, url string) error {
-	// Use CDP client directly for navigation as it's simpler.
-	cdp := NewCDPClient(c.target.CDPURL, nil)
-	return cdp.Navigate(ctx, url)
+	c.captureGIFFrame(ctx, 30) // pre-nav frame
+	cdp := c.cdpClient()
+	err := cdp.Navigate(ctx, url)
+	if err == nil {
+		time.Sleep(200 * time.Millisecond)
+		c.captureGIFFrame(ctx, 80) // post-nav frame
+	}
+	return err
 }
 
 // GetContent returns the page's text content via JS evaluation.
 func (c *PlaywrightBrowserController) GetContent(ctx context.Context) (string, error) {
-	cdp := NewCDPClient(c.target.CDPURL, nil)
+	cdp := c.cdpClient()
 	raw, err := cdp.Evaluate(ctx, "document.body.innerText || document.body.textContent || ''")
 	if err != nil {
 		return "", fmt.Errorf("get content: %w", err)
@@ -92,7 +113,7 @@ func (c *PlaywrightBrowserController) Screenshot(ctx context.Context) ([]byte, s
 
 // Evaluate executes JavaScript and returns the result.
 func (c *PlaywrightBrowserController) Evaluate(ctx context.Context, script string) (any, error) {
-	cdp := NewCDPClient(c.target.CDPURL, nil)
+	cdp := c.cdpClient()
 	raw, err := cdp.Evaluate(ctx, script)
 	if err != nil {
 		return nil, err
@@ -116,7 +137,7 @@ func (c *PlaywrightBrowserController) WaitForSelector(ctx context.Context, selec
 	timeoutCtx, cancel := context.WithTimeout(ctx, maxTimeout)
 	defer cancel()
 
-	cdp := NewCDPClient(c.target.CDPURL, nil)
+	cdp := c.cdpClient()
 	script := fmt.Sprintf(`(function() {
 		var el = document.querySelector(%q);
 		return el !== null;
@@ -153,21 +174,21 @@ func (c *PlaywrightBrowserController) WaitForSelector(ctx context.Context, selec
 
 // GoBack navigates back in browser history.
 func (c *PlaywrightBrowserController) GoBack(ctx context.Context) error {
-	cdp := NewCDPClient(c.target.CDPURL, nil)
+	cdp := c.cdpClient()
 	_, err := cdp.Evaluate(ctx, "window.history.back()")
 	return err
 }
 
 // GoForward navigates forward in browser history.
 func (c *PlaywrightBrowserController) GoForward(ctx context.Context) error {
-	cdp := NewCDPClient(c.target.CDPURL, nil)
+	cdp := c.cdpClient()
 	_, err := cdp.Evaluate(ctx, "window.history.forward()")
 	return err
 }
 
 // GetURL returns the current page URL.
 func (c *PlaywrightBrowserController) GetURL(ctx context.Context) (string, error) {
-	cdp := NewCDPClient(c.target.CDPURL, nil)
+	cdp := c.cdpClient()
 	raw, err := cdp.Evaluate(ctx, "window.location.href")
 	if err != nil {
 		return "", err
@@ -194,19 +215,30 @@ func (c *PlaywrightBrowserController) SnapshotAI(ctx context.Context) (map[strin
 // ClickRef clicks an element by its ARIA ref identifier (e.g. "e1").
 // More robust than CSS selectors — works as long as the ARIA role exists.
 func (c *PlaywrightBrowserController) ClickRef(ctx context.Context, ref string) error {
-	return c.tools.Click(ctx, PWClickOpts{
+	c.captureGIFFrame(ctx, 30) // pre-click frame
+	err := c.tools.Click(ctx, PWClickOpts{
 		PWTargetOpts: c.target,
 		Ref:          ref,
 	})
+	if err == nil {
+		time.Sleep(200 * time.Millisecond)
+		c.captureGIFFrame(ctx, 50) // post-click frame
+	}
+	return err
 }
 
 // FillRef fills text into an element by its ARIA ref identifier.
 func (c *PlaywrightBrowserController) FillRef(ctx context.Context, ref, text string) error {
-	return c.tools.Fill(ctx, PWFillOpts{
+	c.captureGIFFrame(ctx, 30) // pre-fill frame
+	err := c.tools.Fill(ctx, PWFillOpts{
 		PWTargetOpts: c.target,
 		Ref:          ref,
 		Value:        text,
 	})
+	if err == nil {
+		c.captureGIFFrame(ctx, 50) // post-fill frame
+	}
+	return err
 }
 
 // ---------- Phase 4: Mariner AI 循环 ----------
@@ -241,4 +273,112 @@ func (c *PlaywrightBrowserController) AIBrowse(ctx context.Context, goal string)
 		return "", fmt.Errorf("ai_browse marshal result: %w", err)
 	}
 	return string(resultJSON), nil
+}
+
+// ---------- Phase 4.3: SOM Visual Annotation ----------
+
+// AnnotateSOM injects numbered bounding boxes on interactive elements,
+// captures a screenshot, and removes overlays.
+func (c *PlaywrightBrowserController) AnnotateSOM(ctx context.Context) ([]byte, string, []SOMAnnotation, error) {
+	data, annotations, err := c.tools.AnnotateSOM(ctx, c.target)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	// Screenshot is base64-encoded JPEG from CDP.
+	decoded, decErr := base64.StdEncoding.DecodeString(string(data))
+	if decErr != nil {
+		// If not base64, return raw bytes.
+		return data, "image/jpeg", annotations, nil
+	}
+	return decoded, "image/jpeg", annotations, nil
+}
+
+// ---------- Phase 4.4: GIF Recording ----------
+
+// StartGIFRecording begins capturing frames on each browser action.
+func (c *PlaywrightBrowserController) StartGIFRecording() {
+	c.gifRecorder = NewGIFRecorder(GIFRecorderConfig{MaxWidth: 800}, nil)
+}
+
+// StopGIFRecording stops recording and returns the animated GIF + frame count.
+func (c *PlaywrightBrowserController) StopGIFRecording() ([]byte, int, error) {
+	if c.gifRecorder == nil {
+		return nil, 0, fmt.Errorf("no GIF recording in progress")
+	}
+	frameCount := c.gifRecorder.FrameCount()
+	data, err := c.gifRecorder.Encode()
+	c.gifRecorder = nil
+	return data, frameCount, err
+}
+
+// IsGIFRecording returns true if GIF recording is active.
+func (c *PlaywrightBrowserController) IsGIFRecording() bool {
+	return c.gifRecorder != nil
+}
+
+// captureGIFFrame captures a screenshot frame if GIF recording is active.
+func (c *PlaywrightBrowserController) captureGIFFrame(ctx context.Context, delayCs int) {
+	if c.gifRecorder == nil {
+		return
+	}
+	if err := c.gifRecorder.CaptureScreenshotFrame(ctx, c.tools, c.target, delayCs); err != nil {
+		slog.Debug("gif: frame capture failed", "err", err)
+	}
+}
+
+// ---------- Tab Management ----------
+
+// ListTabs returns all browser tabs via CDP Target.getTargets or /json list.
+func (c *PlaywrightBrowserController) ListTabs(ctx context.Context) ([]TabInfo, error) {
+	cdp := c.cdpClient()
+	targets, err := cdp.ListTargets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list tabs: %w", err)
+	}
+	var tabs []TabInfo
+	for _, t := range targets {
+		if t.Type == "page" {
+			tabs = append(tabs, TabInfo{
+				ID:    t.ID,
+				URL:   t.URL,
+				Title: t.Title,
+				Type:  t.Type,
+			})
+		}
+	}
+	return tabs, nil
+}
+
+// CreateTab creates a new browser tab with the given URL.
+func (c *PlaywrightBrowserController) CreateTab(ctx context.Context, url string) (*TabInfo, error) {
+	if url == "" {
+		url = "about:blank"
+	}
+	cdp := c.cdpClient()
+	targetID, err := cdp.CreateTarget(ctx, url)
+	if err != nil {
+		return nil, fmt.Errorf("create tab: %w", err)
+	}
+	return &TabInfo{
+		ID:  targetID,
+		URL: url,
+	}, nil
+}
+
+// CloseTab closes a tab by target ID via CDP Target.closeTarget.
+func (c *PlaywrightBrowserController) CloseTab(ctx context.Context, targetID string) error {
+	cdp := c.cdpClient()
+	return WithCdpSocket(ctx, cdp.wsURL, func(send CdpSendFn) error {
+		_, err := send("Target.closeTarget", map[string]any{"targetId": targetID})
+		return err
+	})
+}
+
+// SwitchTab activates a tab by target ID via CDP Target.activateTarget.
+func (c *PlaywrightBrowserController) SwitchTab(ctx context.Context, targetID string) error {
+	cdp := c.cdpClient()
+	return WithCdpSocket(ctx, cdp.wsURL, func(send CdpSendFn) error {
+		_, err := send("Target.activateTarget", map[string]any{"targetId": targetID})
+		return err
+	})
 }

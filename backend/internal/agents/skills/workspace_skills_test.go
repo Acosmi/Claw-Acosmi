@@ -93,8 +93,8 @@ func TestResolveToolSkillBindings(t *testing.T) {
 			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"bash"}},
 		},
 		{
-			Skill:    Skill{Name: "skills", Description: "技能系统：加载路径、优先级、门控规则与配置"},
-			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"search_skills", "lookup_skill"}},
+			Skill:    Skill{Name: "web", Description: "Web 搜索和抓取工具使用指南"},
+			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"web_search", "browser"}},
 		},
 		{
 			Skill: Skill{Name: "no-tools", Description: "A skill without tool binding"},
@@ -102,25 +102,34 @@ func TestResolveToolSkillBindings(t *testing.T) {
 		},
 		{
 			Skill:    Skill{Name: "empty-desc", Description: ""},
-			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"some_tool"}},
+			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"read_file"}},
+		},
+		{
+			// SkillBindable: false tools should be rejected
+			Skill:    Skill{Name: "skills", Description: "技能系统内部"},
+			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"search_skills", "lookup_skill"}},
 		},
 	}
 
 	bindings := ResolveToolSkillBindings(entries)
 
-	// bash → exec description
+	// bash → exec description (registered + bindable)
 	if got, ok := bindings["bash"]; !ok || got != "Exec tool usage, stdin modes, and TTY support" {
 		t.Errorf("bash binding = %q, ok = %v", got, ok)
 	}
-	// search_skills → skills description
-	if _, ok := bindings["search_skills"]; !ok {
-		t.Error("search_skills binding missing")
+	// web_search → web description (registered + bindable)
+	if _, ok := bindings["web_search"]; !ok {
+		t.Error("web_search binding missing")
 	}
-	// lookup_skill → same skills description
-	if _, ok := bindings["lookup_skill"]; !ok {
-		t.Error("lookup_skill binding missing")
+	// browser → web description (registered + bindable)
+	if _, ok := bindings["browser"]; !ok {
+		t.Error("browser binding missing")
 	}
-	// no-tools should not appear
+	// search_skills should NOT appear (SkillBindable: false)
+	if _, ok := bindings["search_skills"]; ok {
+		t.Error("search_skills should be rejected (SkillBindable: false)")
+	}
+	// no-tools and empty-desc should not appear
 	if len(bindings) != 3 {
 		t.Errorf("expected 3 bindings, got %d: %v", len(bindings), bindings)
 	}
@@ -131,11 +140,11 @@ func TestResolveToolSkillBindings_TruncatesLongDescription(t *testing.T) {
 	entries := []SkillEntry{
 		{
 			Skill:    Skill{Name: "long", Description: longDesc},
-			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"my_tool"}},
+			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"write_file"}},
 		},
 	}
 	bindings := ResolveToolSkillBindings(entries)
-	got := bindings["my_tool"]
+	got := bindings["write_file"]
 	if len(got) > 120 {
 		t.Errorf("description not truncated: len=%d", len(got))
 	}

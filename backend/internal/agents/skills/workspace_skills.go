@@ -7,10 +7,12 @@ package skills
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Acosmi/ClawAcosmi/internal/agents/capabilities"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
@@ -381,6 +383,7 @@ func FormatSkillIndex(resolvedSkills []Skill) string {
 
 // ResolveToolSkillBindings 从技能列表构建 toolName → 技能描述 映射。
 // 用于将技能指引注入到工具 Description 中，LLM 读工具定义时自动获得使用指南。
+// 验证门控：只有 Registry 中标记为 SkillBindable 的工具才允许绑定。
 func ResolveToolSkillBindings(entries []SkillEntry) map[string]string {
 	bindings := make(map[string]string)
 	for _, e := range entries {
@@ -395,9 +398,19 @@ func ResolveToolSkillBindings(entries []SkillEntry) map[string]string {
 			continue
 		}
 		for _, toolName := range e.Metadata.Tools {
-			if _, exists := bindings[toolName]; !exists {
-				bindings[toolName] = desc
+			if _, exists := bindings[toolName]; exists {
+				continue
 			}
+			spec := capabilities.LookupByToolName(toolName)
+			if spec == nil {
+				slog.Warn("skill binds to unknown tool", "skill", e.Skill.Name, "tool", toolName)
+				continue
+			}
+			if !spec.SkillBindable {
+				slog.Warn("skill binds to non-bindable tool", "skill", e.Skill.Name, "tool", toolName)
+				continue
+			}
+			bindings[toolName] = desc
 		}
 	}
 	return bindings

@@ -308,16 +308,13 @@ func handlePluginsConfigSet(ctx *MethodHandlerContext) {
 // builtinTools 系统内置工具元数据，分类展示。
 var builtinTools = []ToolItem{
 	// 文件操作
-	{Name: "read", Label: "Read File", Description: "读取文件内容，支持行范围和偏移量", Category: "file", Icon: "file", Builtin: true},
-	{Name: "write", Label: "Write File", Description: "创建或覆盖文件内容", Category: "file", Icon: "file", Builtin: true},
-	{Name: "edit", Label: "Edit File", Description: "对文件进行精确的行级编辑", Category: "file", Icon: "edit", Builtin: true},
+	{Name: "read_file", Label: "Read File", Description: "读取文件内容，支持行范围和偏移量", Category: "file", Icon: "file", Builtin: true},
+	{Name: "write_file", Label: "Write File", Description: "创建或覆盖文件内容", Category: "file", Icon: "file", Builtin: true},
 	{Name: "apply_patch", Label: "Apply Patch", Description: "应用多文件补丁（unified diff 格式）", Category: "file", Icon: "edit", Builtin: true},
-	{Name: "grep", Label: "Grep", Description: "在文件内容中搜索正则表达式模式", Category: "file", Icon: "search", Builtin: true},
-	{Name: "find", Label: "Find", Description: "通过 glob 模式查找文件路径", Category: "file", Icon: "search", Builtin: true},
-	{Name: "ls", Label: "List Directory", Description: "列出目录内容及元信息", Category: "file", Icon: "folder", Builtin: true},
+	{Name: "list_dir", Label: "List Directory", Description: "列出目录内容及元信息", Category: "file", Icon: "folder", Builtin: true},
 
 	// 命令执行
-	{Name: "exec", Label: "Shell Exec", Description: "在沙箱或本地执行 Shell 命令", Category: "exec", Icon: "terminal", Builtin: true},
+	{Name: "bash", Label: "Shell Exec", Description: "在沙箱或本地执行 Shell 命令", Category: "exec", Icon: "terminal", Builtin: true},
 	{Name: "process", Label: "Process Manager", Description: "管理后台进程会话（启动/停止/查看输出）", Category: "exec", Icon: "terminal", Builtin: true},
 
 	// 网络与浏览

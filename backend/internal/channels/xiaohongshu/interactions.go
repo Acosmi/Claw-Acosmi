@@ -31,11 +31,16 @@ type InteractionManager interface {
 
 // ---------- RPA 互动管理器 ----------
 
+// maxProcessedEntries 是 processed map 的最大容量。
+// 超过此值时清理最早一半的记录，防止长期运行内存无限增长。
+const maxProcessedEntries = 10000
+
 // RPAInteractionManager 基于 RPA 的小红书互动管理。
 type RPAInteractionManager struct {
-	mu        sync.Mutex
-	client    *XHSRPAClient
-	processed map[string]struct{} // 已处理的评论/私信 ID，用于去重
+	mu             sync.Mutex
+	client         *XHSRPAClient
+	processed      map[string]struct{} // 已处理的评论/私信 ID，用于去重
+	processedOrder []string            // 插入顺序，用于 LRU 淘汰
 }
 
 // NewRPAInteractionManager 创建互动管理器。
@@ -307,11 +312,26 @@ func (m *RPAInteractionManager) IsProcessed(id string) bool {
 	return ok
 }
 
-// markProcessed 标记项为已处理。
+// markProcessed 标记项为已处理，超过容量时淘汰最早一半。
 func (m *RPAInteractionManager) markProcessed(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if _, exists := m.processed[id]; exists {
+		return
+	}
+
 	m.processed[id] = struct{}{}
+	m.processedOrder = append(m.processedOrder, id)
+
+	if len(m.processedOrder) > maxProcessedEntries {
+		// 淘汰最早一半
+		evictCount := len(m.processedOrder) / 2
+		for _, old := range m.processedOrder[:evictCount] {
+			delete(m.processed, old)
+		}
+		m.processedOrder = m.processedOrder[evictCount:]
+	}
 }
 
 // ProcessedCount 返回已处理项数量。

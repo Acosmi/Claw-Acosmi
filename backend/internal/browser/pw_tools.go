@@ -307,6 +307,9 @@ type PlaywrightTools interface {
 	// TODO:UNIMPLEMENTED
 	Screenshot(ctx context.Context, opts PWTargetOpts) ([]byte, error)
 
+	// Phase 4.3: SOM visual annotation — inject numbered overlays and capture screenshot.
+	AnnotateSOM(ctx context.Context, opts PWTargetOpts) (screenshot []byte, annotations []SOMAnnotation, err error)
+
 	// --- Storage (pw-tools-core.storage.ts) ---
 
 	// CookiesGet returns all cookies for the page context.
@@ -448,6 +451,10 @@ func (*StubPlaywrightTools) SnapshotAI(_ context.Context, _ PWSnapshotOpts) (map
 
 func (*StubPlaywrightTools) Screenshot(_ context.Context, _ PWTargetOpts) ([]byte, error) {
 	return nil, ErrNotImplemented
+}
+
+func (*StubPlaywrightTools) AnnotateSOM(_ context.Context, _ PWTargetOpts) ([]byte, []SOMAnnotation, error) {
+	return nil, nil, ErrNotImplemented
 }
 
 func (*StubPlaywrightTools) CookiesGet(_ context.Context, _ PWTargetOpts) ([]map[string]any, error) {

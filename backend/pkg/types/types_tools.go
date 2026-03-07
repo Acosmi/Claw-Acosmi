@@ -331,20 +331,6 @@ type MemorySearchExperimentalConfig struct {
 // Web 工具配置
 // ============================================================
 
-// WebSearchPerplexityConfig Perplexity 搜索配置
-type WebSearchPerplexityConfig struct {
-	APIKey  string `json:"apiKey,omitempty"`
-	BaseURL string `json:"baseUrl,omitempty"`
-	Model   string `json:"model,omitempty"`
-}
-
-// WebSearchGrokConfig Grok 搜索配置
-type WebSearchGrokConfig struct {
-	APIKey          string `json:"apiKey,omitempty"`
-	Model           string `json:"model,omitempty"`
-	InlineCitations *bool  `json:"inlineCitations,omitempty"`
-}
-
 // WebSearchBochaConfig 博查搜索配置
 type WebSearchBochaConfig struct {
 	APIKey  string `json:"apiKey,omitempty"`
@@ -362,15 +348,13 @@ type WebSearchGoogleConfig struct {
 // WebSearchConfig Web 搜索配置
 type WebSearchConfig struct {
 	Enabled         *bool                      `json:"enabled,omitempty"`
-	Provider        string                     `json:"provider,omitempty"` // "brave"|"perplexity"|"grok"
-	APIKey          string                     `json:"apiKey,omitempty"`
-	MaxResults      *int                       `json:"maxResults,omitempty"`
-	TimeoutSeconds  *int                       `json:"timeoutSeconds,omitempty"`
-	CacheTTLMinutes *int                       `json:"cacheTtlMinutes,omitempty"`
-	Perplexity      *WebSearchPerplexityConfig `json:"perplexity,omitempty"`
-	Grok            *WebSearchGrokConfig       `json:"grok,omitempty"`
-	Bocha           *WebSearchBochaConfig      `json:"bocha,omitempty"`
-	Google          *WebSearchGoogleConfig     `json:"google,omitempty"`
+	Provider        string                   `json:"provider,omitempty"` // "bocha"|"google"
+	APIKey          string                   `json:"apiKey,omitempty"`
+	MaxResults      *int                     `json:"maxResults,omitempty"`
+	TimeoutSeconds  *int                     `json:"timeoutSeconds,omitempty"`
+	CacheTTLMinutes *int                     `json:"cacheTtlMinutes,omitempty"`
+	Bocha           *WebSearchBochaConfig    `json:"bocha,omitempty"`
+	Google          *WebSearchGoogleConfig   `json:"google,omitempty"`
 }
 
 // WebFetchFirecrawlConfig Firecrawl 配置

@@ -51,7 +51,7 @@ func handleMediaTrendingFetch(ctx *MethodHandlerContext) {
 		limit = int(l)
 	}
 
-	fetchCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	fetchCtx, cancel := context.WithTimeout(ctx.Ctx, 15*time.Second)
 	defer cancel()
 
 	if source != "" {
@@ -111,7 +111,7 @@ func handleMediaTrendingHealth(ctx *MethodHandlerContext) {
 	}
 
 	// Probe each source with limit=1 to check health
-	probeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx.Ctx, 15*time.Second)
 	defer cancel()
 	_, results := sub.Aggregator.FetchAll(probeCtx, "all", 1)
 
@@ -554,7 +554,7 @@ func handleMediaToolsList(ctx *MethodHandlerContext) {
 		DraftStore:     sub.DraftStore,
 		Aggregator:     sub.Aggregator,
 		EnablePublish:  sub.PublishHistory != nil,
-		EnableInteract: false, // TODO: detect from registered interactor
+		EnableInteract: sub.GetTool(media.ToolSocialInteract) != nil,
 	}
 	defs := media.DefaultMediaToolDefs(cfg)
 

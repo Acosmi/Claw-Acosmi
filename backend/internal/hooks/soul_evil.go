@@ -224,17 +224,10 @@ type ApplySoulEvilParams struct {
 // --- 辅助函数 ---
 
 func clampChance(value *float64) float64 {
-	if value == nil || !math.IsInf(*value, 0) == false || math.IsNaN(*value) {
-		if value == nil {
-			return 0
-		}
-		v := *value
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return 0
-		}
-		return math.Min(1, math.Max(0, v))
+	if value == nil || math.IsInf(*value, 0) || math.IsNaN(*value) {
+		return 0
 	}
-	return 0
+	return math.Min(1, math.Max(0, *value))
 }
 
 var purgeAtRe = regexp.MustCompile(`^([01]?\d|2[0-3]):([0-5]\d)$`)

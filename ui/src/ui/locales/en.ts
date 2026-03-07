@@ -214,6 +214,18 @@ export const enMessages: Record<string, string> = {
   "tools.browser.evaluateEnabled.desc": "When disabled, the agent cannot execute JS in the browser (evaluate action)",
   "tools.browser.headless": "Headless Mode",
   "tools.browser.headless.desc": "Run browser without UI (recommended for server environments)",
+  "tools.browser.ext.title": "Chrome Extension",
+  "tools.browser.ext.desc": "Install the browser extension to let AI agents control your Chrome tabs (click, type, navigate, read content).",
+  "tools.browser.ext.installBtn": "Extension Install Guide",
+  "tools.browser.ext.refreshBtn": "Refresh Status",
+  "tools.browser.ext.checking": "Checking…",
+  "tools.browser.ext.connected": "Connected",
+  "tools.browser.ext.notConnected": "Not Connected",
+  "tools.browser.ext.unavailable": "Unavailable",
+  "tools.browser.ext.statusOk": "Extension relay running and extension connected.",
+  "tools.browser.ext.statusRelayOnly": "Relay service running but extension not connected. Please install the extension and connect.",
+  "tools.browser.ext.statusOff": "Relay service not started. Ensure Gateway is running with browser features enabled.",
+  "tools.browser.ext.statusError": "Cannot reach Gateway service. Please ensure it is running.",
 
   // ── Memory sub-tabs ──
   "memory.tab.sessions": "Sessions",

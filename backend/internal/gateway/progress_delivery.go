@@ -97,6 +97,50 @@ func buildRemoteProgressCallback(channelMgr *channels.Manager, target progressDe
 	}
 }
 
+// buildChatProgressCallback 创建 WebSocket chat.progress 事件推送回调。
+// 用于 chat.send / agent RPC 路径 — 通过 Broadcaster 推送进度到前端聊天区域。
+func buildChatProgressCallback(broadcaster *Broadcaster, sessionKey string) func(context.Context, runner.ProgressUpdate) runner.ProgressReportStatus {
+	if broadcaster == nil || sessionKey == "" {
+		return nil
+	}
+
+	var mu sync.Mutex
+	var lastSentAt time.Time
+	var lastFingerprint string
+
+	return func(ctx context.Context, update runner.ProgressUpdate) runner.ProgressReportStatus {
+		summary := strings.TrimSpace(update.Summary)
+		if summary == "" {
+			return runner.ProgressReportStatus{}
+		}
+
+		fingerprint := fmt.Sprintf("%s|%s|%d", summary, update.Phase, update.Percent)
+		now := time.Now()
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		if fingerprint == lastFingerprint {
+			return runner.ProgressReportStatus{Throttled: true}
+		}
+		if !lastSentAt.IsZero() && now.Sub(lastSentAt) < remoteProgressMinInterval {
+			return runner.ProgressReportStatus{Throttled: true}
+		}
+
+		broadcaster.Broadcast("chat.progress", map[string]interface{}{
+			"sessionKey": sessionKey,
+			"summary":    summary,
+			"phase":      update.Phase,
+			"percent":    update.Percent,
+			"ts":         now.UnixMilli(),
+		}, &BroadcastOptions{DropIfSlow: true})
+
+		lastFingerprint = fingerprint
+		lastSentAt = now
+		return runner.ProgressReportStatus{RemoteDelivered: true}
+	}
+}
+
 func formatRemoteProgressText(update runner.ProgressUpdate) string {
 	summary := strings.TrimSpace(update.Summary)
 	if summary == "" {

@@ -109,3 +109,62 @@ func TestDispatchInboundMessage_PassesProgressCallback(t *testing.T) {
 		t.Fatalf("unexpected OnProgress type: %T", captured.OnProgress)
 	}
 }
+
+func TestBuildChatProgressCallback_BroadcastsAndThrottles(t *testing.T) {
+	t.Parallel()
+
+	bc := NewBroadcaster()
+	cb := buildChatProgressCallback(bc, "sess-123")
+	if cb == nil {
+		t.Fatal("expected non-nil callback")
+	}
+
+	// First call should deliver
+	first := cb(context.Background(), runner.ProgressUpdate{
+		Summary: "Compiling",
+		Phase:   "build",
+		Percent: 30,
+	})
+	if !first.RemoteDelivered {
+		t.Fatalf("expected first update delivered: %+v", first)
+	}
+
+	// Same fingerprint → throttled
+	dup := cb(context.Background(), runner.ProgressUpdate{
+		Summary: "Compiling",
+		Phase:   "build",
+		Percent: 30,
+	})
+	if !dup.Throttled {
+		t.Fatalf("expected duplicate to be throttled: %+v", dup)
+	}
+
+	// Different summary but within interval → throttled
+	diff := cb(context.Background(), runner.ProgressUpdate{
+		Summary: "Running tests",
+		Phase:   "test",
+		Percent: 60,
+	})
+	if !diff.Throttled {
+		t.Fatalf("expected interval-throttled: %+v", diff)
+	}
+}
+
+func TestBuildChatProgressCallback_NilBroadcaster(t *testing.T) {
+	t.Parallel()
+
+	cb := buildChatProgressCallback(nil, "sess-123")
+	if cb != nil {
+		t.Fatal("expected nil callback for nil broadcaster")
+	}
+}
+
+func TestBuildChatProgressCallback_EmptySessionKey(t *testing.T) {
+	t.Parallel()
+
+	bc := NewBroadcaster()
+	cb := buildChatProgressCallback(bc, "")
+	if cb != nil {
+		t.Fatal("expected nil callback for empty sessionKey")
+	}
+}

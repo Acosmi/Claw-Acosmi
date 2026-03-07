@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -28,6 +29,7 @@ type MethodHandlerContext struct {
 	Client  *GatewayClient
 	Context *GatewayMethodContext
 	Respond RespondFunc
+	Ctx     context.Context // 请求级 context，支持取消传播
 }
 
 // GatewayClient 已连接客户端信息。
@@ -394,6 +396,7 @@ func HandleGatewayRequest(
 		Client:  client,
 		Context: ctx,
 		Respond: respond,
+		Ctx:     context.Background(),
 	})
 }
 

@@ -324,6 +324,7 @@ func handleAgentRPC(ctx *MethodHandlerContext) {
 			RunID:      runId,
 			Ctx:        pipelineCtx,
 			Dispatcher: dispatcher,
+			OnProgress: buildChatProgressCallback(broadcaster, sessionKey),
 		})
 
 		if result.Error != nil {

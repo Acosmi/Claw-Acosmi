@@ -118,6 +118,11 @@ func (t *PlaywrightNativeTools) Screenshot(ctx context.Context, opts PWTargetOpt
 	return cdp.Screenshot(ctx, opts)
 }
 
+func (t *PlaywrightNativeTools) AnnotateSOM(ctx context.Context, opts PWTargetOpts) ([]byte, []SOMAnnotation, error) {
+	cdp := NewCDPPlaywrightTools(t.config.CDPURL, t.logger)
+	return cdp.AnnotateSOM(ctx, opts)
+}
+
 func (t *PlaywrightNativeTools) CookiesGet(ctx context.Context, opts PWTargetOpts) ([]map[string]any, error) {
 	cdp := NewCDPPlaywrightTools(t.config.CDPURL, t.logger)
 	return cdp.CookiesGet(ctx, opts)

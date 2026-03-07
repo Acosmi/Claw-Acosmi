@@ -78,6 +78,28 @@ type GatewayState struct {
 	// 用于 subagent.help.resolve RPC 将用户回复路由到正确的子智能体。
 	agentChannelsMu sync.RWMutex
 	agentChannels   map[string]*agentChannelRef // help request msgID → channel ref
+
+	// Phase 4.1: 自动启动的 Chrome 实例（可选 — 仅在自动启动时非 nil）
+	// 由 EnsureChrome() 创建，关闭时需 Stop() 释放。
+	managedChrome managedChromeInstance
+
+	// Phase 2: Extension Relay 服务器（可选 — 浏览器启用时创建）
+	// 桥接 Chrome 扩展和 Agent 工具层，关闭时需 Close() 释放。
+	extensionRelay extensionRelayInstance
+}
+
+// managedChromeInstance is an interface for an auto-launched Chrome process.
+// Implemented by browser.ChromeInstance. Defined here to avoid importing browser in boot.go.
+type managedChromeInstance interface {
+	Stop() error
+}
+
+// extensionRelayInstance is an interface for the Chrome extension relay server.
+// Implemented by browser.ExtensionRelay. Defined here to avoid importing browser in boot.go.
+type extensionRelayInstance interface {
+	Close() error
+	Port() int
+	AuthToken() string
 }
 
 // BootPhase 网关启动阶段。

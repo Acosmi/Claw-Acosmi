@@ -33,7 +33,7 @@ type BrowserServer struct {
 // ServerOptions configures the BrowserServer.
 type ServerOptions struct {
 	Host            string // default "127.0.0.1"
-	Port            int    // default BrowserControlPort
+	Port            int    // default ResolveBrowserControlPort()
 	AuthToken       string // optional Bearer token
 	Logger          *slog.Logger
 	PlaywrightTools PlaywrightTools // optional; defaults to StubPlaywrightTools
@@ -47,7 +47,7 @@ func NewBrowserServer(config *ResolvedBrowserConfig, client *Client, opts Server
 	}
 	port := opts.Port
 	if port == 0 {
-		port = BrowserControlPort
+		port = ResolveBrowserControlPort()
 	}
 	logger := opts.Logger
 	if logger == nil {

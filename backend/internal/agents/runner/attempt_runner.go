@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Acosmi/ClawAcosmi/internal/browser"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/capabilities"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/llmclient"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/models"
@@ -154,24 +155,7 @@ type EmbeddedAttemptRunner struct {
 	// BrowserEvaluateEnabled 是否允许 browser evaluate（JS 执行），默认 true。
 	BrowserEvaluateEnabled bool
 	// BrowserController 浏览器自动化控制器（可选，nil = browser 工具不可用）
-	BrowserController interface {
-		Navigate(ctx context.Context, url string) error
-		GetContent(ctx context.Context) (string, error)
-		Click(ctx context.Context, selector string) error
-		Type(ctx context.Context, selector, text string) error
-		Screenshot(ctx context.Context) ([]byte, string, error)
-		Evaluate(ctx context.Context, script string) (any, error)
-		WaitForSelector(ctx context.Context, selector string) error
-		GoBack(ctx context.Context) error
-		GoForward(ctx context.Context) error
-		GetURL(ctx context.Context) (string, error)
-		// Phase 1: ARIA 快照 + ref 元素交互
-		SnapshotAI(ctx context.Context) (map[string]any, error)
-		ClickRef(ctx context.Context, ref string) error
-		FillRef(ctx context.Context, ref, text string) error
-		// Phase 4: Mariner AI 循环
-		AIBrowse(ctx context.Context, goal string) (string, error)
-	}
+	BrowserController browser.BrowserController
 	// WebSearchProvider 网页搜索 provider（可选，nil = web_search 工具不可用）
 	WebSearchProvider interface {
 		Search(ctx context.Context, query string, maxResults int) ([]WebSearchResult, error)

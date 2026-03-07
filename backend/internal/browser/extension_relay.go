@@ -37,6 +37,13 @@ type ExtensionRelay struct {
 	targets     sync.Map // map[targetID]*relayTarget
 	sessions    sync.Map // map[sessionID]*relaySession
 	nextSession int64
+
+	// Extension mode: when Chrome extension connects without a CDP target,
+	// it enters extension mode where chrome.debugger API handles CDP.
+	extConn   *websocket.Conn // active extension connection
+	extMu     sync.Mutex
+	extPending sync.Map // map[requestID]chan json.RawMessage — pending CDP requests
+	extNextID  int64
 }
 
 // relayTarget tracks a connected CDP target.
@@ -194,19 +201,10 @@ func (r *ExtensionRelay) handleWS(w http.ResponseWriter, req *http.Request) {
 
 	r.logger.Info("extension connected", "cdpTarget", cdpTarget)
 
-	// If no CDP target specified, operate in echo/log mode.
+	// Extension mode: no CDP target = Chrome extension using chrome.debugger API.
 	if cdpTarget == "" {
-		r.logger.Warn("extension relay: no CDP target specified, operating in log-only mode")
-		for {
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-					r.logger.Error("extension relay read error", "err", err)
-				}
-				return
-			}
-			r.logger.Debug("extension message (no target)", "size", len(msg))
-		}
+		r.handleExtensionMode(conn)
+		return
 	}
 
 	// Connect to the CDP target.
@@ -493,6 +491,192 @@ func (r *ExtensionRelay) Close() error {
 	r.closed = true
 	r.logger.Info("extension relay closing")
 	return r.server.Close()
+}
+
+// ---- Extension Mode (chrome.debugger API bridge) ----
+
+// handleExtensionMode manages a Chrome extension connection.
+// The extension uses chrome.debugger API internally and communicates
+// via JSON messages with type-based routing.
+func (r *ExtensionRelay) handleExtensionMode(conn *websocket.Conn) {
+	r.extMu.Lock()
+	if r.extConn != nil {
+		// Close previous extension connection.
+		r.extConn.Close()
+	}
+	r.extConn = conn
+	r.extMu.Unlock()
+
+	r.logger.Info("extension connected in extension mode (chrome.debugger)")
+
+	defer func() {
+		r.extMu.Lock()
+		if r.extConn == conn {
+			r.extConn = nil
+		}
+		r.extMu.Unlock()
+		r.logger.Info("extension disconnected")
+	}()
+
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+				r.logger.Debug("extension read error", "err", err)
+			}
+			return
+		}
+		r.handleExtensionMessage(msg)
+	}
+}
+
+// handleExtensionMessage processes a message from the Chrome extension.
+func (r *ExtensionRelay) handleExtensionMessage(msg []byte) {
+	var envelope struct {
+		Type   string          `json:"type"`
+		ID     int64           `json:"id,omitempty"`
+		TabID  int             `json:"tabId,omitempty"`
+		Method string          `json:"method,omitempty"`
+		Params json.RawMessage `json:"params,omitempty"`
+		Result json.RawMessage `json:"result,omitempty"`
+		Error  string          `json:"error,omitempty"`
+		Tabs   json.RawMessage `json:"tabs,omitempty"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		r.logger.Debug("extension message parse error", "err", err)
+		return
+	}
+
+	switch envelope.Type {
+	case "cdp_response":
+		// Resolve pending CDP request.
+		if ch, ok := r.extPending.LoadAndDelete(envelope.ID); ok {
+			respCh := ch.(chan json.RawMessage)
+			if envelope.Error != "" {
+				// Send error as JSON.
+				errJSON, _ := json.Marshal(map[string]string{"error": envelope.Error})
+				respCh <- errJSON
+			} else {
+				respCh <- envelope.Result
+			}
+		}
+
+	case "cdp_event":
+		// Log CDP events from extension (could be forwarded to subscribers).
+		r.logger.Debug("extension cdp event", "method", envelope.Method, "tabId", envelope.TabID)
+
+	case "tab_list":
+		r.logger.Debug("extension tab list received", "data", string(envelope.Tabs))
+
+	case "tab_attached":
+		r.logger.Info("extension tab attached", "tabId", envelope.TabID)
+
+	case "tab_detached":
+		r.logger.Info("extension tab detached", "tabId", envelope.TabID)
+
+	case "tab_closed":
+		r.logger.Info("extension tab closed", "tabId", envelope.TabID)
+
+	case "tab_created":
+		r.logger.Info("extension tab created", "tabId", envelope.TabID)
+
+	default:
+		r.logger.Debug("extension unknown message type", "type", envelope.Type)
+	}
+}
+
+// SendCDPToExtension sends a CDP command through the extension and waits for a response.
+// This is the bridge between agent tools and the Chrome extension's chrome.debugger API.
+func (r *ExtensionRelay) SendCDPToExtension(method string, params map[string]any, tabID int, timeout time.Duration) (json.RawMessage, error) {
+	r.extMu.Lock()
+	conn := r.extConn
+	r.extMu.Unlock()
+
+	if conn == nil {
+		return nil, fmt.Errorf("no Chrome extension connected")
+	}
+
+	// Generate request ID.
+	r.extMu.Lock()
+	r.extNextID++
+	reqID := r.extNextID
+	r.extMu.Unlock()
+
+	// Create response channel.
+	respCh := make(chan json.RawMessage, 1)
+	r.extPending.Store(reqID, respCh)
+	defer r.extPending.Delete(reqID)
+
+	// Send CDP command to extension.
+	cmd := map[string]any{
+		"type":   "cdp",
+		"id":     reqID,
+		"method": method,
+		"tabId":  tabID,
+	}
+	if params != nil {
+		cmd["params"] = params
+	}
+
+	cmdJSON, err := json.Marshal(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("marshal cdp command: %w", err)
+	}
+
+	if err := conn.WriteMessage(websocket.TextMessage, cmdJSON); err != nil {
+		return nil, fmt.Errorf("send cdp command to extension: %w", err)
+	}
+
+	// Wait for response with timeout.
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case result := <-respCh:
+		// Check for error response.
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(result, &errResp) == nil && errResp.Error != "" {
+			return nil, fmt.Errorf("cdp via extension: %s", errResp.Error)
+		}
+		return result, nil
+	case <-timer.C:
+		return nil, fmt.Errorf("cdp via extension: timeout after %s", timeout)
+	}
+}
+
+// SendExtensionCommand sends a non-CDP command to the extension (e.g., list_tabs, attach, detach).
+func (r *ExtensionRelay) SendExtensionCommand(cmdType string, extra map[string]any) error {
+	r.extMu.Lock()
+	conn := r.extConn
+	r.extMu.Unlock()
+
+	if conn == nil {
+		return fmt.Errorf("no Chrome extension connected")
+	}
+
+	msg := map[string]any{"type": cmdType}
+	for k, v := range extra {
+		msg[k] = v
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	return conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// IsExtensionConnected returns true if a Chrome extension is currently connected.
+func (r *ExtensionRelay) IsExtensionConnected() bool {
+	r.extMu.Lock()
+	defer r.extMu.Unlock()
+	return r.extConn != nil
 }
 
 func generateSecureToken() (string, error) {

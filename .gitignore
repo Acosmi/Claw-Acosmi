@@ -43,8 +43,17 @@ Swabble/
 Argus/go-sensory/server
 Argus/build/
 
-# Docs: 屏蔽整个 docs 目录
-docs/
+# Docs: 屏蔽 docs 目录，但开放 docs/skills
+docs/*
+!docs/skills/
+# docs/skills: 屏蔽重型捆绑资产（XSD/Python/字体/二进制），保留文档
+docs/skills/**/*.xsd
+docs/skills/**/*.ttf
+docs/skills/**/*.py
+docs/skills/**/*.gz
+docs/skills/**/*.pdf
+docs/skills/**/*.tmp
+docs/skills/**/.DS_Store
 
 # 隐私与安全 — 严禁上传
 *.pem
@@ -61,6 +70,7 @@ memory-system-audit-report-*.md
 
 backend/acosmi
 backend/openacosmi
+backend/browser-mcp
 
 # 其他编译产物
 backend/internal/memory/go-api/server

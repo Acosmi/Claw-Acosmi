@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Acosmi/ClawAcosmi/internal/browser"
 	"github.com/Acosmi/ClawAcosmi/internal/infra"
 	"github.com/Acosmi/ClawAcosmi/internal/sandbox"
 )
@@ -120,24 +121,7 @@ type ToolExecParams struct {
 	// Phase 6: 合约持久化（可选，nil = 恢复上下文不可用）
 	ContractStore ContractPersistence
 	// BrowserController 浏览器控制器（可选，nil = browser 工具不可用）
-	BrowserController interface {
-		Navigate(ctx context.Context, url string) error
-		GetContent(ctx context.Context) (string, error)
-		Click(ctx context.Context, selector string) error
-		Type(ctx context.Context, selector, text string) error
-		Screenshot(ctx context.Context) ([]byte, string, error)
-		Evaluate(ctx context.Context, script string) (any, error)
-		WaitForSelector(ctx context.Context, selector string) error
-		GoBack(ctx context.Context) error
-		GoForward(ctx context.Context) error
-		GetURL(ctx context.Context) (string, error)
-		// Phase 1: ARIA 快照 + ref 元素交互
-		SnapshotAI(ctx context.Context) (map[string]any, error)
-		ClickRef(ctx context.Context, ref string) error
-		FillRef(ctx context.Context, ref, text string) error
-		// Phase 4: Mariner AI 循环
-		AIBrowse(ctx context.Context, goal string) (string, error)
-	}
+	BrowserController browser.BrowserController
 	// MediaSender 媒体文件发送器（可选，nil = send_media 工具不可用）
 	MediaSender interface {
 		SendMedia(ctx context.Context, channelID, to string, data []byte, fileName, mimeType, message string) error
@@ -1151,7 +1135,7 @@ func isNonWebChannel(sessionKey string) bool {
 // executeWebSearch 执行联网搜索并返回格式化结果。
 func executeWebSearch(ctx context.Context, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
 	if params.WebSearchProvider == nil {
-		return "[web_search is not available: no search provider configured. Configure bocha or google search API key in settings.]", nil
+		return "[web_search is not available: no search provider configured. Configure Bocha (default) or Google search API key in settings.]", nil
 	}
 
 	var input struct {
@@ -1230,8 +1214,9 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 		Selector string `json:"selector"`
 		Text     string `json:"text"`
 		Script   string `json:"script"`
-		Ref      string `json:"ref"`  // Phase 1: ARIA ref 标识符（如 "e1"），用于 click_ref/fill_ref
-		Goal     string `json:"goal"` // Phase 4: ai_browse 意图目标
+		Ref      string `json:"ref"`       // Phase 1: ARIA ref 标识符（如 "e1"），用于 click_ref/fill_ref
+		Goal     string `json:"goal"`      // Phase 4: ai_browse 意图目标
+		TargetID string `json:"target_id"` // Tab management: target ID for close_tab/switch_tab
 	}
 	if err := json.Unmarshal(inputJSON, &input); err != nil {
 		return "", fmt.Errorf("parse browser input: %w", err)
@@ -1431,6 +1416,36 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 		}
 		return "[observe failed: no snapshot or screenshot available]", nil
 
+	case "annotate_som":
+		// Phase 4.3: SOM 视觉标注 — 注入数字编号覆盖层 + 截图。
+		screenshot, mimeType, annotations, err := bc.AnnotateSOM(ctx)
+		if err != nil {
+			return fmt.Sprintf("[Browser annotate_som error: %s]", err), nil
+		}
+		var annotText strings.Builder
+		annotText.WriteString(fmt.Sprintf("SOM: %d interactive elements found.\n", len(annotations)))
+		for _, a := range annotations {
+			text := a.Text
+			if len(text) > 40 {
+				text = text[:40] + "..."
+			}
+			annotText.WriteString(fmt.Sprintf("[%d] %s (role=%s) %q\n", a.Index, a.Tag, a.Role, text))
+		}
+		if len(screenshot) > 0 {
+			blocks := []map[string]interface{}{
+				{"type": "text", "text": annotText.String()},
+				{"type": "image", "source": map[string]interface{}{
+					"type":       "base64",
+					"media_type": mimeType,
+					"data":       base64.StdEncoding.EncodeToString(screenshot),
+				}},
+			}
+			if blocksJSON, jErr := json.Marshal(blocks); jErr == nil {
+				return "__MULTIMODAL__" + string(blocksJSON), nil
+			}
+		}
+		return annotText.String(), nil
+
 	case "click_ref":
 		// 通过 ARIA ref 点击元素，比 CSS selector 更健壮。
 		if input.Ref == "" {
@@ -1484,6 +1499,71 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 		}
 		// 附带最终截图
 		return browserResultWithScreenshot(ctx, bc, fmt.Sprintf("AI Browse completed.\n\n%s", result)), nil
+
+	// ---------- Phase 4.4: GIF Recording ----------
+
+	case "start_gif_recording":
+		if bc.IsGIFRecording() {
+			return "[GIF recording already in progress]", nil
+		}
+		bc.StartGIFRecording()
+		return "GIF recording started. Subsequent browser actions will be captured.", nil
+
+	case "stop_gif_recording":
+		if !bc.IsGIFRecording() {
+			return "[No GIF recording in progress]", nil
+		}
+		gifData, frameCount, err := bc.StopGIFRecording()
+		if err != nil {
+			return fmt.Sprintf("[Browser stop_gif_recording error: %s]", err), nil
+		}
+		blocks := []map[string]interface{}{
+			{"type": "text", "text": fmt.Sprintf("GIF recording complete: %d frames, %d bytes", frameCount, len(gifData))},
+			{"type": "image", "source": map[string]interface{}{
+				"type":       "base64",
+				"media_type": "image/gif",
+				"data":       base64.StdEncoding.EncodeToString(gifData),
+			}},
+		}
+		if blocksJSON, jErr := json.Marshal(blocks); jErr == nil {
+			return "__MULTIMODAL__" + string(blocksJSON), nil
+		}
+		return fmt.Sprintf("GIF recording complete: %d bytes", len(gifData)), nil
+
+	// ---------- Tab Management ----------
+
+	case "list_tabs":
+		tabs, err := bc.ListTabs(ctx)
+		if err != nil {
+			return fmt.Sprintf("[Browser list_tabs error: %s]", err), nil
+		}
+		tabsJSON, _ := json.Marshal(tabs)
+		return fmt.Sprintf("## Browser Tabs\n\n%s", string(tabsJSON)), nil
+
+	case "create_tab":
+		tab, err := bc.CreateTab(ctx, input.URL)
+		if err != nil {
+			return fmt.Sprintf("[Browser create_tab error: %s]", err), nil
+		}
+		return fmt.Sprintf("Created new tab: id=%s url=%s", tab.ID, tab.URL), nil
+
+	case "close_tab":
+		if input.TargetID == "" {
+			return "[Error: target_id is required for close_tab action]", nil
+		}
+		if err := bc.CloseTab(ctx, input.TargetID); err != nil {
+			return fmt.Sprintf("[Browser close_tab error: %s]", err), nil
+		}
+		return fmt.Sprintf("Closed tab: %s", input.TargetID), nil
+
+	case "switch_tab":
+		if input.TargetID == "" {
+			return "[Error: target_id is required for switch_tab action]", nil
+		}
+		if err := bc.SwitchTab(ctx, input.TargetID); err != nil {
+			return fmt.Sprintf("[Browser switch_tab error: %s]", err), nil
+		}
+		return browserResultWithScreenshot(ctx, bc, fmt.Sprintf("Switched to tab: %s", input.TargetID)), nil
 
 	default:
 		return fmt.Sprintf("[Unknown browser action: %s]", input.Action), nil

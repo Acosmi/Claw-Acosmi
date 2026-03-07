@@ -25,6 +25,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // BrowserHandlers 返回 browser.* 方法映射。
@@ -218,8 +220,10 @@ func handleBrowserRequest(ctx *MethodHandlerContext) {
 // ---------- 辅助函数 ----------
 
 func resolveBrowserControlPort() int {
-	// TS: 默认 9222（Chrome DevTools Protocol 端口）
-	return 9222
+	// 从 Gateway 端口推导 browser control 端口。
+	// 公式: gateway_port + 2（与 config/portdefaults.go DeriveDefaultBrowserControlPort 一致）。
+	gatewayPort := config.ResolveGatewayPort(nil)
+	return config.DeriveDefaultBrowserControlPort(gatewayPort)
 }
 
 // resolveBrowserNodeTarget 解析 browser node target（TS: resolveBrowserNodeTarget）

@@ -541,6 +541,7 @@ func handleChatSend(ctx *MethodHandlerContext) {
 			Dispatcher:   dispatcher,
 			OnToolResult: onToolResult,
 			OnToolEvent:  onToolEvent,
+			OnProgress:   buildChatProgressCallback(broadcaster, sessionKey),
 		})
 
 		if result.Error != nil {
@@ -702,6 +703,7 @@ func handleChatSend(ctx *MethodHandlerContext) {
 				notifyText = fmt.Sprintf("[异步任务完成] %s\n结果: %s",
 					truncateStr(text, 60), truncateForLog(combinedReply, 150))
 			}
+			// 1. 保留原有通知（向后兼容 — 看板、通知铃铛）
 			broadcaster.Broadcast("channel.message.incoming", map[string]interface{}{
 				"sessionKey": sessionKey,
 				"channel":    "webchat",
@@ -710,6 +712,18 @@ func handleChatSend(ctx *MethodHandlerContext) {
 				"ts":         time.Now().UnixMilli(),
 				"async":      true,
 			}, nil)
+
+			// 2. 以 chat.message 形式回填到聊天区域，用户可看到完整异步结果
+			if combinedReply != "" {
+				broadcaster.Broadcast("chat.message", map[string]interface{}{
+					"sessionKey":  sessionKey,
+					"role":        "assistant",
+					"text":        combinedReply,
+					"channel":     "webchat",
+					"ts":          time.Now().UnixMilli(),
+					"asyncResult": true,
+				}, nil)
+			}
 		}
 
 		// 广播 final

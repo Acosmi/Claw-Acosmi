@@ -276,6 +276,8 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (state === "final" || state === "error" || state === "aborted") {
       resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
       void flushChatQueueForEvent(host as unknown as Parameters<typeof flushChatQueueForEvent>[0]);
+      // 清除进度指示器
+      (host as any).chatProgress = null;
       const runId = payload?.runId;
       if (runId && host.refreshSessionsAfterChat.has(runId)) {
         host.refreshSessionsAfterChat.delete(runId);
@@ -334,6 +336,30 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (payload) {
       showPermissionPopup(payload);
       const app = host as unknown as OpenAcosmiApp;
+      if (typeof app.requestUpdate === "function") {
+        app.requestUpdate();
+      }
+    }
+    return;
+  }
+
+  // 异步进度推送（chat.progress 事件）
+  if (evt.event === "chat.progress") {
+    const payload = evt.payload as {
+      sessionKey?: string;
+      summary?: string;
+      phase?: string;
+      percent?: number;
+      ts?: number;
+    } | undefined;
+    if (payload?.sessionKey === host.sessionKey && payload?.summary) {
+      const app = host as unknown as OpenAcosmiApp;
+      (app as any).chatProgress = {
+        summary: payload.summary,
+        phase: payload.phase,
+        percent: payload.percent,
+        ts: payload.ts ?? Date.now(),
+      };
       if (typeof app.requestUpdate === "function") {
         app.requestUpdate();
       }

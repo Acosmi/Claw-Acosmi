@@ -141,7 +141,7 @@ func IsAgentBootstrapEvent(event *InternalHookEvent) bool {
 	if _, ok := event.Context["workspaceDir"].(string); !ok {
 		return false
 	}
-	if _, ok := event.Context["bootstrapFiles"]; !ok {
+	if _, ok := event.Context["workspaceBootstrapFiles"]; !ok {
 		return false
 	}
 	return true

@@ -345,6 +345,9 @@ func (t *CDPPlaywrightTools) Navigate(ctx context.Context, opts PWNavigateOpts) 
 		return fmt.Errorf("url is required")
 	}
 
+	// Phase 4.2: Invalidate selector cache on navigation.
+	t.invalidateSelectorCache()
+
 	timeout := NormalizeTimeoutMs(opts.TimeoutMs, 30_000)
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
 	defer cancel()

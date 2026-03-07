@@ -47,14 +47,26 @@ var (
 )
 
 // enforceInteractRateLimit 确保写操作之间间隔 ≥5 秒，防止触发平台反爬。
-func enforceInteractRateLimit() {
+// 支持 context 取消，避免阻塞整个 goroutine。
+func enforceInteractRateLimit(ctx context.Context) error {
 	interactLastWriteMu.Lock()
-	defer interactLastWriteMu.Unlock()
+	elapsed := time.Since(interactLastWrite)
+	interactLastWriteMu.Unlock()
 
-	if elapsed := time.Since(interactLastWrite); elapsed < interactMinInterval {
-		time.Sleep(interactMinInterval - elapsed)
+	if elapsed < interactMinInterval {
+		timer := time.NewTimer(interactMinInterval - elapsed)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
+
+	interactLastWriteMu.Lock()
 	interactLastWrite = time.Now()
+	interactLastWriteMu.Unlock()
+	return nil
 }
 
 // ---------- 工具构造器 ----------
@@ -182,7 +194,9 @@ func executeReplyComment(
 		return nil, err
 	}
 
-	enforceInteractRateLimit()
+	if err := enforceInteractRateLimit(ctx); err != nil {
+		return nil, err
+	}
 	if err := interactor.ReplyComment(ctx, noteID, commentID, message); err != nil {
 		return nil, fmt.Errorf("reply comment: %w", err)
 	}
@@ -233,7 +247,9 @@ func executeReplyDM(
 		return nil, err
 	}
 
-	enforceInteractRateLimit()
+	if err := enforceInteractRateLimit(ctx); err != nil {
+		return nil, err
+	}
 	if err := interactor.ReplyDM(ctx, userID, message); err != nil {
 		return nil, fmt.Errorf("reply DM: %w", err)
 	}

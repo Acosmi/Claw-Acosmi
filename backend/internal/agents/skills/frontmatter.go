@@ -8,7 +8,10 @@ package skills
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
+
+	"github.com/adrg/frontmatter"
 )
 
 // SkillInstallSpec 技能安装规格。
@@ -72,30 +75,35 @@ const MANIFEST_KEY = "openacosmi"
 var LEGACY_MANIFEST_KEYS = []string{"pi-ai", "pi"}
 
 // ParseFrontmatter 解析 SKILL.md frontmatter。
-// 对应 TS: parseFrontmatter
+// 使用 adrg/frontmatter 库解析完整 YAML/TOML/JSON frontmatter，
+// 返回 map[string]string 以保持向后兼容。复杂值（对象/数组）序列化为 JSON 字符串。
 func ParseFrontmatter(content string) ParsedSkillFrontmatter {
 	result := make(ParsedSkillFrontmatter)
 	if !strings.HasPrefix(content, "---") {
 		return result
 	}
-	end := strings.Index(content[3:], "---")
-	if end < 0 {
+
+	var raw map[string]interface{}
+	_, err := frontmatter.Parse(strings.NewReader(content), &raw)
+	if err != nil || raw == nil {
 		return result
 	}
-	frontmatter := content[3 : 3+end]
-	for _, line := range strings.Split(frontmatter, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		idx := strings.Index(line, ":")
-		if idx < 0 {
-			continue
-		}
-		key := strings.TrimSpace(line[:idx])
-		value := strings.TrimSpace(line[idx+1:])
-		if key != "" {
-			result[key] = value
+
+	for k, v := range raw {
+		switch val := v.(type) {
+		case string:
+			result[k] = val
+		case bool:
+			result[k] = fmt.Sprintf("%v", val)
+		case int:
+			result[k] = fmt.Sprintf("%d", val)
+		case float64:
+			result[k] = fmt.Sprintf("%g", val)
+		default:
+			// Objects, arrays, nested YAML → JSON string for backward compat
+			if b, jsonErr := json.Marshal(val); jsonErr == nil {
+				result[k] = string(b)
+			}
 		}
 	}
 	return result

@@ -3,22 +3,28 @@
 // and browser session management.
 package browser
 
-// Constants for browser control infrastructure.
-const (
-	// GatewayPort is the fixed port for the Gateway WebSocket.
-	GatewayPort = 19001
-	// BridgePort is the fixed port for the Bridge service.
-	BridgePort = 18790
-	// BrowserControlPort is the fixed port for the browser control server.
-	BrowserControlPort = 18791
-	// CanvasPort is reserved for the canvas service.
-	CanvasPort = 18793
+import "github.com/Acosmi/ClawAcosmi/internal/config"
 
+// 端口常量通过 Gateway 端口推导，与 config/portdefaults.go 保持一致。
+// 不再硬编码独立常量，避免与推导链冲突。
+var (
 	// CDPPortRangeStart is the start of the CDP port range.
-	CDPPortRangeStart = 18800
+	CDPPortRangeStart = config.DefaultBrowserCDPPortRangeStart
 	// CDPPortRangeEnd is the end of the CDP port range.
-	CDPPortRangeEnd = 18899
+	CDPPortRangeEnd = config.DefaultBrowserCDPPortRangeEnd
+)
 
+// ResolveBrowserControlPort returns the browser control port derived from gateway port.
+func ResolveBrowserControlPort() int {
+	return config.DeriveDefaultBrowserControlPort(config.ResolveGatewayPort(nil))
+}
+
+// ResolveRelayPort returns the extension relay port (browser control port + 1).
+func ResolveRelayPort() int {
+	return ResolveBrowserControlPort() + 1
+}
+
+const (
 	// DefaultHandshakeTimeoutMs is the default WebSocket handshake timeout.
 	DefaultHandshakeTimeoutMs = 5000
 	// DefaultFetchTimeoutMs is the default timeout for HTTP fetches.

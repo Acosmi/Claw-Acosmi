@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      color: #333;
+      background: #fafafa;
+    }
+    .header {
+      background: linear-gradient(135deg, #FF4500, #FF6B35);
+      color: white;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .header h1 { font-size: 14px; font-weight: 600; }
+    .header .status {
+      margin-left: auto;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.2);
+    }
+    .header .status.connected { background: rgba(0,200,0,0.3); }
+    .header .status.error { background: rgba(255,0,0,0.3); }
+
+    .section { padding: 12px 16px; border-bottom: 1px solid #eee; }
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 8px;
+      letter-spacing: 0.5px;
+    }
+
+    .relay-config {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .relay-config input {
+      flex: 1;
+      padding: 6px 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 12px;
+      outline: none;
+    }
+    .relay-config input:focus { border-color: #FF4500; }
+
+    .btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .btn-primary { background: #FF4500; color: white; }
+    .btn-primary:hover { background: #E63E00; }
+    .btn-danger { background: #dc3545; color: white; }
+    .btn-danger:hover { background: #c82333; }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+
+    .tab-list { max-height: 200px; overflow-y: auto; }
+    .tab-item {
+      display: flex;
+      align-items: center;
+      padding: 6px 0;
+      gap: 8px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .tab-item:last-child { border-bottom: none; }
+    .tab-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ccc;
+      flex-shrink: 0;
+    }
+    .tab-dot.attached { background: #00AA00; }
+    .tab-dot.active { background: #4A90D9; }
+    .tab-info {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .tab-title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 12px;
+    }
+    .tab-url {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 10px;
+      color: #999;
+    }
+
+    .empty {
+      text-align: center;
+      color: #999;
+      padding: 16px;
+      font-size: 12px;
+    }
+
+    .footer {
+      padding: 8px 16px;
+      text-align: center;
+      font-size: 10px;
+      color: #bbb;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>OpenAcosmi</h1>
+    <span class="status" id="status">Disconnected</span>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Relay Server</div>
+    <div class="relay-config">
+      <input type="text" id="relayUrl" placeholder="ws://127.0.0.1:19004/ws">
+      <button class="btn btn-primary btn-sm" id="connectBtn">Connect</button>
+    </div>
+    <div class="relay-config" style="margin-top:6px;">
+      <input type="text" id="relayTokenInput" placeholder="Token (auto-discovered if empty)">
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Tabs</div>
+    <div class="tab-list" id="tabList">
+      <div class="empty">Loading...</div>
+    </div>
+  </div>
+
+  <div class="section" style="display:flex; gap:8px; justify-content:center;">
+    <button class="btn btn-primary btn-sm" id="attachCurrentBtn">Attach Current Tab</button>
+    <button class="btn btn-danger btn-sm" id="detachAllBtn">Detach All</button>
+  </div>
+
+  <div class="footer">Click a tab to attach/detach</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

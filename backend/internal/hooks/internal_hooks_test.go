@@ -123,8 +123,8 @@ func TestIsAgentBootstrapEvent(t *testing.T) {
 			event: &InternalHookEvent{
 				Type: HookEventAgent, Action: "bootstrap",
 				Context: map[string]interface{}{
-					"workspaceDir":   "/tmp/test",
-					"bootstrapFiles": []interface{}{},
+					"workspaceDir":            "/tmp/test",
+					"workspaceBootstrapFiles": []interface{}{},
 				},
 			},
 			expected: true,
@@ -143,7 +143,7 @@ func TestIsAgentBootstrapEvent(t *testing.T) {
 			name: "missing workspaceDir",
 			event: &InternalHookEvent{
 				Type: HookEventAgent, Action: "bootstrap",
-				Context: map[string]interface{}{"bootstrapFiles": []interface{}{}},
+				Context: map[string]interface{}{"workspaceBootstrapFiles": []interface{}{}},
 			},
 			expected: false,
 		},

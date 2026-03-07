@@ -125,6 +125,8 @@ func TestResolveArgus_TraceOutput(t *testing.T) {
 	// 验证 trace 数据结构始终包含 Layer 字段
 	t.Setenv("ARGUS_BINARY_PATH", "")
 	t.Setenv("PATH", t.TempDir()) // 确保 PATH 搜索失败
+	// mock HOME 到空目录，防止 user_bin 层发现真实安装的 argus-sensory
+	t.Setenv("HOME", t.TempDir())
 
 	result := resolveArgusBinaryFull("")
 	for i, tr := range result.Trace {

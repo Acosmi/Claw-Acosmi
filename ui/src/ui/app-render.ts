@@ -194,7 +194,7 @@ export function renderApp(state: AppViewState) {
         <div class="topbar-left">
           <div class="brand brand--topbar">
             <div class="brand-logo">
-              <img src=${basePath ? `${basePath}/brand-logo.png` : "/brand-logo.png"} alt="创宇太虚" />
+              <img src=${basePath ? `${basePath}/logo1.png` : "/logo1.png"} alt="创宇太虚" />
             </div>
             <div class="brand-text">
               <div class="brand-title">
@@ -483,6 +483,7 @@ export function renderApp(state: AppViewState) {
         browserSaving: state.browserToolSaving,
         browserError: state.browserToolError,
         browserEdits: state.browserToolEdits,
+        gatewayUrl: state.settings.gatewayUrl,
         skillsView,
         onEditChange: (pluginId, key, value) => {
           state.pluginsEditValues = {
@@ -1214,7 +1215,7 @@ export function renderApp(state: AppViewState) {
     }
 
         ${/* subagents tab 已统一到 agents 标签页，保留空分支用于向后兼容重定向 */
-      state.tab === "subagents"
+    state.tab === "subagents"
       ? nothing
       : nothing
     }

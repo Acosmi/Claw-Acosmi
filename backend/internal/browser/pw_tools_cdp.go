@@ -30,6 +30,12 @@ type CDPPlaywrightTools struct {
 	cachedSnapshotRefs RoleRefMap
 	cachedSnapshotTime time.Time
 	cachedSnapshotTTL  time.Duration // default 5s
+
+	// Phase 4.2: Stagehand-style selector cache.
+	// After resolving ref → objectID, we generate a CSS selector and cache it.
+	// On subsequent access (same page URL), we try cached selector first (zero JS eval).
+	selectorCache    map[string]string // key: "url|ref" → CSS selector
+	selectorCacheURL string            // URL when cache was populated; invalidated on navigation
 }
 
 // NewCDPPlaywrightTools creates a new CDP-based PlaywrightTools implementation.
@@ -312,6 +318,9 @@ func (t *CDPPlaywrightTools) SnapshotAI(ctx context.Context, opts PWSnapshotOpts
 	t.cachedSnapshotRefs = result.Refs
 	t.cachedSnapshotTime = time.Now()
 
+	// Phase 4.2: Invalidate selector cache — new snapshot means new ref assignments.
+	t.invalidateSelectorCache()
+
 	return map[string]any{
 		"snapshot": result.Snapshot,
 		"refs":     result.Refs,
@@ -327,6 +336,36 @@ func (t *CDPPlaywrightTools) GetCachedRefs() RoleRefMap {
 		return nil
 	}
 	return t.cachedSnapshotRefs
+}
+
+// ---------- Phase 4.2: Stagehand-style selector cache ----------
+
+// selectorCacheKey builds the cache key for a given ref on the current page URL.
+func selectorCacheKey(pageURL, ref string) string {
+	return pageURL + "|" + ref
+}
+
+// getCachedSelector returns a cached CSS selector for (pageURL, ref), or "".
+func (t *CDPPlaywrightTools) getCachedSelector(pageURL, ref string) string {
+	if t.selectorCache == nil || t.selectorCacheURL != pageURL {
+		return ""
+	}
+	return t.selectorCache[selectorCacheKey(pageURL, ref)]
+}
+
+// putCachedSelector stores a CSS selector for (pageURL, ref).
+func (t *CDPPlaywrightTools) putCachedSelector(pageURL, ref, selector string) {
+	if t.selectorCache == nil || t.selectorCacheURL != pageURL {
+		t.selectorCache = make(map[string]string)
+		t.selectorCacheURL = pageURL
+	}
+	t.selectorCache[selectorCacheKey(pageURL, ref)] = selector
+}
+
+// invalidateSelectorCache clears the selector cache (called on navigation).
+func (t *CDPPlaywrightTools) invalidateSelectorCache() {
+	t.selectorCache = nil
+	t.selectorCacheURL = ""
 }
 
 // Screenshot captures a screenshot via CDP.
@@ -356,6 +395,166 @@ func (t *CDPPlaywrightTools) Screenshot(ctx context.Context, opts PWTargetOpts) 
 	})
 	return screenshot, err
 }
+
+// ---------- Phase 4.3: SOM Visual Annotation ----------
+
+// SOMAnnotation describes a single annotated interactive element.
+type SOMAnnotation struct {
+	Index    int    `json:"index"`
+	Tag      string `json:"tag"`
+	Role     string `json:"role"`
+	Text     string `json:"text"`
+	Selector string `json:"selector"`
+}
+
+// AnnotateSOM injects visual bounding boxes with numeric IDs on all interactive
+// elements, captures a screenshot, removes overlays, and returns the annotated
+// screenshot + element list.
+//
+// This enables Set-of-Mark prompting: the LLM sees a screenshot with numbered
+// elements and can reference them by number.
+func (t *CDPPlaywrightTools) AnnotateSOM(ctx context.Context, opts PWTargetOpts) ([]byte, []SOMAnnotation, error) {
+	var screenshot []byte
+	var annotations []SOMAnnotation
+
+	err := WithCdpSocket(ctx, t.resolveTargetWsURL(opts), func(send CdpSendFn) error {
+		// Step 1: Inject annotation overlays and collect element info.
+		raw, err := send("Runtime.evaluate", map[string]any{
+			"expression": somInjectJS,
+			"returnByValue": true,
+			"awaitPromise":  false,
+		})
+		if err != nil {
+			return fmt.Errorf("som inject: %w", err)
+		}
+
+		// Parse element info from injection result.
+		var injectResp struct {
+			Result struct {
+				Value []struct {
+					Index    int    `json:"index"`
+					Tag      string `json:"tag"`
+					Role     string `json:"role"`
+					Text     string `json:"text"`
+					Selector string `json:"selector"`
+				} `json:"value"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(raw, &injectResp); err != nil {
+			t.logger.Warn("som: parse inject result failed", "err", err)
+		} else {
+			for _, el := range injectResp.Result.Value {
+				annotations = append(annotations, SOMAnnotation{
+					Index:    el.Index,
+					Tag:      el.Tag,
+					Role:     el.Role,
+					Text:     el.Text,
+					Selector: el.Selector,
+				})
+			}
+		}
+
+		// Step 2: Capture screenshot with overlays visible.
+		ssRaw, err := send("Page.captureScreenshot", map[string]any{
+			"format":           "jpeg",
+			"quality":          75,
+			"optimizeForSpeed": true,
+		})
+		if err != nil {
+			return fmt.Errorf("som screenshot: %w", err)
+		}
+		var ssResp struct {
+			Data string `json:"data"`
+		}
+		if err := json.Unmarshal(ssRaw, &ssResp); err != nil {
+			return fmt.Errorf("parse som screenshot: %w", err)
+		}
+		screenshot = []byte(ssResp.Data)
+
+		// Step 3: Remove overlays.
+		if _, err := send("Runtime.evaluate", map[string]any{
+			"expression": somCleanupJS,
+		}); err != nil {
+			t.logger.Warn("som: cleanup overlays failed", "err", err)
+		}
+
+		return nil
+	})
+
+	return screenshot, annotations, err
+}
+
+// somInjectJS is the JavaScript that injects SOM annotation overlays.
+// Returns an array of element descriptors.
+const somInjectJS = `(function() {
+	// Remove any previous SOM overlays.
+	document.querySelectorAll('[data-som-overlay]').forEach(function(e) { e.remove(); });
+
+	var all = document.querySelectorAll('*');
+	var interactive = [];
+	for (var i = 0; i < all.length; i++) {
+		var el = all[i];
+		var tag = el.tagName.toLowerCase();
+		var role = el.getAttribute('role') || '';
+		if (tag === 'button' || tag === 'a' || tag === 'input' ||
+				tag === 'select' || tag === 'textarea' ||
+				role === 'button' || role === 'link' || role === 'textbox' ||
+				role === 'checkbox' || role === 'radio' || role === 'combobox' ||
+				role === 'menuitem' || role === 'tab' || role === 'switch' ||
+				role === 'option' || role === 'treeitem' ||
+				el.tabIndex >= 0) {
+			var rect = el.getBoundingClientRect();
+			if (rect.width > 0 && rect.height > 0) {
+				interactive.push({el: el, rect: rect, tag: tag, role: role});
+			}
+		}
+	}
+
+	var colors = ['#FF0000','#00AA00','#0066FF','#FF6600','#9933FF',
+	              '#00CCCC','#FF3399','#66CC00','#3366FF','#CC3300'];
+	var result = [];
+	for (var i = 0; i < interactive.length; i++) {
+		var item = interactive[i];
+		var rect = item.rect;
+		var color = colors[i % colors.length];
+
+		// Bounding box overlay.
+		var box = document.createElement('div');
+		box.setAttribute('data-som-overlay', 'true');
+		box.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;' +
+			'border:2px solid ' + color + ';' +
+			'left:' + rect.left + 'px;top:' + rect.top + 'px;' +
+			'width:' + rect.width + 'px;height:' + rect.height + 'px;';
+
+		// Numeric label.
+		var label = document.createElement('div');
+		label.setAttribute('data-som-overlay', 'true');
+		label.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;' +
+			'background:' + color + ';color:#fff;font:bold 11px monospace;' +
+			'padding:1px 4px;border-radius:3px;' +
+			'left:' + Math.max(0, rect.left - 2) + 'px;' +
+			'top:' + Math.max(0, rect.top - 16) + 'px;';
+		label.textContent = '' + (i + 1);
+
+		document.body.appendChild(box);
+		document.body.appendChild(label);
+
+		var text = (item.el.textContent || item.el.value || item.el.placeholder || '').trim().slice(0, 50);
+		result.push({
+			index: i + 1,
+			tag: item.tag,
+			role: item.role || item.tag,
+			text: text,
+			selector: item.tag + (item.el.id ? '#' + item.el.id : '')
+		});
+	}
+	return result;
+})()`
+
+// somCleanupJS removes all SOM annotation overlays from the page.
+const somCleanupJS = `(function() {
+	document.querySelectorAll('[data-som-overlay]').forEach(function(e) { e.remove(); });
+})()`
 
 // ---------- Storage ----------
 
@@ -1399,16 +1598,27 @@ func (t *CDPPlaywrightTools) resolveTargetWsURL(opts PWTargetOpts) string {
 	return cdpURL
 }
 
-// resolveRefToObjectID resolves a role ref (e.g. "e12") to a CDP remote object ID
-// by evaluating a JavaScript expression that finds the element by its aria ref.
+// resolveRefToObjectID resolves a role ref (e.g. "e12") to a CDP remote object ID.
+// Phase 4.2: Tries cached CSS selector first (Stagehand pattern), then falls back
+// to full DOM scan. On success, generates and caches a CSS selector for next use.
 func (t *CDPPlaywrightTools) resolveRefToObjectID(send CdpSendFn, ref string) (string, error) {
-	// Use aria-label or role-based selectors to find elements by ref.
-	// The ref system works via Playwright's internal aria snapshot refs.
-	// In CDP mode, we use a fallback approach: query by data attribute or
-	// use Accessibility tree node resolution.
+	// Get current page URL for cache keying.
+	pageURL := t.getCurrentPageURL(send)
+
+	// Phase 4.2: Try cached CSS selector first (zero full-DOM-scan path).
+	if cached := t.getCachedSelector(pageURL, ref); cached != "" {
+		objectID, err := t.resolveBySelector(send, cached)
+		if err == nil && objectID != "" {
+			t.logger.Debug("selector cache hit", "ref", ref, "selector", cached)
+			return objectID, nil
+		}
+		// Cache miss (DOM changed) — fall through to full scan.
+		t.logger.Debug("selector cache stale", "ref", ref, "selector", cached)
+	}
+
+	// Full DOM scan: query all elements, filter interactive ones, pick by index.
 	raw, err := send("Runtime.evaluate", map[string]any{
 		"expression": fmt.Sprintf(`(function() {
-			// Try to find element by aria-snapshot ref annotation
 			var all = document.querySelectorAll('*');
 			var idx = parseInt('%s'.replace('e',''), 10) - 1;
 			var interactive = [];
@@ -1450,7 +1660,98 @@ func (t *CDPPlaywrightTools) resolveRefToObjectID(send CdpSendFn, ref string) (s
 		return "", fmt.Errorf("element %q not found or not visible", ref)
 	}
 
+	// Phase 4.2: Generate CSS selector for the resolved element and cache it.
+	if selector := t.generateCSSSelector(send, resp.Result.ObjectID); selector != "" {
+		t.putCachedSelector(pageURL, ref, selector)
+		t.logger.Debug("selector cached", "ref", ref, "selector", selector)
+	}
+
 	return resp.Result.ObjectID, nil
+}
+
+// resolveBySelector resolves a CSS selector to a CDP remote object ID.
+func (t *CDPPlaywrightTools) resolveBySelector(send CdpSendFn, selector string) (string, error) {
+	raw, err := send("Runtime.evaluate", map[string]any{
+		"expression":    fmt.Sprintf("document.querySelector(%q)", selector),
+		"returnByValue": false,
+	})
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Result struct {
+			ObjectID string `json:"objectId"`
+			Type     string `json:"type"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return "", err
+	}
+	if resp.Result.ObjectID == "" || resp.Result.Type == "undefined" {
+		return "", fmt.Errorf("selector %q: element not found", selector)
+	}
+	return resp.Result.ObjectID, nil
+}
+
+// generateCSSSelector generates a unique CSS selector for an element by objectID.
+// Uses a JS function that walks up the DOM building tag[nth-child] path.
+func (t *CDPPlaywrightTools) generateCSSSelector(send CdpSendFn, objectID string) string {
+	raw, err := send("Runtime.callFunctionOn", map[string]any{
+		"objectId": objectID,
+		"functionDeclaration": `function() {
+			var el = this;
+			var parts = [];
+			while (el && el.nodeType === 1) {
+				var tag = el.tagName.toLowerCase();
+				if (el.id) {
+					parts.unshift('#' + CSS.escape(el.id));
+					break;
+				}
+				var idx = 1;
+				var sib = el.previousElementSibling;
+				while (sib) {
+					if (sib.tagName === el.tagName) idx++;
+					sib = sib.previousElementSibling;
+				}
+				parts.unshift(tag + ':nth-child(' + idx + ')');
+				el = el.parentElement;
+			}
+			return parts.join(' > ');
+		}`,
+		"returnByValue": true,
+	})
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		Result struct {
+			Value string `json:"value"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil || resp.Result.Value == "" {
+		return ""
+	}
+	return resp.Result.Value
+}
+
+// getCurrentPageURL retrieves the current page URL for cache keying.
+func (t *CDPPlaywrightTools) getCurrentPageURL(send CdpSendFn) string {
+	raw, err := send("Runtime.evaluate", map[string]any{
+		"expression":    "window.location.href",
+		"returnByValue": true,
+	})
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		Result struct {
+			Value string `json:"value"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(raw, &resp) != nil {
+		return ""
+	}
+	return resp.Result.Value
 }
 
 // getElementCenter resolves a ref and returns the center coordinates of the element.

@@ -31,6 +31,8 @@ type OpenAIChatHandlerConfig struct {
 	GetAuth func() ResolvedGatewayAuth
 	// Dispatcher 管线分发器（DI 注入）。
 	Dispatcher PipelineDispatcher
+	// Broadcaster WebSocket 广播器（可选，用于进度推送）。
+	Broadcaster *Broadcaster
 	// Logger
 	Logger *slog.Logger
 	// MaxBodyBytes body 上限（默认 1MB）。
@@ -165,6 +167,7 @@ func handleNonStreaming(
 		RunID:      runID,
 		Ctx:        ctx,
 		Dispatcher: cfg.Dispatcher,
+		OnProgress: buildChatProgressCallback(cfg.Broadcaster, sessionKey),
 	})
 
 	if result.Error != nil {
@@ -315,6 +318,7 @@ func handleStreaming(
 			RunID:      runID,
 			Ctx:        ctx,
 			Dispatcher: cfg.Dispatcher,
+			OnProgress: buildChatProgressCallback(cfg.Broadcaster, sessionKey),
 		})
 
 		if atomic.LoadInt32(&closed) != 0 {

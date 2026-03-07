@@ -158,6 +158,7 @@ func handleORNonStreaming(
 		RunID:      responseID,
 		Ctx:        ctx,
 		Dispatcher: cfg.Dispatcher,
+		OnProgress: buildChatProgressCallback(cfg.Broadcaster, sessionKey),
 	})
 
 	if result.Error != nil {
@@ -320,6 +321,7 @@ func handleORStreaming(
 			RunID:      responseID,
 			Ctx:        ctx,
 			Dispatcher: cfg.Dispatcher,
+			OnProgress: buildChatProgressCallback(cfg.Broadcaster, sessionKey),
 		})
 
 		if atomic.LoadInt32(&closed) != 0 {

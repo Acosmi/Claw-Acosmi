@@ -247,10 +247,10 @@ function prevStep(state: AppViewState) {
 function getDefaultMemoryModel(provider: string): string {
    switch (provider) {
       case "deepseek": return "deepseek-chat";
-      case "openai":   return "gpt-4o-mini";
+      case "openai": return "gpt-4o-mini";
       case "anthropic": return "claude-haiku-4-5-20251001";
-      case "ollama":   return "llama3.2";
-      default:         return "";
+      case "ollama": return "llama3.2";
+      default: return "";
    }
 }
 
@@ -412,13 +412,13 @@ function renderProviders(state: AppViewState, configMap: Record<string, string>,
                         <div style="font-size:13px; color:#333; font-weight:600; text-align: left; margin-bottom:4px;">请选择要挂载授权的目标应用：</div>
                         <button class="wizard-v2-btn wizard-v2-btn-secondary" style="width:100%; justify-content:flex-start; font-weight: 500;" @click=${() => {
                   configMap[p.id] = "oauth-authorized";
-                  pendingOauthSelection = null;                  state.requestUpdate();
+                  pendingOauthSelection = null; state.requestUpdate();
                }}>
                             ${p.name.split(' ')[0]} Antigravity Desktop
                         </button>
                         <button class="wizard-v2-btn wizard-v2-btn-secondary" style="width:100%; justify-content:flex-start; color: #666;" @click=${() => {
                   configMap[p.id] = "oauth-authorized";
-                  pendingOauthSelection = null;                  state.requestUpdate();
+                  pendingOauthSelection = null; state.requestUpdate();
                }}>
                             ${p.name.split(' ')[0]} Headless CLI 工具
                         </button>
@@ -511,7 +511,7 @@ export function renderWizardV2(state: AppViewState) {
             ${stepIndex === 0 ? html`
               <!-- 1. 欢迎页 / 安全须知 -->
               <div style="text-align:center; margin-bottom: 24px;">
-                <img src="/crab-logo.png" alt="创宇太虚 Logo" style="width: 80px; height: auto;" />
+                <img src="/logo1.png" alt="创宇太虚 Logo" style="width: 80px; height: auto;" />
               </div>
               <h2 class="wizard-v2-title" style="text-align:center; margin-top: 0; margin-bottom: 8px;">欢迎使用 创宇太虚（Claw Acosmi）</h2>
               <p class="wizard-v2-subtitle" style="text-align:center; margin-top: 0; margin-bottom: 24px;">由原 OpenClaw 重构升级的新一代安全智能体网关</p>
@@ -760,10 +760,10 @@ export function renderWizardV2(state: AppViewState) {
                   <div class="wizard-v2-provider-input-group">
                     <label>LLM Provider</label>
                     <select class="wizard-v2-input" .value=${memoryConfig.llmProvider} @change=${(e: Event) => {
-                      memoryConfig.llmProvider = (e.target as HTMLSelectElement).value;
-                      if (!memoryConfig.llmModel) { memoryConfig.llmModel = getDefaultMemoryModel(memoryConfig.llmProvider); }
-                      state.requestUpdate();
-                    }}>
+            memoryConfig.llmProvider = (e.target as HTMLSelectElement).value;
+            if (!memoryConfig.llmModel) { memoryConfig.llmModel = getDefaultMemoryModel(memoryConfig.llmProvider); }
+            state.requestUpdate();
+         }}>
                       <option value="">不配置（使用启发式提取）</option>
                       <option value="deepseek">DeepSeek</option>
                       <option value="openai">OpenAI</option>

@@ -17,6 +17,7 @@ export type PluginsProps = {
   browserSaving: boolean;
   browserError: string | null;
   browserEdits: Record<string, string | boolean>;
+  gatewayUrl: string;
   skillsView?: TemplateResult;
   onEditChange: (pluginId: string, key: string, value: string) => void;
   onSave: (pluginId: string) => void;
@@ -300,7 +301,52 @@ function browserStatusBadge(cfg: BrowserToolConfig | null) {
   return html`<span class="chip" style="font-size: 11px; opacity: 0.5;">${t("plugins.status.notConfigured")}</span>`;
 }
 
+/** Derive HTTP base URL from gateway WS URL (ws://host:port → http://host:port) */
+function gatewayHttpBase(wsUrl: string): string {
+  return wsUrl
+    .replace(/^wss:/, "https:")
+    .replace(/^ws:/, "http:")
+    .replace(/\/ws\/?$/, "")
+    .replace(/\/+$/, "");
+}
+
+/** Extension relay status cache to avoid re-fetching on every render */
+let _extStatusCache: { status: "checking" | "ok" | "off" | "error"; port: number; msg: string } = {
+  status: "checking", port: 0, msg: "",
+};
+let _extStatusFetching = false;
+
+function checkExtensionStatus(httpBase: string) {
+  if (_extStatusFetching) return;
+  _extStatusFetching = true;
+  _extStatusCache = { status: "checking", port: 0, msg: "" };
+  fetch(`${httpBase}/browser-extension/status`)
+    .then(r => r.json())
+    .then((data: { port?: number; connected?: boolean; token?: string }) => {
+      if (data.port && data.port > 0) {
+        _extStatusCache = {
+          status: data.connected ? "ok" : "off",
+          port: data.port,
+          msg: data.connected
+            ? t("tools.browser.ext.statusOk")
+            : t("tools.browser.ext.statusRelayOnly"),
+        };
+      } else {
+        _extStatusCache = { status: "off", port: 0, msg: t("tools.browser.ext.statusOff") };
+      }
+    })
+    .catch(() => {
+      _extStatusCache = { status: "error", port: 0, msg: t("tools.browser.ext.statusError") };
+    })
+    .finally(() => { _extStatusFetching = false; });
+}
+
 function renderBrowserToolCard(props: PluginsProps) {
+  // Trigger extension status check on first render
+  if (_extStatusCache.status === "checking" && !_extStatusFetching) {
+    checkExtensionStatus(gatewayHttpBase(props.gatewayUrl));
+  }
+
   const cfg = props.browserConfig;
   const edits = props.browserEdits;
 
@@ -411,6 +457,84 @@ function renderBrowserToolCard(props: PluginsProps) {
                   <div style="font-size: 11px; opacity: 0.5; margin-top: 2px;">${t("tools.browser.headless.desc")}</div>
                 </div>
               </label>
+
+              <!-- Chrome Extension -->
+              <div style="border-top: 1px solid var(--color-border, rgba(128,128,128,0.15)); padding-top: 14px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-weight: 500; font-size: 13px;">${t("tools.browser.ext.title")}</span>
+                  ${(() => {
+          const s = _extStatusCache;
+          const dotColor = s.status === "ok" ? "#30d158"
+            : s.status === "off" ? "#ff9f0a"
+              : s.status === "error" ? "#ff3b30"
+                : "#999";
+          return html`
+                    <span style="
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 5px;
+                      font-size: 11px;
+                      padding: 2px 8px;
+                      border-radius: 10px;
+                      background: ${s.status === "ok"
+              ? "rgba(48,209,88,0.12)"
+              : s.status === "off"
+                ? "rgba(255,159,10,0.12)"
+                : s.status === "error"
+                  ? "rgba(255,59,48,0.12)"
+                  : "rgba(128,128,128,0.1)"
+            };
+                      color: ${dotColor};
+                      font-weight: 500;
+                    ">
+                      <span style="width:6px;height:6px;border-radius:50%;background:${dotColor};"></span>
+                      ${s.status === "checking" ? t("tools.browser.ext.checking")
+              : s.status === "ok" ? t("tools.browser.ext.connected")
+                : s.status === "off" ? t("tools.browser.ext.notConnected")
+                  : t("tools.browser.ext.unavailable")}
+                    </span>`;
+        })()}
+                </div>
+                <div style="font-size: 11px; opacity: 0.5; line-height: 1.5;">
+                  ${t("tools.browser.ext.desc")}
+                </div>
+                ${_extStatusCache.msg ? html`
+                  <div style="font-size: 11px; opacity: 0.6; padding: 4px 0;">${_extStatusCache.msg}</div>
+                ` : nothing}
+                <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px;">
+                  <a
+                    href="${gatewayHttpBase(props.gatewayUrl)}/browser-extension/"
+                    target="_blank"
+                    rel="noopener"
+                    class="btn btn-sm"
+                    style="
+                      font-size: 12px;
+                      padding: 5px 14px;
+                      border-radius: 6px;
+                      background: linear-gradient(135deg, #FF4500, #FF6B35);
+                      color: white;
+                      text-decoration: none;
+                      font-weight: 500;
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 4px;
+                    "
+                  >
+                    ${t("tools.browser.ext.installBtn")}
+                  </a>
+                  <button
+                    class="btn btn-sm"
+                    style="font-size: 12px; padding: 5px 12px; border-radius: 6px; background: var(--color-bg-secondary, #e8e8ed); border: none; cursor: pointer;"
+                    @click=${() => {
+          checkExtensionStatus(gatewayHttpBase(props.gatewayUrl));
+          // Force re-render after a short delay for the status to update
+          setTimeout(() => { props.onBrowserEditChange("_extRefresh", !props.browserEdits._extRefresh); }, 600);
+        }}
+                  >
+                    ${t("tools.browser.ext.refreshBtn")}
+                  </button>
+                </div>
+              </div>
 
               <!-- Save button -->
               <div style="display: flex; justify-content: flex-end; margin-top: 4px;">
