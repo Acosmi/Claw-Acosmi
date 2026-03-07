@@ -1,8 +1,8 @@
 <div align="center">
 
-  <img src="./claw-crab-logo.png" alt="Claw Acosmi 创宇太虚架构图 / Architecture Diagram" width="160" />
+  <img src="./logo1.png" alt="Crab Claw （螃爪）@Acosmi 创宇太虚架构图 / Architecture Diagram" width="160" />
   
-# <span style="color: #c9ccc6;">Claw Acosmi (创宇太虚)</span>
+# <span style="color: #c9ccc6;">"Crab Claw @ Acosmi (创宇太虚)</span>
 
 **「在虚空中创建新秩序，构筑太虚之境」**<br>
 **"Creating new order in the void, building the realm of Acosmi"**<br><br>
