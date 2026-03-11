@@ -155,3 +155,23 @@ func TestResolveArgus_EnvTakesPriority(t *testing.T) {
 		t.Errorf("expected env path %q to take priority over config %q, got %q", envBin, configBin, result.Path)
 	}
 }
+
+func TestResolveNativeSandboxBinaryPath_UsesResolvedStateDir(t *testing.T) {
+	stateDir := t.TempDir()
+	binDir := filepath.Join(stateDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(binDir, "openacosmi")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CRABCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENACOSMI_STATE_DIR", "")
+	t.Setenv("OA_CLI_BINARY", "")
+
+	if got := resolveNativeSandboxBinaryPath(); got != binPath {
+		t.Fatalf("resolveNativeSandboxBinaryPath() = %q, want %q", got, binPath)
+	}
+}

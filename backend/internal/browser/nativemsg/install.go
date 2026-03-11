@@ -34,6 +34,7 @@ type InstallConfig struct {
 }
 
 // Install writes the native messaging host manifest to all detected browser directories.
+// On Windows, it also creates HKCU registry entries pointing to the manifest file.
 // Returns the number of manifests successfully written.
 func Install(cfg InstallConfig) (int, error) {
 	if cfg.Logger == nil {
@@ -64,6 +65,12 @@ func Install(cfg InstallConfig) (int, error) {
 		AllowedOrigins: origins,
 	}
 
+	// Windows: manifest file + registry entries.
+	if runtime.GOOS == "windows" {
+		return installWindows(cfg, manifest)
+	}
+
+	// macOS / Linux: manifest files in browser directories.
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return 0, fmt.Errorf("marshal manifest: %w", err)
@@ -97,7 +104,12 @@ func Install(cfg InstallConfig) (int, error) {
 }
 
 // Uninstall removes the native messaging host manifest from all browser directories.
+// On Windows, it also removes the registry entries.
 func Uninstall() {
+	if runtime.GOOS == "windows" {
+		uninstallWindows()
+		return
+	}
 	filename := HostName + ".json"
 	for _, dir := range manifestDirs() {
 		path := filepath.Join(dir, filename)
@@ -106,7 +118,11 @@ func Uninstall() {
 }
 
 // IsInstalled checks if the manifest exists in at least one browser directory.
+// On Windows, checks registry entries.
 func IsInstalled() bool {
+	if runtime.GOOS == "windows" {
+		return isInstalledWindows()
+	}
 	filename := HostName + ".json"
 	for _, dir := range manifestDirs() {
 		path := filepath.Join(dir, filename)
@@ -118,7 +134,11 @@ func IsInstalled() bool {
 }
 
 // ManifestPaths returns all paths where the manifest would be/is installed.
+// On Windows, includes registry key paths and the manifest file path.
 func ManifestPaths() []string {
+	if runtime.GOOS == "windows" {
+		return manifestPathsWindows()
+	}
 	filename := HostName + ".json"
 	dirs := manifestDirs()
 	paths := make([]string, len(dirs))

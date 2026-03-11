@@ -59,6 +59,11 @@ type WsServerConfig struct {
 	BootedAt time.Time
 	// Phase 5+6: 媒体子系统（可选）
 	MediaSubsystem *media.MediaSubsystem
+	// 配置提交后的运行态接管
+	RestartSentinel  RestartSentinelWriter
+	GatewayRestarter GatewayRestarter
+	// P1 域隔离: 独立任务运行存储
+	TaskStore *TaskStore
 }
 
 // HandleWebSocketUpgrade HTTP → WebSocket 升级 + 连接生命周期管理。
@@ -96,6 +101,44 @@ func HandleWebSocketUpgrade(cfg WsServerConfig) http.HandlerFunc {
 
 		slog.Info("ws: new connection", "remote", r.RemoteAddr)
 		go wsConnectionLoop(conn, r, cfg)
+	}
+}
+
+func newGatewayMethodContext(cfg WsServerConfig, liveCfg *types.OpenAcosmiConfig) *GatewayMethodContext {
+	return &GatewayMethodContext{
+		SessionStore:           cfg.SessionStore,
+		StorePath:              cfg.StorePath,
+		Config:                 liveCfg,
+		LogFilePath:            cfg.LogFilePath,
+		ConfigLoader:           cfg.ConfigLoader,
+		ModelCatalog:           cfg.ModelCatalog,
+		PresenceStore:          cfg.PresenceStore,
+		HeartbeatState:         cfg.HeartbeatState,
+		EventQueue:             cfg.EventQueue,
+		Broadcaster:            cfg.State.Broadcaster(),
+		ChatState:              cfg.State.ChatState(),
+		PipelineDispatcher:     cfg.PipelineDispatcher,
+		EscalationMgr:          cfg.State.EscalationMgr(),
+		RemoteApprovalNotifier: cfg.State.RemoteApprovalNotifier(), // P4
+		TaskPresetMgr:          cfg.State.TaskPresetMgr(),          // P5
+		ChannelMgr:             cfg.ChannelMgr,                     // Phase 5: 频道管理器
+		ArgusBridge:            cfg.State.ArgusBridge(),            // Argus 视觉子智能体
+		CronService:            cfg.CronService,
+		CronStorePath:          cfg.CronStorePath,
+		SkillStoreClient:       cfg.SkillStoreClient,             // 技能商店客户端
+		RemoteMCPBridge:        cfg.RemoteMCPBridge,              // P2: MCP 远程工具
+		UHMSManager:            cfg.State.UHMSManager(),          // P3: UHMS 记忆系统
+		UHMSBootMgr:            cfg.State.UHMSBootMgr(),          // Boot 状态管理
+		CoderConfirmMgr:        cfg.State.CoderConfirmMgr(),      // Coder 确认流
+		PlanConfirmMgr:         cfg.State.PlanConfirmMgr(),       // Phase 1: 方案确认门控
+		ResultApprovalMgr:      cfg.State.ResultApprovalMgr(),    // Phase 3: 结果签收门控
+		ContractStore:          cfg.State.ContractStore(),        // Phase 8: 合约持久化
+		State:                  cfg.State,                        // Phase 4: 子智能体求助通道查找
+		MediaSubsystem:         cfg.MediaSubsystem,               // Phase 5+6: 媒体子系统
+		ChannelMonitorMgr:      cfg.State.GetChannelMonitorMgr(), // Monitor 频道热更新
+		RestartSentinel:        cfg.RestartSentinel,
+		GatewayRestarter:       cfg.GatewayRestarter,
+		TaskStore:              cfg.TaskStore,
 	}
 }
 
@@ -466,38 +509,7 @@ func wsConnectionLoop(conn *websocket.Conn, r *http.Request, cfg WsServerConfig)
 		}
 
 		// 构建方法上下文
-		methodCtx := &GatewayMethodContext{
-			SessionStore:           cfg.SessionStore,
-			StorePath:              cfg.StorePath,
-			Config:                 liveCfg,
-			LogFilePath:            cfg.LogFilePath,
-			ConfigLoader:           cfg.ConfigLoader,
-			ModelCatalog:           cfg.ModelCatalog,
-			PresenceStore:          cfg.PresenceStore,
-			HeartbeatState:         cfg.HeartbeatState,
-			EventQueue:             cfg.EventQueue,
-			Broadcaster:            cfg.State.Broadcaster(),
-			ChatState:              cfg.State.ChatState(),
-			PipelineDispatcher:     cfg.PipelineDispatcher,
-			EscalationMgr:          cfg.State.EscalationMgr(),
-			RemoteApprovalNotifier: cfg.State.RemoteApprovalNotifier(), // P4
-			TaskPresetMgr:          cfg.State.TaskPresetMgr(),          // P5
-			ChannelMgr:             cfg.ChannelMgr,                     // Phase 5: 频道管理器
-			ArgusBridge:            cfg.State.ArgusBridge(),            // Argus 视觉子智能体
-			CronService:            cfg.CronService,
-			CronStorePath:          cfg.CronStorePath,
-			SkillStoreClient:       cfg.SkillStoreClient,             // 技能商店客户端
-			RemoteMCPBridge:        cfg.RemoteMCPBridge,              // P2: MCP 远程工具
-			UHMSManager:            cfg.State.UHMSManager(),          // P3: UHMS 记忆系统
-			UHMSBootMgr:            cfg.State.UHMSBootMgr(),          // Boot 状态管理
-			CoderConfirmMgr:        cfg.State.CoderConfirmMgr(),      // Coder 确认流
-			PlanConfirmMgr:         cfg.State.PlanConfirmMgr(),       // Phase 1: 方案确认门控
-			ResultApprovalMgr:      cfg.State.ResultApprovalMgr(),    // Phase 3: 结果签收门控
-			ContractStore:          cfg.State.ContractStore(),        // Phase 8: 合约持久化
-			State:                  cfg.State,                        // Phase 4: 子智能体求助通道查找
-			MediaSubsystem:         cfg.MediaSubsystem,               // Phase 5+6: 媒体子系统
-			ChannelMonitorMgr:      cfg.State.GetChannelMonitorMgr(), // Monitor 频道热更新
-		}
+		methodCtx := newGatewayMethodContext(cfg, liveCfg)
 
 		// 创建同步 respond 回调
 		respond := func(ok bool, payload interface{}, errShape *ErrorShape) {

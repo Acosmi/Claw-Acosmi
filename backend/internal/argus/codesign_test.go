@@ -60,6 +60,7 @@ func TestIsInsideAppBundle(t *testing.T) {
 		expected bool
 	}{
 		{"/Applications/Argus.app/Contents/MacOS/argus-sensory", true},
+		{"/Applications/Crab Claw.app/Contents/Resources/Argus/argus-sensory", true},
 		{"/Users/test/Argus.app/Contents/MacOS/sensory-server", true},
 		{"/usr/local/bin/argus-sensory", false},
 		{"/tmp/argus-sensory", false},
@@ -71,5 +72,53 @@ func TestIsInsideAppBundle(t *testing.T) {
 		if got != tc.expected {
 			t.Errorf("isInsideAppBundle(%q): expected %v, got %v", tc.path, tc.expected, got)
 		}
+	}
+}
+
+func TestBuildEmbeddedAppCandidates(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only test")
+	}
+
+	execPath := "/Applications/Crab Claw.app/Contents/MacOS/CrabClaw"
+	got := buildEmbeddedAppCandidates(execPath)
+	if len(got) == 0 {
+		t.Fatal("expected embedded app candidates")
+	}
+
+	expectedFirst := "/Applications/Crab Claw.app/Contents/Helpers/Argus.app/Contents/MacOS/argus-sensory"
+	if got[0] != expectedFirst {
+		t.Fatalf("expected first candidate %q, got %q", expectedFirst, got[0])
+	}
+
+	expectedFallback := "/Applications/Crab Claw.app/Contents/Resources/Argus/argus-sensory"
+	foundFallback := false
+	for _, candidate := range got {
+		if candidate == expectedFallback {
+			foundFallback = true
+			break
+		}
+	}
+	if !foundFallback {
+		t.Fatalf("expected fallback candidate %q in %v", expectedFallback, got)
+	}
+}
+
+func TestBuildAppBundleCandidates_UsesResolvedStateDir(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRABCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENACOSMI_STATE_DIR", "")
+
+	got := buildAppBundleCandidates()
+	want := filepath.Join(stateDir, "Argus.app", "Contents", "MacOS", "argus-sensory")
+	found := false
+	for _, candidate := range got {
+		if candidate == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected candidate %q in %v", want, got)
 	}
 }

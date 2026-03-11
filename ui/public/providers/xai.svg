@@ -1,1 +1,5 @@
-File not found: /v1/AUTH_mw/wikipedia-commons-local-public.e8/e/e8/XAI_Corp._logo.svg
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="128" height="128" rx="28" fill="#111111"/>
+  <path d="M32 36H46L64 59L82 36H96L71 70L97 92H83L64 69L45 92H31L57 70L32 36Z" fill="white"/>
+  <path d="M84 94H96" stroke="white" stroke-width="8" stroke-linecap="round"/>
+</svg>

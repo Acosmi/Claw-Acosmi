@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -195,5 +196,156 @@ func TestSessionsHandlers_Delete(t *testing.T) {
 	}
 	if store.Count() != 0 {
 		t.Errorf("store should be empty, got %d", store.Count())
+	}
+}
+
+// ---------- P2: sessions.create ----------
+
+func TestSessionsHandlers_Create(t *testing.T) {
+	store := NewSessionStore("")
+	r := NewMethodRegistry()
+	r.RegisterAll(SessionsHandlers())
+
+	req := &RequestFrame{Method: "sessions.create", Params: map[string]interface{}{
+		"label": "test session",
+	}}
+	var gotOK bool
+	var gotPayload interface{}
+	HandleGatewayRequest(r, req, nil, &GatewayMethodContext{SessionStore: store},
+		func(ok bool, payload interface{}, err *ErrorShape) {
+			gotOK = ok
+			gotPayload = payload
+		})
+	if !gotOK {
+		t.Fatal("sessions.create should succeed")
+	}
+
+	m, ok := gotPayload.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map payload, got %T", gotPayload)
+	}
+	sessionKey, _ := m["sessionKey"].(string)
+	sessionId, _ := m["sessionId"].(string)
+	if !strings.HasPrefix(sessionKey, "user:") {
+		t.Fatalf("sessionKey should have user: prefix, got %q", sessionKey)
+	}
+	if sessionId == "" {
+		t.Fatal("sessionId should not be empty")
+	}
+
+	// 验证 store 中已持久化
+	entry := store.LoadSessionEntry(sessionKey)
+	if entry == nil {
+		t.Fatal("session should be persisted in store")
+	}
+	if entry.Label != "test session" {
+		t.Fatalf("label = %q, want 'test session'", entry.Label)
+	}
+	if entry.CreatedAt == 0 {
+		t.Fatal("CreatedAt should be set")
+	}
+}
+
+func TestSessionsHandlers_CreateMultiple(t *testing.T) {
+	store := NewSessionStore("")
+	r := NewMethodRegistry()
+	r.RegisterAll(SessionsHandlers())
+
+	keys := make(map[string]bool)
+	for i := 0; i < 3; i++ {
+		var payload interface{}
+		HandleGatewayRequest(r, &RequestFrame{Method: "sessions.create", Params: map[string]interface{}{}}, nil,
+			&GatewayMethodContext{SessionStore: store},
+			func(ok bool, p interface{}, _ *ErrorShape) { payload = p })
+		m, _ := payload.(map[string]interface{})
+		key, _ := m["sessionKey"].(string)
+		if keys[key] {
+			t.Fatalf("duplicate sessionKey: %q", key)
+		}
+		keys[key] = true
+	}
+	if store.Count() != 3 {
+		t.Fatalf("expected 3 sessions, got %d", store.Count())
+	}
+}
+
+// ---------- P2: sessions.ensureMain ----------
+
+func TestSessionsHandlers_EnsureMain_CreatesIfMissing(t *testing.T) {
+	store := NewSessionStore("")
+	r := NewMethodRegistry()
+	r.RegisterAll(SessionsHandlers())
+
+	req := &RequestFrame{Method: "sessions.ensureMain", Params: map[string]interface{}{}}
+	var gotOK bool
+	var gotPayload interface{}
+	HandleGatewayRequest(r, req, nil, &GatewayMethodContext{SessionStore: store},
+		func(ok bool, payload interface{}, _ *ErrorShape) {
+			gotOK = ok
+			gotPayload = payload
+		})
+	if !gotOK {
+		t.Fatal("sessions.ensureMain should succeed")
+	}
+
+	m, ok := gotPayload.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map payload, got %T", gotPayload)
+	}
+	sessionKey, _ := m["sessionKey"].(string)
+	created, _ := m["created"].(bool)
+	if sessionKey == "" {
+		t.Fatal("sessionKey should not be empty")
+	}
+	if !created {
+		t.Fatal("should report created=true for new main session")
+	}
+
+	// 验证 store 中已持久化
+	entry := store.LoadSessionEntry(sessionKey)
+	if entry == nil {
+		t.Fatal("main session should be persisted in store")
+	}
+}
+
+func TestSessionsHandlers_EnsureMain_Idempotent(t *testing.T) {
+	store := NewSessionStore("")
+	r := NewMethodRegistry()
+	r.RegisterAll(SessionsHandlers())
+
+	mctx := &GatewayMethodContext{SessionStore: store}
+
+	// 第一次调用 — 创建
+	var firstPayload interface{}
+	HandleGatewayRequest(r, &RequestFrame{Method: "sessions.ensureMain", Params: map[string]interface{}{}}, nil,
+		mctx, func(_ bool, p interface{}, _ *ErrorShape) { firstPayload = p })
+	m1, _ := firstPayload.(map[string]interface{})
+	key1, _ := m1["sessionKey"].(string)
+	id1, _ := m1["sessionId"].(string)
+	created1, _ := m1["created"].(bool)
+	if !created1 {
+		t.Fatal("first call should create")
+	}
+
+	// 第二次调用 — 幂等返回
+	var secondPayload interface{}
+	HandleGatewayRequest(r, &RequestFrame{Method: "sessions.ensureMain", Params: map[string]interface{}{}}, nil,
+		mctx, func(_ bool, p interface{}, _ *ErrorShape) { secondPayload = p })
+	m2, _ := secondPayload.(map[string]interface{})
+	key2, _ := m2["sessionKey"].(string)
+	id2, _ := m2["sessionId"].(string)
+	created2, _ := m2["created"].(bool)
+
+	if key2 != key1 {
+		t.Fatalf("sessionKey changed: %q → %q", key1, key2)
+	}
+	if id2 != id1 {
+		t.Fatalf("sessionId changed: %q → %q", id1, id2)
+	}
+	if created2 {
+		t.Fatal("second call should report created=false")
+	}
+	if store.Count() != 1 {
+		t.Fatalf("expected 1 session, got %d", store.Count())
 	}
 }

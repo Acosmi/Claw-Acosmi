@@ -1,0 +1,9 @@
+backend/cmd/openacosmi/cmd_setup.go
+backend/cmd/openacosmi/setup_helpers.go
+backend/internal/cli/dotenv.go
+backend/internal/gateway/session_utils_fs.go
+backend/internal/channels/telegram/update_offset_store.go
+backend/internal/channels/telegram/sticker_cache.go
+backend/internal/agents/bash/cache_trace.go
+backend/internal/agents/llmclient/anthropic.go
+backend/internal/agents/scope/scope.go

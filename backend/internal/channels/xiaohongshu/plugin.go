@@ -20,6 +20,9 @@ type XiaohongshuPlugin struct {
 	mu           sync.Mutex
 	clients      map[string]*XHSRPAClient
 	interactions map[string]*RPAInteractionManager
+
+	browserResolver BrowserRuntimeResolver
+	onBrowserLaunch BrowserLaunchHook
 }
 
 // NewXiaohongshuPlugin 创建小红书插件。
@@ -72,7 +75,15 @@ func (p *XiaohongshuPlugin) ConfigureAccount(
 		accountID = channels.DefaultAccountID
 	}
 
+	prevClient := p.clients[accountID]
 	client := NewXHSRPAClient(cfg)
+	if p.browserResolver != nil {
+		client.SetBrowserRuntimeResolver(p.browserResolver, p.onBrowserLaunch)
+	}
+	if prevClient != nil && prevClient.pwTools != nil && prevClient.cdpURL != "" {
+		client.SetBrowserFromPlaywright(prevClient.pwTools, prevClient.cdpURL, cfg.ErrorScreenshotDir)
+		client.loginSession = cloneLoginSession(prevClient.loginSession)
+	}
 	p.clients[accountID] = client
 	p.interactions[accountID] = NewRPAInteractionManager(client)
 
@@ -135,4 +146,40 @@ func (p *XiaohongshuPlugin) GetInteractionManager(
 		accountID = channels.DefaultAccountID
 	}
 	return p.interactions[accountID]
+}
+
+// EnsureAccount returns an existing client or configures one lazily.
+func (p *XiaohongshuPlugin) EnsureAccount(
+	accountID string,
+	cfg *XiaohongshuConfig,
+) (*XHSRPAClient, error) {
+	if accountID == "" {
+		accountID = channels.DefaultAccountID
+	}
+
+	p.mu.Lock()
+	client := p.clients[accountID]
+	p.mu.Unlock()
+	if client != nil {
+		return client, nil
+	}
+	if err := p.ConfigureAccount(accountID, cfg); err != nil {
+		return nil, err
+	}
+	return p.GetClient(accountID), nil
+}
+
+// SetBrowserRuntimeResolver propagates the gateway browser runtime resolver to all current/future clients.
+func (p *XiaohongshuPlugin) SetBrowserRuntimeResolver(
+	resolver BrowserRuntimeResolver,
+	onLaunch BrowserLaunchHook,
+) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.browserResolver = resolver
+	p.onBrowserLaunch = onLaunch
+	for _, client := range p.clients {
+		client.SetBrowserRuntimeResolver(resolver, onLaunch)
+	}
 }

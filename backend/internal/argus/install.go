@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
-// EnsureUserBinLink 在 ~/.openacosmi/bin/argus-sensory 创建指向 resolvedPath 的符号链接。
+// EnsureUserBinLink 在当前状态目录的 bin/argus-sensory 创建指向 resolvedPath 的符号链接。
 //
 // 行为:
 //   - 如果目标已存在且指向同一路径 → 跳过（幂等）
@@ -36,12 +38,7 @@ func EnsureUserBinLink(resolvedPath string) error {
 		return fmt.Errorf("argus: source binary not found: %w", err)
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("argus: user home dir: %w", err)
-	}
-
-	binDir := filepath.Join(home, ".openacosmi", "bin")
+	binDir := filepath.Join(config.ResolveStateDir(), "bin")
 	linkPath := filepath.Join(binDir, "argus-sensory")
 
 	// 确保 bin 目录存在
@@ -87,10 +84,10 @@ func StandardInstallPaths() []string {
 	paths = append(paths, "/Applications/Argus.app/Contents/MacOS/argus-sensory")
 
 	// 2. 用户级
-	if home, err := os.UserHomeDir(); err == nil {
+	if stateDir := config.ResolveStateDir(); stateDir != "" {
 		paths = append(paths,
-			filepath.Join(home, ".openacosmi", "Argus.app", "Contents", "MacOS", "argus-sensory"),
-			filepath.Join(home, ".openacosmi", "bin", "argus-sensory"),
+			filepath.Join(stateDir, "Argus.app", "Contents", "MacOS", "argus-sensory"),
+			filepath.Join(stateDir, "bin", "argus-sensory"),
 		)
 	}
 

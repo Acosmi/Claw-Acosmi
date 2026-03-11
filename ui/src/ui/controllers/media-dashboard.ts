@@ -17,9 +17,11 @@ export interface MediaToolInfo {
 
 export interface MediaSourceInfo {
   name: string;
-  status?: string; // "default_enabled" | "configured" | "disabled"
+  status?: string; // "default_enabled" | "configured" | "disabled" | "needs_configuration"
   configured?: boolean;
   enabled?: boolean;
+  source_configured?: boolean;
+  requires_credential?: boolean;
 }
 
 export interface TrendingStrategy {
@@ -30,13 +32,87 @@ export interface TrendingStrategy {
   autoDraftEnabled: boolean;
 }
 
+export interface MediaPublisherProfileBase {
+  enabled: boolean;
+  configured: boolean;
+  status: string;
+  missing?: string[];
+  authMode?: string;
+  authStatus?: string;
+  authMessage?: string;
+  authUpdatedAt?: string;
+  browserReady?: boolean;
+}
+
+export interface MediaWeChatProfile extends MediaPublisherProfileBase {
+  accountName?: string;
+  accountId?: string;
+  appId?: string;
+  appSecret?: string;
+  tokenCachePath?: string;
+}
+
+export interface MediaXiaohongshuProfile extends MediaPublisherProfileBase {
+  accountName?: string;
+  accountId?: string;
+  cookiePath?: string;
+  autoInteractInterval?: number;
+  rateLimitSeconds?: number;
+  errorScreenshotDir?: string;
+}
+
+export interface MediaWebsiteProfile extends MediaPublisherProfileBase {
+  siteName?: string;
+  apiUrl?: string;
+  authType?: string;
+  authToken?: string;
+  imageUploadUrl?: string;
+  timeoutSeconds?: number;
+  maxRetries?: number;
+}
+
+export interface MediaPublisherProfiles {
+  wechat: MediaWeChatProfile;
+  xiaohongshu: MediaXiaohongshuProfile;
+  website: MediaWebsiteProfile;
+}
+
+export interface MediaBochaTrendingProfile {
+  configured: boolean;
+  status: string;
+  missing?: string[];
+  authMode?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  freshness?: string;
+}
+
+export interface MediaCustomOpenAITrendingProfile {
+  configured: boolean;
+  status: string;
+  missing?: string[];
+  authMode?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  systemPrompt?: string;
+  requestExtras?: string;
+}
+
+export interface MediaTrendingSourceProfiles {
+  bocha: MediaBochaTrendingProfile;
+  custom_openai: MediaCustomOpenAITrendingProfile;
+}
+
 export interface MediaConfig {
   agent_id: string;
   label: string;
   status: string; // "default" | "configured"
   trending_sources: MediaSourceInfo[];
+  trending_source_profiles?: MediaTrendingSourceProfiles;
   tools: MediaToolInfo[];
   publishers: string[];
+  publisher_profiles?: MediaPublisherProfiles;
   publish_enabled: boolean;
   publish_configured: boolean;
   llm: {
@@ -57,6 +133,11 @@ export interface SourceHealthInfo {
   status: string; // "ok" | "error"
   error?: string;
   count: number;
+}
+
+export interface TrendingFetchError {
+  source: string;
+  error: string;
 }
 
 // ---------- 类型 ----------
@@ -112,14 +193,19 @@ export async function loadTrendingTopics(
     const res = await state.client.request<{
       topics: TrendingTopic[];
       count: number;
-      errors?: Array<{ source: string; error: string }>;
+      errors?: TrendingFetchError[];
     }>("media.trending.fetch", params);
 
     if (res) {
       state.mediaTrendingTopics = res.topics || [];
+      state.mediaTrendingErrors = res.errors || [];
     }
-  } catch {
+  } catch (error) {
     state.mediaTrendingTopics = [];
+    state.mediaTrendingErrors = [{
+      source: source || "all",
+      error: error instanceof Error ? error.message : "fetch trending failed",
+    }];
   } finally {
     state.mediaTrendingLoading = false;
   }
@@ -309,6 +395,69 @@ export async function updateMediaConfig(state: AppViewState, patch: Record<strin
   await runMediaMutation(state, {
     label: "updateMediaConfig",
     run: (client) => client.request("media.config.update", patch),
+    invalidate: [
+      async (nextState) => {
+        await loadMediaConfig(nextState);
+      },
+    ],
+  });
+}
+
+export interface MediaPublisherLoginResult {
+  platform: string;
+  status: string;
+  message?: string;
+  cookiePath?: string;
+  loginUrl?: string;
+  targetId?: string;
+  currentUrl?: string;
+  browserReady?: boolean;
+  cookieCount?: number;
+  startedAt?: string;
+  updatedAt?: string;
+  savedAt?: string;
+  lastError?: string;
+}
+
+export async function startMediaPublisherLogin(
+  state: AppViewState,
+  platform: "xiaohongshu",
+): Promise<boolean> {
+  return runMediaMutation(state, {
+    label: "startMediaPublisherLogin",
+    run: (client) => client.request<MediaPublisherLoginResult>("media.publisher.login.start", { platform }),
+    onSuccess: (nextState, result) => {
+      if (result?.message) {
+        nextState.addNotification?.(result.message, "info");
+      }
+    },
+    invalidate: [
+      async (nextState) => {
+        await loadMediaConfig(nextState);
+      },
+    ],
+  });
+}
+
+export async function waitMediaPublisherLogin(
+  state: AppViewState,
+  platform: "xiaohongshu",
+): Promise<boolean> {
+  return runMediaMutation(state, {
+    label: "waitMediaPublisherLogin",
+    run: (client) =>
+      client.request<MediaPublisherLoginResult>("media.publisher.login.wait", {
+        platform,
+        timeoutMs: 90000,
+      }),
+    onSuccess: (nextState, result) => {
+      if (result?.message) {
+        nextState.addNotification?.(
+          result.message,
+          result.status === "authenticated" ? "success" : "info",
+        );
+      }
+    },
     invalidate: [
       async (nextState) => {
         await loadMediaConfig(nextState);

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!-- Header -->
+  <div class="sp-header">
+    <h1>CrabClaw</h1>
+    <span class="sp-status off" id="spStatus">OFF</span>
+  </div>
+
+  <!-- Status Overview -->
+  <div class="sp-overview">
+    <div class="sp-stat">
+      <span class="sp-stat-label">Tabs:</span>
+      <span class="sp-stat-value" id="spTabCount">0</span>
+    </div>
+    <div class="sp-stat">
+      <span class="sp-stat-label">CDP:</span>
+      <span class="sp-stat-value" id="spCdpCount">0</span>
+    </div>
+    <div class="sp-stat">
+      <span class="sp-stat-label">Messages:</span>
+      <span class="sp-stat-value" id="spMsgCount">0</span>
+    </div>
+  </div>
+
+  <!-- Log Stream -->
+  <div class="sp-log" id="spLog">
+    <div class="sp-empty">Waiting for activity...</div>
+  </div>
+
+  <!-- Command Input -->
+  <div class="sp-cmd">
+    <input type="text" id="spCmdInput" placeholder='{"type":"list_tabs"}'>
+    <button id="spCmdSend">Send</button>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

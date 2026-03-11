@@ -93,4 +93,21 @@ describe("plugins browser card", () => {
     const chips = Array.from(container.querySelectorAll(".chip"));
     expect(chips.some((chip) => chip.textContent?.trim() === "Configured")).toBe(true);
   });
+
+  it("opens the bundled extension guide through the external opener", () => {
+    const onOpenExternal = vi.fn();
+    const container = document.createElement("div");
+    render(
+      renderPlugins(createProps({
+        onOpenExternal,
+      })),
+      container,
+    );
+
+    const button = Array.from(container.querySelectorAll("button"))
+      .find((entry) => entry.textContent?.trim() === "Extension Install Guide");
+    button?.click();
+
+    expect(onOpenExternal).toHaveBeenCalledWith("http://127.0.0.1:19001/browser-extension/");
+  });
 });

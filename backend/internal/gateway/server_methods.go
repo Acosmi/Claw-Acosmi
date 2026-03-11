@@ -102,6 +102,9 @@ type GatewayMethodContext struct {
 	// Batch P5 — 任务级预设权限
 	TaskPresetMgr *TaskPresetManager // P5: 任务预设权限
 
+	// P1 域隔离: 独立任务运行存储（从 session 域剥离）
+	TaskStore *TaskStore
+
 	// Phase 5 — 频道管理器
 	ChannelMgr *channels.Manager // 频道插件管理器
 
@@ -168,20 +171,22 @@ var (
 		"security.taskPresets.list", "security.taskPresets.match", // P5: 任务预设查询
 		"sandbox.config.get", "sandbox.status", "sandbox.test", // 沙箱配置/状态/测试
 		"mcp.remote.status", "mcp.remote.tools", // P2: MCP 远程工具查询
+		"mcp.server.list", "mcp.server.status", "mcp.server.tools", // 本地 MCP 安装服务查询
 		"memory.uhms.status", "memory.uhms.search", // P3: UHMS 状态/搜索 (修复授权缺失)
 		"memory.uhms.llm.get",                       // UHMS 独立 LLM 配置查询
 		"memory.list", "memory.get", "memory.stats", // memory.* 直接操作 (读)
 		"contract.list", "contract.get", "contract.audit", // Phase 8: 合约生命周期
 		"media.trending.fetch", "media.trending.sources", // Phase 5: 媒体热点
 		"media.drafts.list", "media.drafts.get", // Phase 5: 媒体草稿 (读)
-		"wizard.v2.providers.list", // Wizard V2 provider 目录 (只读)
-		"subagent.list",            // 子智能体状态查询
-		"argus.permission.check",   // Argus TCC 权限检查
-		"auth.state",               // P2: OAuth 认证状态查询
-		"models.managed.list",      // P4: 托管模型列表
-		"packages.catalog.browse",  // P3: 统一应用中心 浏览
-		"packages.catalog.detail",  // P3: 统一应用中心 详情
-		"packages.installed",       // P3: 统一应用中心 已安装列表
+		"wizard.v2.providers.list",    // Wizard V2 provider 目录 (只读)
+		"wizard.v2.skill-groups.list", // Wizard V2 技能组目录 (只读)
+		"subagent.list",               // 子智能体状态查询
+		"argus.permission.check",      // Argus TCC 权限检查
+		"auth.state",                  // P2: OAuth 认证状态查询
+		"models.managed.list",         // P4: 托管模型列表
+		"packages.catalog.browse",     // P3: 统一应用中心 浏览
+		"packages.catalog.detail",     // P3: 统一应用中心 详情
+		"packages.installed",          // P3: 统一应用中心 已安装列表
 	)
 
 	writeMethods = newStringSet(
@@ -189,6 +194,7 @@ var (
 		"talk.mode", "tts.enable", "tts.disable",
 		"tts.convert", "tts.setProvider",
 		"voicewake.set", "node.invoke",
+		"system.restart",
 		"desktop.update.check", "desktop.update.download", "desktop.update.apply", "desktop.update.rollback", "desktop.update.dismiss",
 		"chat.send", "chat.abort", "browser.request",
 		"web.login.start", "web.login.wait",
@@ -196,7 +202,7 @@ var (
 		"memory.uhms.add",                                                                               // P3: UHMS 添加 (修复授权缺失)
 		"memory.uhms.llm.set",                                                                           // UHMS 独立 LLM 配置设置
 		"memory.delete", "memory.compress", "memory.commit", "memory.decay.run", "memory.import.skills", // memory.* 直接操作 (写)
-		"media.drafts.delete", // Phase 5: 媒体草稿 (写)
+		"media.drafts.delete", "media.publisher.login.start", "media.publisher.login.wait", // Phase 5: 媒体草稿 / 自动登录执行器
 		"subagent.ctl",        // 子智能体控制
 		"auth.login.start",    // P2: OAuth 登录启动
 		"auth.login.exchange", // P2: OAuth 手动 code 交换
@@ -204,6 +210,9 @@ var (
 		"packages.install",    // P3: 统一应用中心 安装
 		"packages.update",     // P3: 统一应用中心 更新
 		"packages.remove",     // P3: 统一应用中心 移除
+		"mcp.server.register", "mcp.server.update", "mcp.server.start", "mcp.server.stop", "mcp.server.uninstall",
+		"sessions.create",     // P2: 网关接管 session 创建
+		"sessions.ensureMain", // P2: 确保主 session 存在
 	)
 
 	approvalMethods = newStringSet(

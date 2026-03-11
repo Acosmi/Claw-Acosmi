@@ -53,6 +53,7 @@ type FollowupRunParams struct {
 	EnforceFinalTag   bool
 	Provider          string
 	Model             string
+	SkillFilter       []string
 	AuthProfileID     string
 	AuthProfileIDSrc  string
 	ThinkLevel        autoreply.ThinkLevel

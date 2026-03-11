@@ -55,10 +55,13 @@ export type MediaHeartbeatStatus = {
   autoSpawnCount?: number;
 };
 
+export type AutomationPanel = "hub" | "email";
+
 export type AppViewState = {
   settings: UiSettings;
   password: string;
   tab: Tab;
+  automationPanel: AutomationPanel;
   overviewPanel: "dashboard" | "instances" | "usage";
   onboarding: boolean;
   wizardV2Open: boolean;
@@ -433,6 +436,7 @@ export type AppViewState = {
 
   // Media Dashboard
   mediaTrendingTopics: import("./controllers/media-dashboard.js").TrendingTopic[];
+  mediaTrendingErrors: import("./controllers/media-dashboard.js").TrendingFetchError[];
   mediaTrendingSources: string[];
   mediaTrendingLoading: boolean;
   mediaTrendingSelectedSource: string;

@@ -195,8 +195,8 @@ func TestManageInspectCapabilityManage(t *testing.T) {
 	if node.Name != "capability_manage" {
 		t.Errorf("expected name 'capability_manage', got %q", node.Name)
 	}
-	if node.Routing == nil || node.Routing.MinTier != "question" {
-		t.Error("capability_manage should have MinTier=question")
+	if node.Routing == nil || node.Routing.MinTier != "task_light" {
+		t.Error("capability_manage should have MinTier=task_light") // S2: 从 question 提升
 	}
 }
 

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ---------- 类型 ----------
@@ -194,11 +196,7 @@ func resolveCacheTraceConfig(params CacheTraceInit) CacheTraceConfig {
 		}
 	}
 	if filePath == "" {
-		stateDir := os.Getenv("OPENACOSMI_STATE_DIR")
-		if stateDir == "" {
-			home, _ := os.UserHomeDir()
-			stateDir = filepath.Join(home, ".openacosmi")
-		}
+		stateDir := config.ResolveStateDir()
 		filePath = filepath.Join(stateDir, "logs", "cache-trace.jsonl")
 	}
 

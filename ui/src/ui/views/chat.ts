@@ -34,6 +34,7 @@ export type CompactionIndicatorStatus = {
 
 export type ChatProps = {
   sessionKey: string;
+  gatewayUrl: string;
   onSessionKeyChange: (next: string) => void;
   thinkingLevel: string | null;
   showThinking: boolean;
@@ -113,6 +114,19 @@ let _builtinPromoTimer: number | null = null;
 
 // Browser extension error detection pattern (matches P1-T1 improved error message)
 const _BROWSER_EXT_ERROR_RE = /Browser tool is not (available|configured)/i;
+
+function gatewayHttpBase(wsUrl: string): string {
+  return wsUrl
+    .replace(/^wss:/, "https:")
+    .replace(/^ws:/, "http:")
+    .replace(/\/ws\/?$/, "")
+    .replace(/\/+$/, "");
+}
+
+function resolveBrowserExtensionGuideUrl(gatewayUrl: string): string {
+  const base = gatewayHttpBase((gatewayUrl ?? "").trim());
+  return base ? `${base}/browser-extension/` : "/browser-extension/";
+}
 
 /** Scan chat messages for browser tool "not available" errors. */
 function hasBrowserExtError(messages: unknown[]): boolean {
@@ -626,6 +640,7 @@ function renderModelSelector(props: ChatProps) {
 
 export function renderChat(props: ChatProps) {
   installMenuCloseListener();
+  const extensionGuideUrl = resolveBrowserExtensionGuideUrl(props.gatewayUrl);
   const canCompose = props.connected;
   const isBusy = props.sending || props.stream !== null;
   const canAbort = Boolean(props.canAbort && props.onAbort);
@@ -738,7 +753,7 @@ export function renderChat(props: ChatProps) {
             <div class="browser-ext-banner">
               <span>
                 ${t("chat.browserExtBanner")}
-                <a href="http://127.0.0.1:26222/browser-extension/" target="_blank">${t("chat.browserExtGuideLink")}</a>
+                <a href="${extensionGuideUrl}" target="_blank">${t("chat.browserExtGuideLink")}</a>
               </span>
               <button
                 class="browser-ext-banner__close"
@@ -1049,7 +1064,7 @@ export function shouldRenderReadonlyRunSurface(
   props: Pick<ChatProps, "uxMode" | "readonlyRun" | "sessionKey">,
 ): boolean {
   return (
-    (props.uxMode ?? "classic") === "codex-readonly" &&
+    (props.uxMode ?? "codex-readonly") === "codex-readonly" &&
     isReadonlyRunVisible(props.readonlyRun ?? null, props.sessionKey)
   );
 }
@@ -1102,7 +1117,7 @@ export function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup>
       message: msg,
     });
   }
-  if (props.showThinking && (props.uxMode ?? "classic") !== "codex-readonly") {
+  if (props.showThinking && (props.uxMode ?? "codex-readonly") !== "codex-readonly") {
     for (let i = 0; i < tools.length; i++) {
       items.push({
         kind: "message",
@@ -1112,7 +1127,7 @@ export function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup>
     }
   }
 
-  if (props.stream !== null && (props.uxMode ?? "classic") !== "codex-readonly") {
+  if (props.stream !== null && (props.uxMode ?? "codex-readonly") !== "codex-readonly") {
     const key = `stream:${props.sessionKey}:${props.streamStartedAt ?? "live"}`;
     if (props.stream.trim().length > 0) {
       items.push({
@@ -1168,7 +1183,7 @@ function dedupeReadonlyRuns(runs: ChatReadonlyRunState[], sessionKey: string): C
 }
 
 function resolveTerminalReadonlyRuns(props: ChatProps): ChatReadonlyRunState[] {
-  if ((props.uxMode ?? "classic") !== "codex-readonly") {
+  if ((props.uxMode ?? "codex-readonly") !== "codex-readonly") {
     return [];
   }
   const current = props.readonlyRun;

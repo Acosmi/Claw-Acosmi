@@ -3,7 +3,12 @@ package gateway
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"testing"
+
+	"github.com/Acosmi/ClawAcosmi/internal/argus"
+	"github.com/Acosmi/ClawAcosmi/internal/config"
+	types "github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
 // ---------- 授权分类测试 (Phase 5) ----------
@@ -148,6 +153,55 @@ func TestArgusCtl_ACK_SetVlaModel_BridgeNil(t *testing.T) {
 	}
 	if m["reason"] != "argus_not_running" {
 		t.Errorf("expected reason=argus_not_running, got %v", m["reason"])
+	}
+}
+
+func TestBuildArgusEntry_InitBridgeShownStoppedUntilEnabled(t *testing.T) {
+	entry := buildArgusEntry(argus.NewBridge(argus.DefaultBridgeConfig()))
+	if entry.Status != "stopped" {
+		t.Fatalf("expected init bridge to stay stopped before explicit enable, got %q", entry.Status)
+	}
+}
+
+func TestArgusCtl_SetEnabled_PersistsDesiredStateBeforePermissionRecovery(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "openacosmi.json")
+	loader := config.NewConfigLoader(config.WithConfigPath(configPath))
+	initial := &types.OpenAcosmiConfig{
+		SubAgents: &types.SubAgentConfig{
+			ScreenObserver: &types.ScreenObserverSettings{
+				BinaryPath: "/nonexistent/argus-sensory-test",
+			},
+		},
+	}
+	if err := loader.WriteConfigFile(initial); err != nil {
+		t.Fatalf("write initial config: %v", err)
+	}
+
+	resp, respond := newMockRespond()
+	ctx := &MethodHandlerContext{
+		Params: map[string]interface{}{
+			"agent_id": "argus-screen",
+			"action":   "set_enabled",
+			"value":    true,
+		},
+		Context: &GatewayMethodContext{
+			State:        &GatewayState{},
+			ConfigLoader: loader,
+		},
+		Respond: respond,
+	}
+
+	handleArgusCtl(ctx, "set_enabled")
+	if resp.ok {
+		t.Fatal("expected enable attempt to fail because binary path is invalid")
+	}
+
+	cfg, err := loader.LoadConfig()
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.SubAgents == nil || cfg.SubAgents.ScreenObserver == nil || cfg.SubAgents.ScreenObserver.Enabled == nil || !*cfg.SubAgents.ScreenObserver.Enabled {
+		t.Fatalf("expected screenObserver.enabled to persist as true, got %#v", cfg.SubAgents)
 	}
 }
 

@@ -1,315 +1,347 @@
 /* ===========================================
-   Channel Cards — Unified card grid
+   Channel Cards
    =========================================== */
 
-/* ─── Grid Layout (same visual rhythm as tools cards) ─── */
 .channels-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
 }
 
-/* ─── Card Container ─── */
 .channel-card {
-    display: flex;
-    flex-direction: column;
-    min-height: 220px;
-    height: auto;
-    border: 1px solid var(--border);
-    background: var(--card);
-    border-radius: var(--radius-lg);
-    padding: 14px 16px;
-    animation: rise 0.35s var(--ease-out) backwards;
-    transition:
-        border-color var(--duration-normal) var(--ease-out),
-        box-shadow var(--duration-normal) var(--ease-out),
-        transform var(--duration-normal) var(--ease-out);
-    box-shadow: none;
-    position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 240px;
+  padding: 14px 16px;
+  cursor: pointer;
 }
 
-.channel-card:hover {
-    border-color: var(--border-strong);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-    transform: translateY(-1px);
+.channel-card--health {
+  min-height: auto;
+  cursor: default;
 }
 
-/* ─── Configured State ─── */
 .channel-card--configured {
-    border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
 }
 
 .channel-card--configured:hover {
-    border-color: color-mix(in srgb, var(--accent) 48%, var(--border-strong));
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border-strong));
 }
 
-/* ─── Unconfigured State ─── */
-.channel-card--unconfigured {
-    border-color: var(--border);
+.channel-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.channel-card--unconfigured:hover {
-    border-color: var(--border-strong);
-}
-
-/* Dim only the body content, NOT buttons/actions */
-.channel-card--unconfigured .channel-card__body {
-    opacity: 0.7;
-}
-
-.channel-card--unconfigured:hover .channel-card__body {
-    opacity: 0.85;
-}
-
-/* ─── Card Header ─── */
-.channel-card__header {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    margin-bottom: 10px;
+.channel-card__keyline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .channel-card__icon {
-    width: 34px;
-    height: 34px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--secondary);
-    font-size: 17px;
-    flex-shrink: 0;
-    border: 1px solid var(--border);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--secondary);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.channel-card__icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 .channel-card--configured .channel-card__icon {
-    background: var(--accent-subtle);
-    border-color: var(--accent);
+  background: var(--accent-subtle);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--accent);
 }
 
-.channel-card__info {
-    flex: 1;
-    min-width: 0;
+.channel-card__key {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-accent, #f97316);
+  background: rgba(249, 115, 22, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
-.channel-card__name {
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    color: var(--text-strong);
-    line-height: 1.2;
-}
-
-.channel-card__desc {
-    color: var(--muted);
-    font-size: 12px;
-    margin-top: 3px;
-    line-height: 1.4;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-}
-
-/* ─── Status Badge (Capsule) ─── */
 .channel-card__badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 3px 10px;
-    border-radius: var(--radius-full, 999px);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
-    flex-shrink: 0;
-    margin-top: 0;
-}
-
-.channel-card__badge--ok {
-    background: rgba(34, 197, 94, 0.12);
-    color: var(--ok, #22c55e);
-    border: 1px solid rgba(34, 197, 94, 0.2);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .channel-card__badge--pending {
-    background: var(--secondary, rgba(255, 255, 255, 0.04));
-    color: var(--muted, #888);
-    border: 1px solid var(--border);
+  opacity: 0.72;
 }
 
-/* ─── Card Body ─── */
+.channel-card__name {
+  margin-top: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+  line-height: 1.2;
+}
+
+.channel-card__desc {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 .channel-card__body {
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-    font-size: 12px;
-    color: var(--muted);
+  flex: 1;
+  min-height: 0;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
 }
 
-/* ─── Card Actions (pinned to bottom) ─── */
+.channel-card__body > * + * {
+  margin-top: 12px;
+}
+
+.channel-card--unconfigured .channel-card__body {
+  opacity: 0.78;
+}
+
+.channel-card--unconfigured:hover .channel-card__body {
+  opacity: 0.92;
+}
+
+.channel-card__body .account-count,
+.channel-card__body .account-card-list,
+.channel-card__body .qr-wrap {
+  margin-top: 0;
+}
+
+.channel-card__body .account-card {
+  padding: 14px 16px;
+}
+
+.channel-card__body .status-list {
+  gap: 0;
+}
+
+.channel-card__body .status-list div {
+  padding: 8px 0;
+}
+
+.channel-card__action-row {
+  flex-wrap: wrap;
+}
+
 .channel-card__actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid var(--border);
-    flex-wrap: wrap;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
-/* ─── Config Modal ─── */
+.channel-card__summary {
+  display: block;
+  list-style: none;
+  cursor: pointer;
+}
+
+.channel-card__summary::-webkit-details-marker {
+  display: none;
+}
+
+.channel-card__summary-content {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.channel-card__summary-time {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.channel-card__debug-callout,
+.channel-card__debug {
+  margin-top: 12px;
+}
+
+.channel-card__debug {
+  max-height: 300px;
+  overflow: auto;
+  font-size: 11px;
+}
+
+/* ===========================================
+   Channel Config Modal
+   =========================================== */
+
 .channel-config-modal__overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.55);
-    -webkit-backdrop-filter: blur(24px);
-    backdrop-filter: blur(24px);
-    animation: wizardFadeIn 0.4s ease-out;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  animation: wizardFadeIn 0.4s ease-out;
 }
 
 .channel-config-modal__card {
-    position: relative;
-    width: min(600px, 92vw);
-    max-height: 85vh;
-    overflow-y: auto;
-    border-radius: 20px;
-    background: var(--wizard-bg, #1c1c1e);
-    box-shadow:
-        0 24px 80px rgba(0, 0, 0, 0.5),
-        0 0 0 1px rgba(255, 255, 255, 0.06);
-    padding: 32px 36px 28px;
-    color: var(--wizard-fg, #f5f5f7);
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
-    animation: wizardSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  width: min(600px, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  border-radius: 20px;
+  background: var(--wizard-bg, #1c1c1e);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+  padding: 32px 36px 28px;
+  color: var(--wizard-fg, #f5f5f7);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+  animation: wizardSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .channel-config-modal__header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 24px;
-    gap: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 12px;
 }
 
 .channel-config-modal__title {
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    display: flex;
-    align-items: center;
-    gap: 10px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .channel-config-modal__title-icon {
-    font-size: 24px;
+  font-size: 24px;
 }
 
 .channel-config-modal__close {
-    width: 32px;
-    height: 32px;
-    border: none;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 16px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-    flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
 }
 
 .channel-config-modal__close:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .channel-config-modal__body {
-    margin-bottom: 20px;
+  margin-bottom: 20px;
+}
+
+.channel-config-modal__error {
+  width: 100%;
+  margin-bottom: 8px;
 }
 
 .channel-config-modal__footer {
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-    padding-top: 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  flex-wrap: wrap;
 }
 
-/* ─── Config Modal Scrollbar ─── */
 .channel-config-modal__card::-webkit-scrollbar {
-    width: 6px;
+  width: 6px;
 }
 
 .channel-config-modal__card::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
 }
 
 .channel-config-modal__card::-webkit-scrollbar-track {
-    background: transparent;
+  background: transparent;
 }
 
-/* ─── Light Theme ─── */
-[data-theme="light"] .channel-card--unconfigured .channel-card__body {
-    opacity: 0.6;
+:root[data-theme="light"] .channel-card__badge--pending {
+  background: rgba(0, 0, 0, 0.04);
+  color: rgba(0, 0, 0, 0.45);
+  border-color: rgba(0, 0, 0, 0.1);
+  opacity: 1;
 }
 
-[data-theme="light"] .channel-card__badge--ok {
-    background: rgba(34, 197, 94, 0.08);
+:root[data-theme="light"] .channel-config-modal__card {
+  --wizard-bg: #ffffff;
+  --wizard-fg: #1d1d1f;
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
-[data-theme="light"] .channel-card__badge--pending {
-    background: rgba(0, 0, 0, 0.04);
-    color: rgba(0, 0, 0, 0.45);
-    border-color: rgba(0, 0, 0, 0.1);
+:root[data-theme="light"] .channel-config-modal__overlay {
+  background: rgba(0, 0, 0, 0.35);
 }
 
-[data-theme="light"] .channel-config-modal__card {
-    --wizard-bg: #ffffff;
-    --wizard-fg: #1d1d1f;
-    box-shadow:
-        0 24px 80px rgba(0, 0, 0, 0.2),
-        0 0 0 1px rgba(0, 0, 0, 0.05);
+:root[data-theme="light"] .channel-config-modal__close {
+  background: rgba(0, 0, 0, 0.05);
+  color: rgba(0, 0, 0, 0.4);
 }
 
-[data-theme="light"] .channel-config-modal__overlay {
-    background: rgba(0, 0, 0, 0.35);
+:root[data-theme="light"] .channel-config-modal__close:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: rgba(0, 0, 0, 0.7);
 }
 
-[data-theme="light"] .channel-config-modal__close {
-    background: rgba(0, 0, 0, 0.05);
-    color: rgba(0, 0, 0, 0.4);
-}
-
-[data-theme="light"] .channel-config-modal__close:hover {
-    background: rgba(0, 0, 0, 0.1);
-    color: rgba(0, 0, 0, 0.7);
-}
-
-[data-theme="light"] .channel-config-modal__footer {
-    border-top-color: rgba(0, 0, 0, 0.08);
-}
-
-/* ─── Responsive ─── */
-@media (max-width: 1180px) {
-    .channels-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+:root[data-theme="light"] .channel-config-modal__footer {
+  border-top-color: rgba(0, 0, 0, 0.08);
 }
 
 @media (max-width: 540px) {
-    .channels-grid {
-        grid-template-columns: 1fr;
-    }
+  .channel-config-modal__card {
+    padding: 24px 20px 20px;
+    border-radius: 16px;
+  }
 
-    .channel-config-modal__card {
-        padding: 24px 20px 20px;
-        border-radius: 16px;
-    }
+  .channel-card__summary-content {
+    flex-direction: column;
+  }
+
+  .channel-card__summary-time {
+    white-space: normal;
+  }
 }

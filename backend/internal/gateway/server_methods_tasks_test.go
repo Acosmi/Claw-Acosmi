@@ -131,6 +131,8 @@ func TestChatSend_PersistsTaskProgressForTasksList(t *testing.T) {
 		return []autoreply.ReplyPayload{{Text: "done"}}, nil
 	}
 
+	taskStore := NewTaskStore("")
+
 	r := NewMethodRegistry()
 	r.RegisterAll(ChatHandlers())
 	r.RegisterAll(TaskKanbanHandlers())
@@ -145,6 +147,7 @@ func TestChatSend_PersistsTaskProgressForTasksList(t *testing.T) {
 		ChatState:          chatState,
 		StorePath:          storePath,
 		SessionStore:       store,
+		TaskStore:          taskStore,
 		PipelineDispatcher: dispatcher,
 		Broadcaster:        broadcaster,
 	}, func(ok bool, payload interface{}, err *ErrorShape) {
@@ -169,7 +172,7 @@ func TestChatSend_PersistsTaskProgressForTasksList(t *testing.T) {
 		t.Fatal("timed out waiting for task progress")
 	}
 
-	progressTasks := extractTasksFromPayload(t, callTasksList(t, store, map[string]interface{}{"taskId": runID}))
+	progressTasks := extractTasksFromPayload(t, callTasksList(t, store, map[string]interface{}{"taskId": runID}, taskStore))
 	if len(progressTasks) != 1 {
 		t.Fatalf("expected 1 progress task, got %d", len(progressTasks))
 	}
@@ -191,7 +194,7 @@ func TestChatSend_PersistsTaskProgressForTasksList(t *testing.T) {
 
 	var completed TaskListEntry
 	waitForTaskListEntry(t, 2*time.Second, func() (TaskListEntry, bool) {
-		tasks := extractTasksFromPayload(t, callTasksList(t, store, map[string]interface{}{"taskId": runID}))
+		tasks := extractTasksFromPayload(t, callTasksList(t, store, map[string]interface{}{"taskId": runID}, taskStore))
 		if len(tasks) != 1 {
 			return TaskListEntry{}, false
 		}
@@ -218,15 +221,18 @@ func TestChatSend_PersistsTaskProgressForTasksList(t *testing.T) {
 	}
 }
 
-func callTasksList(t *testing.T, store *SessionStore, params map[string]interface{}) map[string]interface{} {
+func callTasksList(t *testing.T, store *SessionStore, params map[string]interface{}, taskStores ...*TaskStore) map[string]interface{} {
 	t.Helper()
 	r := NewMethodRegistry()
 	r.RegisterAll(TaskKanbanHandlers())
 
+	mctx := &GatewayMethodContext{SessionStore: store}
+	if len(taskStores) > 0 {
+		mctx.TaskStore = taskStores[0]
+	}
+
 	var payload interface{}
-	HandleGatewayRequest(r, &RequestFrame{Method: "tasks.list", Params: params}, nil, &GatewayMethodContext{
-		SessionStore: store,
-	}, func(ok bool, got interface{}, err *ErrorShape) {
+	HandleGatewayRequest(r, &RequestFrame{Method: "tasks.list", Params: params}, nil, mctx, func(ok bool, got interface{}, err *ErrorShape) {
 		if !ok {
 			t.Fatalf("tasks.list failed: %+v", err)
 		}

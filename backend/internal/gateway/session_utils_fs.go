@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ---------- 常量 ----------
@@ -31,17 +33,17 @@ func ResolveSessionTranscriptCandidates(sessionId, storePath, sessionFile, agent
 	}
 	if agentId != "" {
 		// 简化版：使用状态目录下的 agent transcript 路径
-		home, _ := os.UserHomeDir()
-		if home != "" {
+		stateDir := config.ResolveStateDir()
+		if stateDir != "" {
 			candidates = append(candidates,
-				filepath.Join(home, ".openacosmi", "agents", agentId, "sessions", sessionId+".jsonl"))
+				filepath.Join(stateDir, "agents", agentId, "sessions", sessionId+".jsonl"))
 		}
 	}
 	// 全局回退路径
-	home, _ := os.UserHomeDir()
-	if home != "" {
+	stateDir := config.ResolveStateDir()
+	if stateDir != "" {
 		candidates = append(candidates,
-			filepath.Join(home, ".openacosmi", "sessions", sessionId+".jsonl"))
+			filepath.Join(stateDir, "sessions", sessionId+".jsonl"))
 	}
 	return candidates
 }

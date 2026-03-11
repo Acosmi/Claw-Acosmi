@@ -2,7 +2,11 @@ package gateway
 
 import (
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+
+	applog "github.com/Acosmi/ClawAcosmi/pkg/log"
 )
 
 func TestSafeEqual(t *testing.T) {
@@ -47,6 +51,73 @@ func TestResolveGatewayAuth_TailscaleServe(t *testing.T) {
 	auth := ResolveGatewayAuth(cfg, "serve")
 	if !auth.AllowTailscale {
 		t.Error("tailscaleMode=serve should enable allowTailscale")
+	}
+}
+
+func TestResolveGatewayAuthWithOptions_EphemeralGeneratedTokenDoesNotWriteFile(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	t.Setenv("CRABCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENACOSMI_STATE_DIR", "")
+	t.Setenv("CRABCLAW_GATEWAY_TOKEN", "")
+	t.Setenv("OPENACOSMI_GATEWAY_TOKEN", "")
+	t.Setenv("CLAWDBOT_GATEWAY_TOKEN", "")
+
+	auth := ResolveGatewayAuthWithOptions(nil, "", GatewayAuthResolveOptions{
+		PersistGeneratedToken: false,
+	})
+	if auth.Token == "" {
+		t.Fatal("expected generated token")
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "gateway-token")); !os.IsNotExist(err) {
+		t.Fatalf("expected no persisted gateway token, err=%v", err)
+	}
+}
+
+func TestStartGatewayServer_ReadonlyBootstrapDoesNotPersistState(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	logDir := filepath.Join(t.TempDir(), "logs")
+	t.Setenv("CRABCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENACOSMI_STATE_DIR", "")
+	t.Setenv("CRABCLAW_GATEWAY_TOKEN", "")
+	t.Setenv("OPENACOSMI_GATEWAY_TOKEN", "")
+	t.Setenv("CLAWDBOT_GATEWAY_TOKEN", "")
+
+	prevLogDir := applog.DefaultLogDir
+	applog.DefaultLogDir = logDir
+	t.Cleanup(func() {
+		applog.DefaultLogDir = prevLogDir
+	})
+
+	runtime, err := StartGatewayServer(0, GatewayServerOptions{
+		BootstrapProfile: GatewayBootstrapProfileReadonlyBootstrap,
+	})
+	if err != nil {
+		t.Fatalf("StartGatewayServer(readonly-bootstrap) failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = runtime.Close("test")
+	})
+
+	if _, err := os.Stat(filepath.Join(stateDir, "gateway-token")); !os.IsNotExist(err) {
+		t.Fatalf("expected no persisted gateway token, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "store")); !os.IsNotExist(err) {
+		t.Fatalf("expected no persistent store dir, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "relay-token")); !os.IsNotExist(err) {
+		t.Fatalf("expected no relay token creation, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "exec-approvals.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no exec approvals file creation, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "_media")); !os.IsNotExist(err) {
+		t.Fatalf("expected no media workspace creation, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "bin")); !os.IsNotExist(err) {
+		t.Fatalf("expected no Argus user bin creation, err=%v", err)
+	}
+	if _, err := os.Stat(logDir); !os.IsNotExist(err) {
+		t.Fatalf("expected no log dir creation, err=%v", err)
 	}
 }
 

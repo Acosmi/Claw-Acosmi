@@ -137,8 +137,11 @@ type ToolUseEvent struct {
 
 // UsageInfo token 使用统计。
 type UsageInfo struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_input_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_creation_input_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 // ---------- 请求 / 响应 ----------

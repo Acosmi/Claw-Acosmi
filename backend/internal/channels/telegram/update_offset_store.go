@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 	"github.com/google/uuid"
 )
 
@@ -39,11 +40,7 @@ func resolveUpdateOffsetPath(accountID string) string {
 
 // resolveStateDir 解析状态目录（继承自 config/paths.ts）
 func resolveStateDir() string {
-	if dir := os.Getenv("OPENACOSMI_STATE_DIR"); dir != "" {
-		return dir
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".openacosmi")
+	return config.ResolveStateDir()
 }
 
 // ReadTelegramUpdateOffset 读取已保存的 update offset。

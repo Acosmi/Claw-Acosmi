@@ -3,16 +3,24 @@ import type { OpenAcosmiApp } from "./app.ts";
 import { t } from "./i18n.ts";
 import type { CoderConfirmRequest } from "./controllers/coder-confirmation.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
+import { globalChatEventStore } from "./event-store.ts";
 import type { GatewayEventFrame, GatewayHelloOk } from "./gateway.ts";
 import type { PermissionDeniedEvent } from "./views/permission-popup.ts";
 import { showPermissionPopup } from "./views/permission-popup.ts";
 import type { Tab } from "./navigation.ts";
 import type { UiSettings } from "./storage.ts";
-import type { AgentsListResult, PresenceEntry, HealthSnapshot, StatusSummary } from "./types.ts";
+import type {
+  AgentsListResult,
+  ConfigSnapshot,
+  PresenceEntry,
+  HealthSnapshot,
+  StatusSummary,
+} from "./types.ts";
 import { CHAT_SESSIONS_ACTIVE_MINUTES, flushChatQueueForEvent } from "./app-chat.ts";
 import {
   applySettings,
   loadCron,
+  rememberSessionKeyForChannel,
   refreshActiveTab,
   setLastActiveSessionKey,
 } from "./app-settings.ts";
@@ -28,8 +36,7 @@ import {
 import { loadAgents } from "./controllers/agents.ts";
 import { loadChannels } from "./controllers/channels.ts";
 import { loadAssistantIdentity } from "./controllers/assistant-identity.ts";
-import { loadChatHistory } from "./controllers/chat.ts";
-import { handleChatEvent, type ChatEventPayload } from "./controllers/chat.ts";
+import { handleChatEvent, loadChatHistory, loadChatModels, type ChatEventPayload } from "./controllers/chat.ts";
 import { loadConfig, needsInitialSetup } from "./controllers/config.ts";
 import { loadDevices } from "./controllers/devices.ts";
 import {
@@ -83,6 +90,7 @@ type GatewayHost = {
   onboarding?: boolean;
   wizardAutoStarted?: boolean;
   wizardV2Open?: boolean;
+  setupReadonlyHintShown?: boolean;
   eventLogBuffer: EventLogEntry[];
   eventLog: EventLogEntry[];
   tab: Tab;
@@ -118,6 +126,8 @@ type SessionDefaultsSnapshot = {
   mainSessionKey?: string;
   scope?: string;
 };
+
+export type SetupBootstrapAction = "none" | "wizard" | "readonly-shell";
 
 function normalizeSessionKeyForDefaults(
   value: string | undefined,
@@ -172,24 +182,60 @@ function applySessionDefaults(host: GatewayHost, defaults?: SessionDefaultsSnaps
 }
 
 async function maybeAutoStartSetupWizard(host: GatewayHost) {
-  if (host.wizardAutoStarted || host.wizardV2Open) {
-    return;
-  }
-
   const app = host as unknown as OpenAcosmiApp;
-  if (host.onboarding) {
+  const initialAction = resolveSetupBootstrapAction(host, null);
+  if (initialAction === "wizard") {
     host.wizardAutoStarted = true;
     await app.handleStartWizardV2();
     return;
   }
-
-  await loadConfig(app);
-  if (!needsInitialSetup(app.configSnapshot)) {
+  if (initialAction !== "none") {
     return;
   }
 
-  host.wizardAutoStarted = true;
-  await app.handleStartWizardV2();
+  await loadConfig(app);
+  switch (resolveSetupBootstrapAction(host, app.configSnapshot)) {
+    case "none":
+      return;
+    case "wizard":
+      host.wizardAutoStarted = true;
+      await app.handleStartWizardV2();
+      return;
+    case "readonly-shell":
+      if (host.setupReadonlyHintShown) {
+        return;
+      }
+      host.setupReadonlyHintShown = true;
+      if (host.tab === "chat") {
+        app.setTab("overview");
+      }
+      app.addNotification(t("setup.readonlyBootstrapHint"), "info");
+      return;
+  }
+}
+
+export function resolveSetupBootstrapAction(
+  host: Pick<GatewayHost, "wizardAutoStarted" | "wizardV2Open" | "onboarding">,
+  snapshot: ConfigSnapshot | null | undefined,
+): SetupBootstrapAction {
+  if (host.wizardAutoStarted || host.wizardV2Open) {
+    return "none";
+  }
+  if (host.onboarding) {
+    return "wizard";
+  }
+  if (
+    snapshot?.valid === false ||
+    (snapshot?.exists !== false &&
+      Array.isArray(snapshot?.issues) &&
+      snapshot.issues.length > 0)
+  ) {
+    return "wizard";
+  }
+  if (needsInitialSetup(snapshot)) {
+    return "readonly-shell";
+  }
+  return "none";
 }
 
 function handleInterruptedChatRun(host: GatewayHost, message: string) {
@@ -235,11 +281,35 @@ export function connectGateway(host: GatewayHost) {
       host.lastError = null;
       host.hello = hello;
       applySnapshot(host, hello);
-      // Reset orphaned chat run state from before disconnect.
-      // Any in-flight run's final event was lost during the disconnect window.
-      host.chatRunId = null;
+      // F4: 从 onClose 保存的 _previousChatRunId 恢复，查询后端确认是否仍活跃。
+      // 注意: handleInterruptedChatRun (onClose) 已将 host.chatRunId 清空，
+      // 所以此处必须读 _previousChatRunId 而非 host.chatRunId。
+      const previousChatRunId = (host as any)._previousChatRunId as string | null;
+      (host as any)._previousChatRunId = null; // 消费后清除
       (host as unknown as { chatStream: string | null }).chatStream = null;
       (host as unknown as { chatStreamStartedAt: number | null }).chatStreamStartedAt = null;
+      if (previousChatRunId && host.client) {
+        host.client.request<{ hasActiveRun?: boolean; runId?: string }>(
+          "chat.active_runs",
+          { sessionKey: host.sessionKey },
+        ).then((res) => {
+          if (res?.hasActiveRun && res.runId === previousChatRunId) {
+            // 后端仍在执行，恢复 chatRunId 以继续接收 delta 事件
+            host.chatRunId = previousChatRunId;
+          } else {
+            // 运行已结束或不匹配，确认清空
+            host.chatRunId = null;
+          }
+          if (typeof (host as any).requestUpdate === "function") {
+            (host as any).requestUpdate();
+          }
+        }).catch(() => {
+          // 查询失败，安全降级为清空
+          host.chatRunId = null;
+        });
+      } else {
+        host.chatRunId = null;
+      }
       if (Array.isArray(host.chatReadonlyRunHistory)) {
         host.chatReadonlyRunHistory = loadPersistedChatReadonlyRunHistory(host.sessionKey);
       }
@@ -252,14 +322,51 @@ export function connectGateway(host: GatewayHost) {
       resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
       void loadAssistantIdentity(host as unknown as OpenAcosmiApp);
       void loadAgents(host as unknown as OpenAcosmiApp);
-      // Load models for chat composer selector
-      void import("./controllers/chat.ts").then((m) =>
-        m.loadChatModels(host as any),
-      );
+      void loadChatModels(host as any);
       void loadNodes(host as unknown as OpenAcosmiApp, { quiet: true });
       void loadDevices(host as unknown as OpenAcosmiApp, { quiet: true });
       void loadChannels(host as unknown as OpenAcosmiApp, false);
       void refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
+      // F3: WS 重连时补偿远程频道未读状态。
+      // 断开期间 channel.message.incoming 事件丢失（Broadcaster 纯推送无持久化）。
+      // 重连后对比 sessions.list 中远程频道 session 的 updatedAt，
+      // 将断开期间有更新的远程频道标记为未读。
+      {
+        const app = host as unknown as OpenAcosmiApp;
+        const disconnectedAt = (app as any)._lastDisconnectedAt as number | undefined;
+        if (disconnectedAt && app.client) {
+          void app.client.request<{ sessions?: Array<{ key?: string; updatedAt?: number | null }> }>(
+            "sessions.list",
+            { activeMinutes: 10 },
+          ).then((res) => {
+            if (!res?.sessions) return;
+            const remoteChannelPrefixes = ["feishu:", "discord:", "telegram:", "slack:", "wecom:", "dingtalk:", "whatsapp:", "signal:", "googlechat:", "imessage:"];
+            for (const s of res.sessions) {
+              if (!s.key || !s.updatedAt) continue;
+              const isRemote = remoteChannelPrefixes.some((p) => s.key!.startsWith(p));
+              if (isRemote && s.updatedAt > disconnectedAt && s.key !== host.sessionKey) {
+                const channelKey = s.key.split(":")[0];
+                app.channelUnreadCounts = {
+                  ...(app.channelUnreadCounts || {}),
+                  [channelKey]: (app.channelUnreadCounts?.[channelKey] || 0) + 1,
+                };
+                app.crossChannelNotificationActive = true;
+                app.crossChannelNotificationSessionKey = s.key;
+                app.crossChannelNotificationText = "有新消息";
+              }
+            }
+            if (app.crossChannelNotificationActive && typeof app.requestUpdate === "function") {
+              app.requestUpdate();
+              // 3s 后自动收起红点（与正常 channel.message.incoming 行为一致）
+              if ((app as any)._crossChannelTimeout) clearTimeout((app as any)._crossChannelTimeout);
+              (app as any)._crossChannelTimeout = setTimeout(() => {
+                app.crossChannelNotificationActive = false;
+                if (typeof app.requestUpdate === "function") app.requestUpdate();
+              }, 3000);
+            }
+          }).catch(() => { /* non-critical */ });
+        }
+      }
       // WS 重连时同步 escalation 状态（防止断连期间状态变更导致前端过时）
       {
         const app = host as unknown as OpenAcosmiApp;
@@ -279,6 +386,10 @@ export function connectGateway(host: GatewayHost) {
     },
     onClose: ({ code, reason }) => {
       host.connected = false;
+      // F3: 记录断开时间戳，供 onHello 重连时对比远程频道更新
+      (host as any)._lastDisconnectedAt = Date.now();
+      // F4: 在 handleInterruptedChatRun 清空 chatRunId 之前，保存到私有字段供 onHello 重连恢复使用
+      (host as any)._previousChatRunId = host.chatRunId || null;
       const detail = reason || "no reason";
       handleInterruptedChatRun(host, `disconnected (${code}): ${detail}`);
       // Code 1012 = Service Restart (expected during config saves, don't show as error)
@@ -312,6 +423,29 @@ export function handleGatewayEvent(host: GatewayHost, evt: GatewayEventFrame) {
   }
 }
 
+/**
+ * P4 事件收敛: 跟随已完成的跨 session 对话。
+ * 从旧的内联 hack 提取为独立函数，提高可测试性。
+ */
+function followCompletedSession(host: GatewayHost, completedSessionKey: string) {
+  const app = host as unknown as OpenAcosmiApp;
+  app.sessionKey = completedSessionKey;
+  app.chatRunId = null;
+  (app as any).chatStream = null;
+  (app as any).chatStreamStartedAt = null;
+  app.applySettings?.({
+    ...app.settings,
+    sessionKey: completedSessionKey,
+    lastActiveSessionKey: completedSessionKey,
+  });
+  void loadChatHistory(app);
+  if (app.crossChannelNotificationActive) {
+    app.clearCrossChannelNotification?.();
+  }
+  // drain stored events for the target session (consumed by loadChatHistory)
+  globalChatEventStore.drainTerminalEvents(completedSessionKey);
+}
+
 function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   host.eventLogBuffer = [
     { ts: Date.now(), event: evt.event, payload: evt.payload },
@@ -335,10 +469,17 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   if (evt.event === "chat") {
     const payload = evt.payload as ChatEventPayload | undefined;
     if (payload?.sessionKey) {
-      setLastActiveSessionKey(
-        host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
-        payload.sessionKey,
-      );
+      if (payload.sessionKey === host.sessionKey) {
+        setLastActiveSessionKey(
+          host as unknown as Parameters<typeof setLastActiveSessionKey>[0],
+          payload.sessionKey,
+        );
+      } else {
+        rememberSessionKeyForChannel(
+          host as unknown as Parameters<typeof rememberSessionKeyForChannel>[0],
+          payload.sessionKey,
+        );
+      }
     }
     const state = handleChatEvent(host as unknown as OpenAcosmiApp, payload);
     if (state === "final" || state === "error" || state === "aborted") {
@@ -359,23 +500,18 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     if (state === "final") {
       void loadChatHistory(host as unknown as OpenAcosmiApp);
     } else if (state === null && payload?.state === "final" && payload?.sessionKey) {
-      // 跨 session 回归：handleChatEvent 因 sessionKey 不匹配返回 null，
-      // 但任务已完成（state=final）。自动切回原始 session 并刷新历史，
-      // 确保用户提问和回复对用户可见。
-      const app = host as unknown as OpenAcosmiApp;
-      const completedSession = payload.sessionKey;
-      app.sessionKey = completedSession;
-      app.chatRunId = null;
-      (app as any).chatStream = null;
-      (app as any).chatStreamStartedAt = null;
-      app.applySettings?.({
-        ...app.settings,
-        sessionKey: completedSession,
-        lastActiveSessionKey: completedSession,
+      // P4 事件收敛: 跨 session 终态事件已归档到 globalChatEventStore。
+      // 仅需: (1) 清理 runId 追踪 (2) 刷新 sessions 列表 (3) 按需跟随已完成 session。
+      const runId = payload.runId;
+      const shouldFollow = Boolean(runId && host.refreshSessionsAfterChat.has(runId));
+      if (runId && host.refreshSessionsAfterChat.has(runId)) {
+        host.refreshSessionsAfterChat.delete(runId);
+      }
+      void loadSessions(host as unknown as OpenAcosmiApp, {
+        activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
       });
-      void loadChatHistory(app);
-      if (app.crossChannelNotificationActive) {
-        app.clearCrossChannelNotification?.();
+      if (shouldFollow) {
+        followCompletedSession(host, payload.sessionKey);
       }
     }
     return;
@@ -533,6 +669,13 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
     } | undefined;
     if (payload?.sessionKey && payload?.text) {
       const app = host as unknown as OpenAcosmiApp;
+      rememberSessionKeyForChannel(
+        host as unknown as Parameters<typeof rememberSessionKeyForChannel>[0],
+        payload.sessionKey,
+      );
+      void loadSessions(app, {
+        activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
+      });
       const fromStr = payload.from ? `[${payload.from}] ` : "";
       const msg = `${fromStr}${payload.text}`;
 

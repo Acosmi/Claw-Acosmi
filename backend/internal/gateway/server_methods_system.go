@@ -10,10 +10,12 @@ import (
 // SystemHandlers 返回系统类方法处理器映射。
 func SystemHandlers() map[string]GatewayMethodHandler {
 	return map[string]GatewayMethodHandler{
-		"system-presence": handleSystemPresence,
-		"system-event":    handleSystemEvent,
-		"last-heartbeat":  handleLastHeartbeat,
-		"set-heartbeats":  handleSetHeartbeats,
+		"system-presence":     handleSystemPresence,
+		"system-event":        handleSystemEvent,
+		"system.restart":      handleSystemRestart,
+		"last-heartbeat":      handleLastHeartbeat,
+		"set-heartbeats":      handleSetHeartbeats,
+		"system.openExternal": handleSystemOpenExternal,
 	}
 }
 
@@ -156,6 +158,52 @@ func handleSystemEvent(ctx *MethodHandlerContext) {
 	ctx.Respond(true, map[string]interface{}{"ok": true}, nil)
 }
 
+func handleSystemRestart(ctx *MethodHandlerContext) {
+	restarter := ctx.Context.GatewayRestarter
+	if restarter == nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "gateway restarter not available"))
+		return
+	}
+
+	reason := strings.TrimSpace(readString(ctx.Params, "reason"))
+	if reason == "" {
+		reason = "system.restart"
+	}
+
+	var delayPtr *int
+	if raw, ok := ctx.Params["delayMs"]; ok {
+		switch v := raw.(type) {
+		case float64:
+			delay := int(v)
+			if delay < 0 {
+				ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "delayMs must be >= 0"))
+				return
+			}
+			delayPtr = &delay
+		case int:
+			delay := v
+			if delay < 0 {
+				ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "delayMs must be >= 0"))
+				return
+			}
+			delayPtr = &delay
+		}
+	}
+
+	result := restarter.ScheduleRestart(GatewayRestartPlan{
+		DelayMs: delayPtr,
+		Reason:  reason,
+	})
+	if result == nil {
+		result = &GatewayRestartResult{Scheduled: false, Reason: reason}
+	}
+
+	ctx.Respond(true, map[string]interface{}{
+		"ok":      true,
+		"restart": result,
+	}, nil)
+}
+
 // ---------- last-heartbeat ----------
 // 对应 TS system.ts L10-12
 
@@ -193,6 +241,23 @@ func handleSetHeartbeats(ctx *MethodHandlerContext) {
 		"ok":      true,
 		"enabled": enabled,
 	}, nil)
+}
+
+func handleSystemOpenExternal(ctx *MethodHandlerContext) {
+	url := readString(ctx.Params, "url")
+	if url == "" {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "url required"))
+		return
+	}
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "url must start with http:// or https://"))
+		return
+	}
+	if !OpenURL(url) {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to open external url"))
+		return
+	}
+	ctx.Respond(true, map[string]interface{}{"ok": true}, nil)
 }
 
 // ---------- 辅助函数 ----------

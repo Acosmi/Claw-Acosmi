@@ -6,7 +6,6 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/Acosmi/ClawAcosmi/internal/media"
@@ -28,6 +27,7 @@ func DocConvHandlers() map[string]GatewayMethodHandler {
 // DocConvConfigGetResult docconv.config.get 响应
 type DocConvConfigGetResult struct {
 	Configured    bool                  `json:"configured"`
+	Hash          string                `json:"hash,omitempty"`
 	Provider      string                `json:"provider,omitempty"`
 	MCPServerName string                `json:"mcpServerName,omitempty"`
 	MCPTransport  string                `json:"mcpTransport,omitempty"`
@@ -54,7 +54,7 @@ type DocConvMCPPreset struct {
 	Hint      string `json:"hint,omitempty"`
 }
 
-func handleDocConvConfigGet(ctx *MethodHandlerContext) {
+func buildDocConvConfigGetResult(cfg *types.DocConvConfig) DocConvConfigGetResult {
 	result := DocConvConfigGetResult{
 		Providers: []DocConvProviderInfo{
 			{ID: "mcp", Label: "MCP 工具", Hint: "标准 MCP 协议，支持多种文档转换服务器"},
@@ -86,7 +86,6 @@ func handleDocConvConfigGet(ctx *MethodHandlerContext) {
 		},
 	}
 
-	cfg := loadDocConvConfigFromCtx(ctx)
 	if cfg != nil && cfg.Provider != "" {
 		result.Configured = true
 		result.Provider = cfg.Provider
@@ -97,49 +96,60 @@ func handleDocConvConfigGet(ctx *MethodHandlerContext) {
 		result.PandocPath = cfg.PandocPath
 	}
 
+	return result
+}
+
+func handleDocConvConfigGet(ctx *MethodHandlerContext) {
+	result := buildDocConvConfigGetResult(loadDocConvConfigFromCtx(ctx))
+	if loader := ctx.Context.ConfigLoader; loader != nil {
+		if snapshot, err := loader.ReadConfigFileSnapshot(); err == nil && snapshot != nil {
+			result.Hash = snapshot.Hash
+		}
+	}
+
 	ctx.Respond(true, result, nil)
 }
 
 // ---------- docconv.config.set ----------
 
 func handleDocConvConfigSet(ctx *MethodHandlerContext) {
-	paramsJSON, err := json.Marshal(ctx.Params)
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "invalid params"))
-		return
-	}
-	var params types.DocConvConfig
-	if err := json.Unmarshal(paramsJSON, &params); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "parse params: "+err.Error()))
-		return
-	}
+	executeConfigMutation(ctx, configMutationOptions{
+		Action: "docconv.config.set",
+		Mutate: func(currentCfg *types.OpenAcosmiConfig) error {
+			if currentCfg.DocConv == nil {
+				currentCfg.DocConv = &types.DocConvConfig{}
+			}
+			current := currentCfg.DocConv
 
-	cfgLoader := ctx.Context.ConfigLoader
-	if cfgLoader == nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "config loader not available"))
-		return
-	}
-
-	currentCfg, err := cfgLoader.LoadConfig()
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "load config: "+err.Error()))
-		return
-	}
-	if currentCfg == nil {
-		currentCfg = &types.OpenAcosmiConfig{}
-	}
-
-	currentCfg.DocConv = &params
-
-	if err := cfgLoader.WriteConfigFile(currentCfg); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "save config: "+err.Error()))
-		return
-	}
-
-	ctx.Respond(true, map[string]interface{}{
-		"saved":    true,
-		"provider": params.Provider,
-	}, nil)
+			if provider, ok := readTrimmedStringParam(ctx.Params, "provider"); ok {
+				current.Provider = provider
+			}
+			if name, ok := readTrimmedStringParam(ctx.Params, "mcpServerName"); ok {
+				current.MCPServerName = name
+			}
+			if transport, ok := readTrimmedStringParam(ctx.Params, "mcpTransport"); ok {
+				current.MCPTransport = transport
+			}
+			if command, ok := readTrimmedStringParam(ctx.Params, "mcpCommand"); ok {
+				current.MCPCommand = command
+			}
+			if url, ok := readTrimmedStringParam(ctx.Params, "mcpUrl"); ok {
+				current.MCPURL = url
+			}
+			if pandocPath, ok := readTrimmedStringParam(ctx.Params, "pandocPath"); ok {
+				current.PandocPath = pandocPath
+			}
+			if useSandbox, ok := readOptionalBoolParam(ctx.Params, "useSandbox"); ok {
+				current.UseSandbox = &useSandbox
+			}
+			return nil
+		},
+		AfterWrite: func(_ *MethodHandlerContext, cfg *types.OpenAcosmiConfig) map[string]interface{} {
+			return map[string]interface{}{
+				"docconv": buildDocConvConfigGetResult(cfg.DocConv),
+			}
+		},
+	})
 }
 
 // ---------- docconv.test ----------

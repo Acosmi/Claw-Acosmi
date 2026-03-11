@@ -208,6 +208,9 @@ func handleAgentRPC(ctx *MethodHandlerContext) {
 		defer pipelineCancel()
 		defer func() {
 			chatState.Registry.Remove(sessionKey, runId, sessionKey)
+			if ctx.Context.EscalationMgr != nil {
+				ctx.Context.EscalationMgr.TaskComplete(runId)
+			}
 		}()
 
 		// 订阅全局事件总线 → 广播 agent 工具事件到 WebSocket

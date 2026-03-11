@@ -9,15 +9,17 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // DefaultRegistryPath returns the default registry.json path.
 func DefaultRegistryPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".openacosmi", "mcp-servers", "registry.json"), nil
+	return filepath.Join(managedMcpServersDir(), "registry.json"), nil
+}
+
+func managedMcpServersDir() string {
+	return filepath.Join(config.ResolveStateDir(), "mcp-servers")
 }
 
 // LoadRegistry reads the registry from disk.

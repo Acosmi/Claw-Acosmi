@@ -1,0 +1,131 @@
+.ss-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.ss-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--cc-bg-1);
+  border-bottom: 1px solid var(--cc-border);
+  flex-shrink: 0;
+}
+
+.ss-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--cc-radius-sm);
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 600;
+  font-family: var(--cc-font);
+}
+
+.ss-btn.capture {
+  background: var(--cc-orange);
+  color: white;
+}
+
+.ss-btn.capture:hover { background: var(--cc-orange-dark); }
+
+.ss-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ss-zoom button {
+  width: 24px;
+  height: 24px;
+  background: var(--cc-bg-2);
+  border: 1px solid var(--cc-border);
+  color: var(--cc-text);
+  border-radius: var(--cc-radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ss-zoom button:hover { border-color: var(--cc-text-dim); }
+
+.ss-zoom span {
+  font-size: 11px;
+  color: var(--cc-text-dim);
+  min-width: 36px;
+  text-align: center;
+  font-family: var(--cc-mono);
+}
+
+.ss-time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--cc-text-muted);
+  font-family: var(--cc-mono);
+}
+
+.ss-viewport {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  background: var(--cc-bg-0);
+}
+
+.ss-image-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.ss-image {
+  display: block;
+  max-width: none;
+  cursor: crosshair;
+  border-radius: var(--cc-radius-sm);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+}
+
+.ss-click-dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--cc-red);
+  border: 2px solid white;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  animation: ss-pulse 0.5s ease-out;
+  z-index: 10;
+}
+
+.ss-click-coords {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  color: white;
+  background: rgba(0,0,0,0.7);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  font-family: var(--cc-mono);
+}
+
+@keyframes ss-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(248,113,113,0.6); }
+  100% { box-shadow: 0 0 0 10px rgba(248,113,113,0); }
+}
+
+.ss-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--cc-text-muted);
+  font-size: 13px;
+}

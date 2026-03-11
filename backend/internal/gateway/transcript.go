@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -19,6 +20,8 @@ import (
 // CURRENT_SESSION_VERSION transcript 文件版本。
 // TS 对照: @mariozechner/pi-coding-agent CURRENT_SESSION_VERSION
 const CURRENT_SESSION_VERSION = "1.0"
+
+var downgradedToolDirectiveTextRE = regexp.MustCompile(`(?ms)^\s*\[\[[a-z_][a-z0-9_]*\]\]\s*(?:\n[a-zA-Z0-9_.-]+\s*:\s*.*)*\s*$`)
 
 // TranscriptAppendResult transcript 追加结果。
 type TranscriptAppendResult struct {
@@ -166,19 +169,10 @@ func AppendAssistantTranscriptMessage(params AppendTranscriptParams) *Transcript
 		},
 		"timestamp":  now,
 		"stopReason": "stop",
+		// P5 Usage 收敛: 注入消息用 "source":"injected" 标记，不伪造 0 值。
+		// parseUsageFromEntry 遇到全零值时 hasUsage=false，source 字段帮助统计层准确归类。
 		"usage": map[string]interface{}{
-			"input":       0,
-			"output":      0,
-			"cacheRead":   0,
-			"cacheWrite":  0,
-			"totalTokens": 0,
-			"cost": map[string]interface{}{
-				"input":      0,
-				"output":     0,
-				"cacheRead":  0,
-				"cacheWrite": 0,
-				"total":      0,
-			},
+			"source": "injected",
 		},
 		"api":      "openai-responses",
 		"provider": "openacosmi",
@@ -345,7 +339,11 @@ func stripReplyTagsText(text string) string {
 			searchFrom = closeIdx + 2
 		}
 	}
-	return strings.TrimSpace(result)
+	result = strings.TrimSpace(result)
+	if downgradedToolDirectiveTextRE.MatchString(result) {
+		return ""
+	}
+	return result
 }
 
 // CapArrayByJSONBytes 按 JSON 字节限制裁剪数组（从尾部保留）。
@@ -363,6 +361,9 @@ func CapArrayByJSONBytes(items []map[string]interface{}, maxBytes int) []map[str
 			continue
 		}
 		if totalBytes+len(b) > maxBytes {
+			if startIdx == len(items) {
+				startIdx = i
+			}
 			break
 		}
 		totalBytes += len(b)

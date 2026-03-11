@@ -134,6 +134,69 @@ func TestFeishuBroadcastCard_NoOpenIDWhenChatHasSuccess(t *testing.T) {
 	}
 }
 
+func TestFeishuBroadcastCard_DeduplicatesSameTargetAcrossStaticAndOriginatorSources(t *testing.T) {
+	var chatCalls atomic.Int32
+	var userCalls atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		targetType := r.URL.Query().Get("receive_id_type")
+		switch targetType {
+		case "chat_id":
+			chatCalls.Add(1)
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+		case "open_id":
+			userCalls.Add(1)
+			_, _ = w.Write([]byte(`{"code":0,"msg":"ok"}`))
+		default:
+			_, _ = w.Write([]byte(`{"code":998,"msg":"unknown target"}`))
+		}
+	}))
+	defer srv.Close()
+
+	targetURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server url: %v", err)
+	}
+
+	provider := &feishuProvider{
+		config: &FeishuProviderConfig{
+			ChatID:          "oc_chat_dup",
+			ApprovalChatID:  "oc_chat_dup",
+			LastKnownChatID: "oc_chat_dup",
+			UserID:          "ou_user_dup",
+			LastKnownUserID: "ou_user_dup",
+		},
+		client: &http.Client{
+			Timeout: 3 * time.Second,
+			Transport: &feishuRewriteTransport{
+				target: targetURL,
+				base:   http.DefaultTransport,
+			},
+		},
+	}
+
+	card := map[string]interface{}{
+		"header": map[string]interface{}{"title": "test"},
+	}
+	if err := provider.broadcastCard(
+		context.Background(),
+		"dummy-token",
+		card,
+		feishuTarget{"chat_id", "oc_chat_dup"},
+		feishuTarget{"open_id", "ou_user_dup"},
+	); err != nil {
+		t.Fatalf("broadcast card should succeed, got: %v", err)
+	}
+
+	if chatCalls.Load() != 1 {
+		t.Fatalf("expected duplicated chat targets to be collapsed to 1 send, got %d", chatCalls.Load())
+	}
+	if userCalls.Load() != 0 {
+		t.Fatalf("expected no open_id fallback when deduplicated chat succeeds, got %d", userCalls.Load())
+	}
+}
+
 func TestParseFeishuConfig_ParsesFallbackFields(t *testing.T) {
 	raw := map[string]interface{}{
 		"enabled":         true,
@@ -300,6 +363,35 @@ func TestFeishuTypedCard_MountAccess(t *testing.T) {
 	}
 }
 
+func TestFeishuTypedCard_MountAccessTaskScopedOmitsTTL(t *testing.T) {
+	provider := &feishuProvider{config: &FeishuProviderConfig{}}
+	card := provider.renderTypedCard(TypedApprovalRequest{
+		Type:       ApprovalTypeMountAccess,
+		ID:         "test-mount-task-1",
+		MountPath:  "/Users/admin/Documents",
+		MountMode:  "ro",
+		Reason:     "需要读取用户文档目录",
+		TaskScoped: true,
+	})
+
+	elements := card["elements"].([]interface{})
+	bodyText := elements[0].(map[string]interface{})["text"].(map[string]interface{})["content"].(string)
+	if !containsAll(bodyText, "当前任务", "自动回收") {
+		t.Fatalf("expected task-scoped wording in mount_access card, got %q", bodyText)
+	}
+
+	actions := elements[2].(map[string]interface{})["actions"].([]interface{})
+	approveValue := actions[0].(map[string]interface{})["value"].(map[string]interface{})
+	if _, ok := approveValue["ttl"]; ok {
+		t.Fatalf("task-scoped mount approval should omit ttl payload, got %+v", approveValue)
+	}
+
+	noteText := elements[3].(map[string]interface{})["elements"].([]interface{})[0].(map[string]interface{})["content"].(string)
+	if !containsAll(noteText, "范围: 当前任务") {
+		t.Fatalf("expected task-scoped note in mount_access card, got %q", noteText)
+	}
+}
+
 func TestFeishuTypedCard_DataExport(t *testing.T) {
 	provider := &feishuProvider{config: &FeishuProviderConfig{}}
 	card := provider.renderTypedCard(TypedApprovalRequest{
@@ -340,6 +432,24 @@ func TestFeishuTypedResultCard_MountAccess(t *testing.T) {
 
 	if _, err := json.Marshal(card); err != nil {
 		t.Fatalf("mount_access result card not JSON serializable: %v", err)
+	}
+}
+
+func TestFeishuTypedResultCard_MountAccessTaskScoped(t *testing.T) {
+	provider := &feishuProvider{config: &FeishuProviderConfig{}}
+	card := provider.renderTypedResultCard(TypedApprovalResultNotification{
+		Type:       ApprovalTypeMountAccess,
+		ID:         "mount-result-task-1",
+		Approved:   true,
+		MountPath:  "/Users/admin/Documents",
+		MountMode:  "ro",
+		TaskScoped: true,
+	})
+
+	elements := card["elements"].([]interface{})
+	bodyText := elements[0].(map[string]interface{})["text"].(map[string]interface{})["content"].(string)
+	if !containsAll(bodyText, "当前任务", "自动回收") {
+		t.Fatalf("expected task-scoped wording in mount_access result card, got %q", bodyText)
 	}
 }
 

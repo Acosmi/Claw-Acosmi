@@ -226,7 +226,8 @@ func executeSpawnArgusAgent(ctx context.Context, inputJSON json.RawMessage, para
 	}
 
 	// 10. 最终交付门控（Phase 3）
-	if params.ResultApprovalMgr != nil && outcome != nil && outcome.ThoughtResult != nil &&
+	if params.ResultApprovalMgr != nil && normalizeSecurityLevelValue(deriveMaxSecurityLevel(contract)) != "full" &&
+		outcome != nil && outcome.ThoughtResult != nil &&
 		outcome.ThoughtResult.Status == ThoughtCompleted {
 
 		tr := outcome.ThoughtResult

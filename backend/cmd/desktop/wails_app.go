@@ -14,12 +14,12 @@ import (
 
 const (
 	desktopWindowName        = "main"
-	desktopWindowTitle       = "创宇太虚"
+	desktopWindowTitle       = "Crab Claw by Acosmi.ai"
 	desktopWindowMinWidth    = 1080
 	desktopWindowMinHeight   = 720
 	desktopWindowWidth       = 1360
 	desktopWindowHeight      = 860
-	desktopSystemTrayTooltip = "创宇太虚"
+	desktopSystemTrayTooltip = "Crab Claw by Acosmi.ai"
 )
 
 type desktopWailsShell struct {
@@ -35,7 +35,7 @@ func runDesktopWailsApp(bootstrap *desktopBootstrap) error {
 	shell := &desktopWailsShell{bootstrap: bootstrap}
 	shell.app = application.New(application.Options{
 		Name:        desktopWindowTitle,
-		Description: "Claw Acosmi desktop shell",
+		Description: "Crab Claw by Acosmi.ai desktop shell",
 		Assets:      application.AlphaAssets,
 		Windows: application.WindowsOptions{
 			DisableQuitOnLastWindowClosed: true,
@@ -57,9 +57,14 @@ func runDesktopWailsApp(bootstrap *desktopBootstrap) error {
 		MinWidth:  desktopWindowMinWidth,
 		MinHeight: desktopWindowMinHeight,
 		URL:       bootstrap.URL,
+		Mac: application.MacWindow{
+			TitleBar:                application.MacTitleBarHiddenInsetUnified,
+			InvisibleTitleBarHeight: 50,
+		},
 	})
 	shell.window.Center()
 	shell.window.RegisterHook(events.Common.WindowClosing, shell.handleWindowClosing)
+	shell.app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, shell.handleApplicationReopen)
 
 	shell.configureSystemTray()
 
@@ -84,6 +89,16 @@ func (s *desktopWailsShell) handleWindowClosing(event *application.WindowEvent) 
 	event.Cancel()
 }
 
+func (s *desktopWailsShell) handleApplicationReopen(event *application.ApplicationEvent) {
+	if s.window == nil {
+		return
+	}
+	if event.Context() != nil && event.Context().HasVisibleWindows() {
+		return
+	}
+	s.showMainWindow(false)
+}
+
 func (s *desktopWailsShell) configureSystemTray() {
 	tray := s.app.SystemTray.New()
 	tray.SetTooltip(desktopSystemTrayTooltip)
@@ -100,7 +115,7 @@ func (s *desktopWailsShell) configureSystemTray() {
 		s.showMainWindow(true)
 	})
 	menu.AddSeparator()
-	menu.Add("退出创宇太虚").OnClick(func(*application.Context) {
+	menu.Add("退出 Crab Claw by Acosmi.ai").OnClick(func(*application.Context) {
 		s.mu.Lock()
 		s.quitting = true
 		s.mu.Unlock()
@@ -116,14 +131,7 @@ func (s *desktopWailsShell) showMainWindow(forceOnboarding bool) {
 	if s.window == nil || s.bootstrap == nil {
 		return
 	}
-	targetURL := s.bootstrap.URL
-	if forceOnboarding {
-		targetURL = buildDesktopURL(s.bootstrap.Port, true)
-	} else if s.bootstrap.NeedsOnboarding {
-		targetURL = buildDesktopURL(s.bootstrap.Port, true)
-	} else {
-		targetURL = buildDesktopURL(s.bootstrap.Port, false)
-	}
+	targetURL := resolveDesktopWindowURL(s.bootstrap, forceOnboarding)
 	s.window.SetURL(targetURL).Show().Focus()
 }
 

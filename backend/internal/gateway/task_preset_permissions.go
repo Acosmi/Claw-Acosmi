@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ---------- 任务预设类型 ----------
@@ -220,11 +222,7 @@ func globMatch(pattern, name string) bool {
 const taskPresetsFile = "task-presets.json"
 
 func taskPresetsFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".openacosmi", taskPresetsFile)
+	return filepath.Join(config.ResolveStateDir(), taskPresetsFile)
 }
 
 func (m *TaskPresetManager) loadFromDisk() error {

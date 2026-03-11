@@ -450,6 +450,7 @@ func SanitizeTextContent(text string) string {
 	// 链式清理：minimax xml → downgraded tool call → thinking tags
 	result := stripMinimaxToolCallXml(text)
 	result = stripDowngradedToolCallText(result)
+	result = stripBracketToolDirectiveText(result)
 	result = stripThinkingTagsFromText(result)
 	return result
 }
@@ -508,6 +509,7 @@ var (
 	thinkingTagsRE       = regexp.MustCompile(`(?s)<thinking>.*?</thinking>`)
 	minimaxToolCallXmlRE = regexp.MustCompile(`(?s)<tool_call>.*?</tool_call>`)
 	downgradedToolCallRE = regexp.MustCompile(`(?m)^ToolCall\(.*?\)$`)
+	bracketToolCallRE    = regexp.MustCompile(`(?ms)^\s*\[\[[a-z_][a-z0-9_]*\]\]\s*(?:\n[a-zA-Z0-9_.-]+\s*:\s*.*)*\s*$`)
 )
 
 // stripThinkingTagsFromText 移除思维标签。
@@ -523,4 +525,8 @@ func stripMinimaxToolCallXml(text string) string {
 // stripDowngradedToolCallText 移除降级的工具调用文本。
 func stripDowngradedToolCallText(text string) string {
 	return strings.TrimSpace(downgradedToolCallRE.ReplaceAllString(text, ""))
+}
+
+func stripBracketToolDirectiveText(text string) string {
+	return strings.TrimSpace(bracketToolCallRE.ReplaceAllString(text, ""))
 }

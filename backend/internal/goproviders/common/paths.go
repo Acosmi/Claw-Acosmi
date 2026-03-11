@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Acosmi/ClawAcosmi/internal/goproviders/types"
+	"github.com/Acosmi/ClawAcosmi/internal/statepaths"
 )
 
 // resolveUserPath 将路径中的 ~ 展开为用户主目录。
@@ -24,35 +25,26 @@ func resolveUserPath(p string) string {
 	return p
 }
 
-// resolveOpenClawAgentDir 解析 OpenAcosmi 代理目录。
-// 优先使用环境变量 OPENACOSMI_AGENT_DIR / OPENCLAW_AGENT_DIR / PI_CODING_AGENT_DIR，
-// 否则使用 OPENACOSMI_STATE_DIR/agents/main/agent（默认 ~/.openacosmi/state）。
-func resolveOpenClawAgentDir() string {
-	if dir := os.Getenv("OPENACOSMI_AGENT_DIR"); dir != "" {
-		return dir
+// ResolveDefaultAgentDir 解析默认主 agent 运行态目录。
+func ResolveDefaultAgentDir() string {
+	for _, key := range []string{
+		"CRABCLAW_AGENT_DIR",
+		"OPENACOSMI_AGENT_DIR",
+		"OPENCLAW_AGENT_DIR",
+		"PI_CODING_AGENT_DIR",
+	} {
+		if dir := strings.TrimSpace(os.Getenv(key)); dir != "" {
+			return resolveUserPath(dir)
+		}
 	}
-	if dir := os.Getenv("OPENCLAW_AGENT_DIR"); dir != "" {
-		return dir
-	}
-	if dir := os.Getenv("PI_CODING_AGENT_DIR"); dir != "" {
-		return dir
-	}
-	stateDir := os.Getenv("OPENACOSMI_STATE_DIR")
-	if stateDir == "" {
-		stateDir = os.Getenv("OPENCLAW_STATE_DIR")
-	}
-	if stateDir == "" {
-		home, _ := os.UserHomeDir()
-		stateDir = filepath.Join(home, ".openacosmi", "state")
-	}
-	return filepath.Join(stateDir, "agents", "main", "agent")
+	return statepaths.ResolveDefaultRuntimeAgentDir()
 }
 
 // ResolveAuthStorePath 解析 Auth Profile 存储文件的完整路径。
 // 对应 TS: resolveAuthStorePath()
 func ResolveAuthStorePath(agentDir string) string {
 	if agentDir == "" {
-		agentDir = resolveOpenClawAgentDir()
+		agentDir = ResolveDefaultAgentDir()
 	}
 	resolved := resolveUserPath(agentDir)
 	return filepath.Join(resolved, AuthProfileFilename)
@@ -62,7 +54,7 @@ func ResolveAuthStorePath(agentDir string) string {
 // 对应 TS: resolveLegacyAuthStorePath()
 func ResolveLegacyAuthStorePath(agentDir string) string {
 	if agentDir == "" {
-		agentDir = resolveOpenClawAgentDir()
+		agentDir = ResolveDefaultAgentDir()
 	}
 	resolved := resolveUserPath(agentDir)
 	return filepath.Join(resolved, LegacyAuthFilename)
@@ -76,6 +68,24 @@ func ResolveAuthStorePathForDisplay(agentDir string) string {
 		return pathname
 	}
 	return resolveUserPath(pathname)
+}
+
+// EnsureRuntimeScaffold ensures the default runtime directories and auth store exist.
+func EnsureRuntimeScaffold(agentDir string) error {
+	if agentDir == "" {
+		agentDir = ResolveDefaultAgentDir()
+	}
+	resolvedAgentDir := resolveUserPath(agentDir)
+	if err := os.MkdirAll(resolvedAgentDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(statepaths.ResolveOAuthDir(), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(statepaths.ResolveStoreDir(), 0o755); err != nil {
+		return err
+	}
+	return EnsureAuthStoreFile(ResolveAuthStorePath(resolvedAgentDir))
 }
 
 // EnsureAuthStoreFile 确保 Auth 存储文件存在，若不存在则创建默认空存储。

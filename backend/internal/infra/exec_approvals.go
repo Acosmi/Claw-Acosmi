@@ -3,7 +3,7 @@ package infra
 // exec_approvals.go — Exec Approvals 配置文件管理
 // 对应 TS: src/infra/exec-approvals.ts
 //
-// 管理 ~/.openacosmi/exec-approvals.json 文件的读写。
+// 管理状态目录中 exec-approvals.json 文件的读写。
 // 提供 snapshot（含 SHA256 hash）用于乐观并发控制。
 
 import (
@@ -15,6 +15,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ---------- 类型定义 ----------
@@ -188,6 +191,18 @@ const (
 	defaultExecApprovalsSock = "exec-approvals.sock"
 )
 
+// execApprovalsMu 保护 exec-approvals.json 的所有 read-modify-write 操作。
+// 防止多个 goroutine 并发写入导致数据丢失。
+var execApprovalsMu sync.Mutex
+
+// AcquireExecApprovalsLock 获取 exec-approvals.json 的写保护锁。
+// 外部包在执行 read-modify-write 操作时必须先获取此锁，
+// 完成操作后调用返回的 unlock 函数释放锁。
+func AcquireExecApprovalsLock() (unlock func()) {
+	execApprovalsMu.Lock()
+	return execApprovalsMu.Unlock
+}
+
 // ---------- 公开 API ----------
 
 // ResolveExecApprovalsPath 解析审批配置文件路径。
@@ -263,7 +278,20 @@ func SaveExecApprovals(file *ExecApprovalsFile) error {
 }
 
 // EnsureExecApprovals 确保审批配置文件存在（含 socket + token）。
+// 使用 execApprovalsMu 保护 read-modify-write。
 func EnsureExecApprovals() (*ExecApprovalsFile, error) {
+	execApprovalsMu.Lock()
+	defer execApprovalsMu.Unlock()
+	return ensureExecApprovalsLocked()
+}
+
+// EnsureExecApprovalsLocked 是 EnsureExecApprovals 的无锁版本。
+// 调用方必须已持有 execApprovalsMu（通过 AcquireExecApprovalsLock）。
+func EnsureExecApprovalsLocked() (*ExecApprovalsFile, error) {
+	return ensureExecApprovalsLocked()
+}
+
+func ensureExecApprovalsLocked() (*ExecApprovalsFile, error) {
 	snapshot := ReadExecApprovalsSnapshot()
 	file := snapshot.File
 
@@ -300,11 +328,7 @@ func RedactExecApprovals(file *ExecApprovalsFile) *ExecApprovalsFile {
 // ---------- 内部辅助 ----------
 
 func resolveOpenAcosmiDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".", ".openacosmi")
-	}
-	return filepath.Join(home, ".openacosmi")
+	return config.ResolveStateDir()
 }
 
 func hashRaw(data []byte) string {
@@ -332,7 +356,10 @@ func newDefaultExecApprovalsFile() *ExecApprovalsFile {
 
 // SaveEscalationPending 将待审批提权请求持久化到 exec-approvals.json。
 // 采用 read-modify-write 模式，保留文件中已有的规则和配置。
+// 使用 execApprovalsMu 保护，防止并发写入丢失数据。
 func SaveEscalationPending(req *PersistedEscalationRequest) error {
+	execApprovalsMu.Lock()
+	defer execApprovalsMu.Unlock()
 	snapshot := ReadExecApprovalsSnapshot()
 	file := snapshot.File
 	if file == nil {
@@ -343,13 +370,33 @@ func SaveEscalationPending(req *PersistedEscalationRequest) error {
 }
 
 // ClearEscalationPending 从 exec-approvals.json 中移除持久化的提权请求。
+// 使用 execApprovalsMu 保护，防止并发写入丢失数据。
 func ClearEscalationPending() error {
+	execApprovalsMu.Lock()
+	defer execApprovalsMu.Unlock()
 	snapshot := ReadExecApprovalsSnapshot()
 	file := snapshot.File
 	if file == nil || file.PendingEscalation == nil {
 		return nil // 无需清理
 	}
 	file.PendingEscalation = nil
+	return SaveExecApprovals(file)
+}
+
+// PersistBaseSecurityLevel 持久化基础安全级别到 exec-approvals.json。
+// 使用 execApprovalsMu 保护 read-modify-write。
+func PersistBaseSecurityLevel(level ExecSecurity) error {
+	execApprovalsMu.Lock()
+	defer execApprovalsMu.Unlock()
+	snapshot := ReadExecApprovalsSnapshot()
+	file := snapshot.File
+	if file == nil {
+		file = &ExecApprovalsFile{Version: 1}
+	}
+	if file.Defaults == nil {
+		file.Defaults = &ExecApprovalsDefaults{}
+	}
+	file.Defaults.Security = level
 	return SaveExecApprovals(file)
 }
 

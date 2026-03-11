@@ -67,6 +67,13 @@ type skillStatusEntry struct {
 	Install            []map[string]interface{} `json:"install"`
 }
 
+type skillToolBindingEntry struct {
+	ToolName     string   `json:"toolName"`
+	PrimarySkill string   `json:"primarySkill,omitempty"`
+	Skills       []string `json:"skills"`
+	Guidance     string   `json:"guidance,omitempty"`
+}
+
 func resolveSkillStatusPaths(workspaceDir, bundledDir string, cfg *types.OpenAcosmiConfig) skillStatusPaths {
 	paths := skillStatusPaths{
 		WorkspaceDir:  workspaceDir,
@@ -143,6 +150,16 @@ func pathWithinDir(path, root string) bool {
 		return true
 	}
 	return strings.HasPrefix(cleanPath, cleanRoot+string(filepath.Separator))
+}
+
+func shouldExposeSkillStatusEntry(entry skills.SkillEntry, bundledDir string) bool {
+	if !entry.DisableModelInvocation {
+		return true
+	}
+	if strings.TrimSpace(bundledDir) == "" {
+		return true
+	}
+	return !pathWithinDir(entry.Skill.Dir, bundledDir)
 }
 
 func argusSkillEntryDir(entry argus.ArgusSkillEntry) string {
@@ -236,14 +253,19 @@ func handleSkillsStatus(ctx *MethodHandlerContext) {
 	}
 
 	workspaceDir := scope.ResolveAgentWorkspaceDir(cfg, agentID)
+	skillFilter := scope.ResolveAgentSkillsFilter(cfg, agentID)
 	bundledDir := skills.ResolveBundledSkillsDir("")
 	statusPaths := resolveSkillStatusPaths(workspaceDir, bundledDir, cfg)
 
 	// 加载所有技能条目
 	entries := skills.LoadSkillEntries(workspaceDir, "", bundledDir, cfg)
+	activeBindingSet := skills.ResolvePromptToolSkillBindingSet(entries, cfg, skillFilter)
 
 	skillEntries := make([]skillStatusEntry, 0, len(entries))
 	for _, e := range entries {
+		if !shouldExposeSkillStatusEntry(e, bundledDir) {
+			continue
+		}
 		skillFile := ""
 		if e.Skill.Dir != "" {
 			skillFile = e.Skill.Dir + "/SKILL.md"
@@ -316,10 +338,27 @@ func handleSkillsStatus(ctx *MethodHandlerContext) {
 	}
 
 	// 构建报告（匹配 UI SkillStatusReport 类型）
+	bindingEntries := make([]skillToolBindingEntry, 0, len(activeBindingSet))
+	for toolName, binding := range activeBindingSet {
+		if len(binding.SkillNames) == 0 {
+			continue
+		}
+		bindingEntries = append(bindingEntries, skillToolBindingEntry{
+			ToolName:     toolName,
+			PrimarySkill: binding.PrimarySkill,
+			Skills:       append([]string(nil), binding.SkillNames...),
+			Guidance:     binding.Guidance,
+		})
+	}
+	sort.Slice(bindingEntries, func(i, j int) bool {
+		return bindingEntries[i].ToolName < bindingEntries[j].ToolName
+	})
+
 	report := map[string]interface{}{
 		"workspaceDir":     workspaceDir,
 		"managedSkillsDir": statusPaths.SyncedDir,
 		"skills":           skillEntries,
+		"toolBindings":     bindingEntries,
 	}
 
 	ctx.Respond(true, report, nil)

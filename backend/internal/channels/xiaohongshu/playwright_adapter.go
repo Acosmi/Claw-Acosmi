@@ -165,7 +165,16 @@ var _ BrowserController = (*PlaywrightBrowserBridge)(nil)
 // SetBrowserFromPlaywright 便捷方法：创建完整注入链并调用 SetBrowser。
 // 注入链: PlaywrightTools → PlaywrightBrowserBridge → CDPBrowserAdapter → XHSRPAClient
 func (c *XHSRPAClient) SetBrowserFromPlaywright(tools browser.PlaywrightTools, cdpURL, errDir string) {
-	bridge := NewPlaywrightBrowserBridge(tools, cdpURL)
+	resolvedURL := cdpURL
+	if normalized, err := normalizeCDPWebSocketURL(cdpURL); err == nil {
+		resolvedURL = normalized
+	}
+	c.mu.Lock()
+	c.pwTools = tools
+	c.cdpURL = resolvedURL
+	c.mu.Unlock()
+
+	bridge := NewPlaywrightBrowserBridge(tools, resolvedURL)
 	adapter := NewCDPBrowserAdapter(bridge, errDir)
 	c.SetBrowser(adapter)
 }

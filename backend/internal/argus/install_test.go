@@ -87,6 +87,32 @@ func TestEnsureUserBinLink_UpdateExisting(t *testing.T) {
 	}
 }
 
+func TestEnsureUserBinLink_RespectsStateDirOverride(t *testing.T) {
+	srcDir := t.TempDir()
+	srcBin := filepath.Join(srcDir, "argus-sensory")
+	if err := os.WriteFile(srcBin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stateDir := filepath.Join(t.TempDir(), "custom-state")
+	t.Setenv("CRABCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENACOSMI_STATE_DIR", "")
+
+	if err := EnsureUserBinLink(srcBin); err != nil {
+		t.Fatalf("EnsureUserBinLink failed: %v", err)
+	}
+
+	linkPath := filepath.Join(stateDir, "bin", "argus-sensory")
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		t.Fatalf("readlink failed: %v", err)
+	}
+	absSrc, _ := filepath.Abs(srcBin)
+	if target != absSrc {
+		t.Errorf("expected link target %q, got %q", absSrc, target)
+	}
+}
+
 func TestEnsureUserBinLink_SkipNonSymlink(t *testing.T) {
 	// 如果 ~/.openacosmi/bin/argus-sensory 是一个真实文件（非链接），不应覆盖
 	srcDir := t.TempDir()

@@ -3,14 +3,20 @@ import type { AppViewState } from "./app-view-state.ts";
 import type { UsageState } from "./controllers/usage.ts";
 import { parseAgentSessionKey } from "./session-key.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
-import { renderChatControls, renderLocaleSwitch, renderTab, renderThemeToggle } from "./app-render.helpers.ts";
+import {
+  isMacosWailsShell,
+  renderChatControls,
+  renderLocaleSwitch,
+  renderTab,
+  renderThemeToggle,
+} from "./app-render.helpers.ts";
 import { initLocale, t } from "./i18n.ts";
 import { loadAgentFileContent, loadAgentFiles, saveAgentFile } from "./controllers/agent-files.ts";
 import { loadAgentIdentities, loadAgentIdentity } from "./controllers/agent-identity.ts";
 import { loadAgentSkills } from "./controllers/agent-skills.ts";
 import { loadAgents } from "./controllers/agents.ts";
 import { loadChannels } from "./controllers/channels.ts";
-import { loadChatHistory } from "./controllers/chat.ts";
+import { loadChatHistory, setChatModel } from "./controllers/chat.ts";
 import {
   applyConfig,
   loadConfig,
@@ -75,6 +81,7 @@ import {
   loadPersistedChatReadonlyRun,
   loadPersistedChatReadonlyRunHistory,
 } from "./chat/readonly-run-state.ts";
+import { renderAutomation } from "./views/automation.ts";
 
 // Module-scope debounce for usage date changes (avoids type-unsafe hacks on state object)
 let usageDateDebounceTimeout: number | null = null;
@@ -197,6 +204,7 @@ export function renderApp(state: AppViewState) {
     onInstall: (skillKey, name, installId) =>
       installSkill(state, skillKey, name, installId),
     onDistribute: () => distributeSkills(state),
+    requestUpdate: () => { (state as unknown as { requestUpdate: () => void }).requestUpdate?.(); },
   });
   // subagentsActiveTab 已迁移到 agents 标签页侧边栏，保留计算供向后兼容
   void state.subagentsActiveTab;
@@ -207,6 +215,14 @@ export function renderApp(state: AppViewState) {
     state.tab === "instances" || (showOverviewTabs && overviewPanel === "instances");
   const showingOverviewUsage =
     state.tab === "usage" || (showOverviewTabs && overviewPanel === "usage");
+  const shellClasses = [
+    "shell",
+    isChat ? "shell--chat" : "",
+    chatFocus ? "shell--chat-focus" : "",
+    state.settings.navCollapsed ? "shell--nav-collapsed" : "",
+    state.onboarding ? "shell--onboarding" : "",
+    isMacosWailsShell(state.desktopUpdateStatus?.installKind) ? "shell--macos-wails" : "",
+  ].filter(Boolean).join(" ");
   const headerTab: Tab = showOverviewTabs
     ? overviewPanel === "instances"
       ? "instances"
@@ -217,7 +233,7 @@ export function renderApp(state: AppViewState) {
   const hidePageHeading = state.tab === "usage";
 
   return html`
-    <div class="shell ${isChat ? "shell--chat" : ""} ${chatFocus ? "shell--chat-focus" : ""} ${state.settings.navCollapsed ? "shell--nav-collapsed" : ""} ${state.onboarding ? "shell--onboarding" : ""}">
+    <div class="${shellClasses}">
       <header class="topbar">
         <div class="topbar-left">
           <div class="brand brand--topbar">
@@ -438,6 +454,7 @@ export function renderApp(state: AppViewState) {
         onSettingsChange: (next) => state.applySettings(next),
         onPasswordChange: (next) => (state.password = next),
         onSessionKeyChange: (next) => {
+          state.setTab("chat");
           state.sessionKey = next;
           state.chatMessage = "";
           state.chatReadonlyRun = loadPersistedChatReadonlyRun(next) ?? createChatReadonlyRunState(next);
@@ -529,6 +546,8 @@ export function renderApp(state: AppViewState) {
         packagesKindFilter: state.packagesKindFilter,
         packagesKeyword: state.packagesKeyword,
         packagesBusyId: state.packagesBusyId,
+        skillsLoadedCount: state.skillsReport?.skills?.length ?? 0,
+        requestUpdate: () => { (state as unknown as { requestUpdate: () => void }).requestUpdate?.(); },
         onPackagesKindChange: (kind) => {
           state.packagesKindFilter = kind;
           void browsePackages(state);
@@ -563,6 +582,14 @@ export function renderApp(state: AppViewState) {
           state.browserToolEdits = { ...state.browserToolEdits, [key]: value };
         },
         onBrowserSave: () => void saveBrowserToolConfig(state),
+        onOpenExternal: (url) => {
+          const fallback = () => window.location.assign(url);
+          if (!state.client || !state.connected) {
+            fallback();
+            return;
+          }
+          void state.client.request("system.openExternal", { url }).catch(() => fallback());
+        },
       })
       : nothing
     }
@@ -867,6 +894,11 @@ export function renderApp(state: AppViewState) {
       : nothing
     }
 
+        ${state.tab === "automation"
+      ? renderAutomation(state)
+      : nothing
+    }
+
         ${state.tab === "agents"
       ? renderAgents({
         loading: state.agentsLoading,
@@ -935,15 +967,22 @@ export function renderApp(state: AppViewState) {
           // V1 wizard removed — Open Coder uses config panel
         },
         onStartMediaWizard: () => {
-          state.mediaManageSubTab = "llm";
+          state.mediaManageSubTab = "overview";
           state.setTab("media");
+          if (typeof window !== "undefined") {
+            window.history.replaceState({}, "", buildMediaManageUrl(state.basePath, "overview"));
+          }
           void loadMediaDashboard(state);
         },
         onOpenMediaInWindow: () => {
           void openMediaManageWindow(buildMediaManageUrl(state.basePath, "overview"), "overview", "agents");
         },
         onNavigateToMedia: () => {
+          state.mediaManageSubTab = "overview";
           state.setTab("media");
+          if (typeof window !== "undefined") {
+            window.history.replaceState({}, "", buildMediaManageUrl(state.basePath, "overview"));
+          }
           void loadMediaDashboard(state);
         },
         // P4B: 托管模型 & 认证状态
@@ -1496,6 +1535,7 @@ export function renderApp(state: AppViewState) {
       ? html`
         ${renderChat({
         sessionKey: state.sessionKey,
+        gatewayUrl: state.settings.gatewayUrl,
         onSessionKeyChange: (next) => {
           state.sessionKey = next;
           state.chatMessage = "";
@@ -1581,11 +1621,7 @@ export function renderApp(state: AppViewState) {
         // Model selector in composer
         models: state.chatModels,
         currentModel: state.chatCurrentModel,
-        onModelChange: (model: string) => {
-          import("./controllers/chat.ts").then((m) =>
-            m.setChatModel(state as any, model),
-          );
-        },
+        onModelChange: (model: string) => void setChatModel(state as any, model),
         onOpenModelConfig: () => {
           state.setTab("config");
           state.configActiveSection = "models";
@@ -1597,15 +1633,17 @@ export function renderApp(state: AppViewState) {
         permissionPopupCallbacks: {
           // 自动提权已在后端创建 pending 请求（OnPermissionDenied 回调），
           // 这里只需直接 resolve 该请求即可。不再重复 request。
-          onAllowOnce: async () => {
+          onAllowOnce: async (event: PermissionDeniedEvent) => {
             try {
-              await state.client?.request("security.escalation.resolve", {
-                approve: true,
-                ttlMinutes: 1,
-              });
+              const params: Record<string, unknown> = { approve: true };
+              if ((event.approvalType ?? "") !== "mount_access") {
+                params.ttlMinutes = 1;
+              }
+              await state.client?.request("security.escalation.resolve", params);
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
-              state.addNotification(`允许一次失败: ${message}`, "error", state.sessionKey);
+              const prefix = (event.approvalType ?? "") === "mount_access" ? "允许本任务挂载失败" : "允许一次失败";
+              state.addNotification(`${prefix}: ${message}`, "error", state.sessionKey);
             }
           },
           onAllowSession: async () => {
@@ -1620,7 +1658,29 @@ export function renderApp(state: AppViewState) {
             }
           },
           onAllowPermanent: async (event: PermissionDeniedEvent) => {
-            void event;
+            if ((event.approvalType ?? "") === "mount_access") {
+              try {
+                await state.client?.request("security.escalation.resolve", {
+                  approve: true,
+                });
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                state.addNotification(`允许本任务挂载失败: ${message}`, "error", state.sessionKey);
+              }
+              return;
+            }
+            if ((event.requestedLevel ?? event.level) !== "full") {
+              try {
+                await state.client?.request("security.escalation.resolve", {
+                  approve: true,
+                  ttlMinutes: 60,
+                });
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                state.addNotification(`授权失败: ${message}`, "error", state.sessionKey);
+              }
+              return;
+            }
             // 永久授权 = 持久化 base level 到 full（L3）。
             await updateSecurityLevel(state, "full");
             if (state.securityError) {
@@ -1835,6 +1895,9 @@ export function renderApp(state: AppViewState) {
           state.configActiveSubsection = null;
         },
         onSubsectionChange: (section) => (state.configActiveSubsection = section),
+        onOpenTab: (tab) => {
+          state.setTab(tab);
+        },
         onReload: () => loadConfig(state),
         onSave: () => saveConfig(state),
         onApply: () => applyConfig(state),
@@ -1917,7 +1980,7 @@ export function renderApp(state: AppViewState) {
       onTtlChange: (ttl) => { state.escalationSelectedTtl = ttl; },
       onClose: () => { state.escalationState = { ...state.escalationState, popupVisible: false }; },
     })}
-      ${"" /* TODO(coder-terminal): renderCoderConfirmPrompt(state) 已禁用，待终端式 UI */}
+      ${renderCoderConfirmPrompt(state)}
       ${renderPlanConfirmPopup({
       queue: state.planConfirmQueue ?? [],
       onApprove: (id) => state.handlePlanConfirmDecision(id, "approve"),

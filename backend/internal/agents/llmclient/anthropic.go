@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ---------- Anthropic Messages API 流式客户端 ----------
@@ -51,12 +53,7 @@ func resolvePayloadLogFilePath() string {
 	if v := strings.TrimSpace(os.Getenv("OPENACOSMI_ANTHROPIC_PAYLOAD_LOG_FILE")); v != "" {
 		return v
 	}
-	// 默认路径：~/.openacosmi/logs/anthropic-payload.jsonl
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".openacosmi", "logs", "anthropic-payload.jsonl")
+	return filepath.Join(config.ResolveStateDir(), "logs", "anthropic-payload.jsonl")
 }
 
 // writePayloadLogLine 将 JSON 行写入 payload 日志文件。

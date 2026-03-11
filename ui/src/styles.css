@@ -7,8 +7,8 @@
 @import "./styles/config.css";
 @import "./styles/security.css";
 @import "./styles/remote-approval.css";
-@import "./styles/permission-popup.css";
 @import "./styles/channels-cards.css";
+@import "./styles/wizard-v2.css";
 @import "./styles/subagents.css";
 @import "./styles/media.css";
 @import "./styles/task-kanban.css";

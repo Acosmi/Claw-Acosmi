@@ -178,11 +178,13 @@ type ExecApprovalsDefaultOverrides struct {
 // ---------- 辅助函数 ----------
 
 func normalizeSecurity(v, fallback infra.ExecSecurity) infra.ExecSecurity {
-	switch v {
-	case infra.ExecSecurityDeny, infra.ExecSecurityAllowlist, infra.ExecSecurityFull:
-		return v
+	if normalized := infra.NormalizeExecSecurityValue(v); normalized != "" {
+		return normalized
 	}
-	return fallback
+	if normalized := infra.NormalizeExecSecurityValue(fallback); normalized != "" {
+		return normalized
+	}
+	return defaultExecSecurity
 }
 
 func normalizeAsk(v, fallback infra.ExecAsk) infra.ExecAsk {
@@ -230,10 +232,13 @@ func firstNonNilBool(vals ...*bool) *bool {
 // MinSecurity 返回安全级别较低的一个。
 // 对应 TS: minSecurity (L1466-1469)
 func MinSecurity(a, b infra.ExecSecurity) infra.ExecSecurity {
+	a = normalizeSecurity(a, defaultExecSecurity)
+	b = normalizeSecurity(b, defaultExecSecurity)
 	order := map[infra.ExecSecurity]int{
 		infra.ExecSecurityDeny:      0,
 		infra.ExecSecurityAllowlist: 1,
-		infra.ExecSecurityFull:      2,
+		infra.ExecSecuritySandboxed: 2,
+		infra.ExecSecurityFull:      3,
 	}
 	if order[a] <= order[b] {
 		return a

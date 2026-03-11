@@ -1,0 +1,67 @@
+version: '3'
+
+includes:
+  common: ../Taskfile.yml
+
+vars:
+  OPENVIKING_FFI_DYLIB: "../../../cli-rust/libs/openviking-rs/target/release/libopenviking_ffi.dylib"
+
+tasks:
+  build:
+    desc: Build the macOS desktop binary
+    dir: '{{.USER_WORKING_DIR}}'
+    deps:
+      - task: common:verify:layout
+      - task: common:build:ffi
+      - task: common:stage:ui
+      - task: common:generate:icons
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -tags "desktopwails desktopembed" -trimpath -buildvcs=false -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.BIN_DIR}}/{{.APP_NAME}} .
+    vars:
+      VERSION: '{{.VERSION | default "0.0.0-dev"}}'
+
+  package:
+    desc: Package the macOS desktop app bundle
+    dir: '{{.USER_WORKING_DIR}}'
+    deps:
+      - task: build
+        vars:
+          VERSION:
+            ref: .VERSION
+    cmds:
+      - rm -rf "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app"
+      - rm -f "{{.BIN_DIR}}/{{.ARTIFACT_NAME}}-macos-{{.ARCH}}.zip"
+      - test -d ../../../docs/skills
+      - test -f ./build/skills-package-manifest.txt
+      - test -d ../../../browser-extension
+      - test -d ../../../Argus/build/Argus.app
+      - test -f {{.OPENVIKING_FFI_DYLIB}}
+      - mkdir -p "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/MacOS"
+      - mkdir -p "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Resources"
+      - mkdir -p "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Helpers"
+      - mkdir -p "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Frameworks"
+      - mkdir -p "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Resources/docs/skills"
+      - mkdir -p "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Resources/browser-extension"
+      - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/MacOS/{{.APP_NAME}}"
+      - cp build/darwin/Info.plist "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Info.plist"
+      - cp build/darwin/icons.icns "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Resources/icons.icns"
+      - go run ./build/tools/stage_skills -manifest ./build/skills-package-manifest.txt -src ../../../docs/skills -out "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Resources/docs/skills"
+      - rsync -a ../../../browser-extension/ "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Resources/browser-extension/"
+      - rsync -a ../../../Argus/build/Argus.app/ "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Helpers/Argus.app/"
+      - bash ../../../scripts/desktop/stage_openviking_framework.sh "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/MacOS/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app/Contents/Frameworks" "{{.OPENVIKING_FFI_DYLIB}}"
+      - bash ../../../scripts/desktop/sign_darwin_bundle.sh "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app" "{{.CODESIGN_IDENTITY}}" "{{.ENTITLEMENTS}}"
+      - ditto -c -k --sequesterRsrc --keepParent "{{.BIN_DIR}}/{{.PRODUCT_NAME}}.app" "{{.BIN_DIR}}/{{.ARTIFACT_NAME}}-macos-{{.ARCH}}.zip"
+    vars:
+      ARCH: '{{.ARCH | default ARCH}}'
+      CODESIGN_IDENTITY: '{{.CODESIGN_IDENTITY | default ""}}'
+      ENTITLEMENTS: '{{.ENTITLEMENTS | default ""}}'
+      VERSION: '{{.VERSION | default "0.0.0-dev"}}'
+
+  run:
+    desc: Run the macOS desktop app directly from the built binary
+    dir: '{{.USER_WORKING_DIR}}'
+    deps:
+      - task: build
+    cmds:
+      - "{{.BIN_DIR}}/{{.APP_NAME}}"

@@ -33,6 +33,8 @@ func NormalizeProviderId(provider string) string {
 func NormalizeProviderIdForAuth(provider string) string {
 	normalized := NormalizeProviderId(provider)
 	switch normalized {
+	case "minimax":
+		return "minimax-portal"
 	case "volcengine-plan":
 		return "volcengine"
 	case "byteplus-plan":

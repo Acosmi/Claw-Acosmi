@@ -1,0 +1,128 @@
+package browserdef
+
+import "encoding/json"
+
+// ActionSpec is the single source of truth for browser tool actions.
+type ActionSpec struct {
+	Name                  string
+	Description           string
+	AutoVerificationImage bool
+}
+
+var actionSpecs = []ActionSpec{
+	{Name: "navigate", Description: "Open a URL in the current browser tab."},
+	{Name: "get_content", Description: "Read the current page content, preferring the ARIA accessibility tree."},
+	{Name: "observe", Description: "Return the ARIA tree, element refs, and a screenshot of the current page."},
+	{Name: "annotate_som", Description: "Return a numbered visual overlay of interactive elements plus a screenshot."},
+	{Name: "click", Description: "Click an element by CSS selector. Fallback only when refs are unavailable."},
+	{Name: "click_ref", Description: "Click an element by ARIA ref from observe output. Preferred over CSS selectors."},
+	{Name: "type", Description: "Type text into an element by CSS selector. Fallback only when refs are unavailable."},
+	{Name: "fill_ref", Description: "Fill text into an element by ARIA ref from observe output. Preferred over CSS selectors."},
+	{Name: "screenshot", Description: "Capture a screenshot of the current page."},
+	{Name: "evaluate", Description: "Run JavaScript on the current page when browser.evaluateEnabled is true."},
+	{Name: "wait_for", Description: "Wait for a CSS selector to appear."},
+	{Name: "go_back", Description: "Navigate back in browser history."},
+	{Name: "go_forward", Description: "Navigate forward in browser history."},
+	{Name: "get_url", Description: "Get the current page URL."},
+	{Name: "ai_browse", Description: "Execute a multi-step browsing goal with observe-plan-act automation."},
+	{Name: "start_gif_recording", Description: "Start recording subsequent browser actions as an animated GIF."},
+	{Name: "stop_gif_recording", Description: "Stop GIF recording and return the captured GIF."},
+	{Name: "list_tabs", Description: "List open browser tabs."},
+	{Name: "create_tab", Description: "Create a new browser tab, optionally with an initial URL."},
+	{Name: "close_tab", Description: "Close a specific browser tab by target_id."},
+	{Name: "switch_tab", Description: "Switch to a specific browser tab by target_id."},
+}
+
+func ActionSpecs() []ActionSpec {
+	out := make([]ActionSpec, len(actionSpecs))
+	copy(out, actionSpecs)
+	return out
+}
+
+func ActionEnum() []any {
+	enum := make([]any, 0, len(actionSpecs))
+	for _, spec := range actionSpecs {
+		enum = append(enum, spec.Name)
+	}
+	return enum
+}
+
+func ActionAutoVerificationImage(name string) bool {
+	for _, spec := range actionSpecs {
+		if spec.Name == name {
+			return spec.AutoVerificationImage
+		}
+	}
+	return false
+}
+
+func ToolDescription() string {
+	return "Control a browser with structured page understanding. Recommended workflow: observe -> click_ref/fill_ref -> screenshot. Prefer ARIA refs over CSS selectors, call screenshot or observe when visual verification is needed, use ai_browse for multi-step browsing goals, and only use close_tab when the user explicitly asks to close a specific tab. If the browser tool stays unavailable, guide the user to the Gateway browser extension setup page and the Automation -> Browser Management page."
+}
+
+func ToolActionDescription() string {
+	return "Browser action. Recommended workflow: observe -> click_ref/fill_ref -> screenshot. State-changing actions return text by default; use screenshot or observe when you need visual verification. annotate_som returns a numbered visual overlay, ai_browse handles multi-step browsing goals, and close_tab should only be used when the user explicitly asks to close a specific tab."
+}
+
+func ToolInputSchemaMap() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"action": map[string]any{
+				"type":        "string",
+				"enum":        ActionEnum(),
+				"description": ToolActionDescription(),
+			},
+			"url": map[string]any{
+				"type":        "string",
+				"description": "URL for navigate or create_tab actions.",
+			},
+			"selector": map[string]any{
+				"type":        "string",
+				"description": "CSS selector for click, type, or wait_for actions.",
+			},
+			"text": map[string]any{
+				"type":        "string",
+				"description": "Text for type or fill_ref actions.",
+			},
+			"script": map[string]any{
+				"type":        "string",
+				"description": "JavaScript source for evaluate action.",
+			},
+			"ref": map[string]any{
+				"type":        "string",
+				"description": "ARIA element ref from observe results, for example e1.",
+			},
+			"goal": map[string]any{
+				"type":        "string",
+				"description": "Natural-language goal for ai_browse, for example 'Search for MacBook Pro and summarize the first result'.",
+			},
+			"target_id": map[string]any{
+				"type":        "string",
+				"description": "Browser tab target ID for close_tab or switch_tab actions.",
+			},
+		},
+		"required": []any{"action"},
+	}
+}
+
+func ToolInputSchemaJSON() json.RawMessage {
+	data, err := json.Marshal(ToolInputSchemaMap())
+	if err != nil {
+		return json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}},"required":["action"]}`)
+	}
+	return json.RawMessage(data)
+}
+
+func UnavailableMessage() string {
+	return "[Browser tool is not available — extension not installed or not connected.\n" +
+		"浏览器工具不可用 — 扩展未安装或未连接。\n\n" +
+		"Setup guide / 安装引导: http://127.0.0.1:26222/browser-extension/\n\n" +
+		"If the extension stays unavailable, ask the user to open Automation -> Browser Management and check extension status, connection state, and browser configuration.\n" +
+		"如果扩展持续未连接或仍然无法使用，请提示用户前往用户区“自动化”标签中的“浏览器管理”页面，检查扩展状态、连接状态和相关配置信息。\n\n" +
+		"Steps / 步骤:\n" +
+		"1. Download extension zip from the guide page / 从引导页下载扩展 zip\n" +
+		"2. Open chrome://extensions -> Enable Developer Mode -> Load Unpacked\n" +
+		"   打开 chrome://extensions -> 启用开发者模式 -> 加载已解压的扩展\n" +
+		"3. Extension auto-connects to Gateway / 扩展自动连接 Gateway]"
+}

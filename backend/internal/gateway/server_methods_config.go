@@ -8,6 +8,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -41,18 +42,25 @@ func requireConfigBaseHash(
 	snapshotHash := snapshot.Hash
 	if snapshotHash == "" {
 		respond(false, nil, NewErrorShape(ErrCodeBadRequest,
-			"config base hash unavailable; re-run config.get and retry"))
+			"config base hash unavailable; re-run config.get and retry").WithDetails(map[string]interface{}{
+			"exists": snapshot.Exists,
+		}))
 		return false
 	}
 	baseHash := resolveBaseHash(params)
 	if baseHash == "" {
 		respond(false, nil, NewErrorShape(ErrCodeBadRequest,
-			"config base hash required; re-run config.get and retry"))
+			"config base hash required; re-run config.get and retry").WithDetails(map[string]interface{}{
+			"expectedHash": snapshotHash,
+		}))
 		return false
 	}
 	if baseHash != snapshotHash {
 		respond(false, nil, NewErrorShape(ErrCodeBadRequest,
-			"config changed since last load; re-run config.get and retry"))
+			"config changed since last load; re-run config.get and retry").WithDetails(map[string]interface{}{
+			"expectedHash": snapshotHash,
+			"baseHash":     baseHash,
+		}))
 		return false
 	}
 	return true
@@ -70,6 +78,102 @@ func parseJson5Raw(raw string) (interface{}, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+func summarizeConfigValidationErrors(errs []config.ValidationError) string {
+	if len(errs) == 0 {
+		return "ok"
+	}
+	limit := 3
+	if len(errs) < limit {
+		limit = len(errs)
+	}
+	parts := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		parts = append(parts, errs[i].Error())
+	}
+	summary := strings.Join(parts, "; ")
+	if len(errs) > limit {
+		summary += fmt.Sprintf(" (and %d more)", len(errs)-limit)
+	}
+	return summary
+}
+
+func configValidationDetails(errs []config.ValidationError) map[string]interface{} {
+	return map[string]interface{}{
+		"ok":         len(errs) == 0,
+		"issueCount": len(errs),
+		"issues":     errs,
+		"summary":    summarizeConfigValidationErrors(errs),
+	}
+}
+
+func configValidationErrorShape(errs []config.ValidationError) *ErrorShape {
+	return NewErrorShape(ErrCodeConfigInvalid, "invalid config: "+summarizeConfigValidationErrors(errs)).
+		WithDetails(configValidationDetails(errs))
+}
+
+func configValidationSuccess() map[string]interface{} {
+	return configValidationDetails([]config.ValidationError{})
+}
+
+func reloadChannelMonitor(ctx *MethodHandlerContext, loader *config.ConfigLoader) bool {
+	if mgr := ctx.Context.ChannelMonitorMgr; mgr != nil {
+		if newCfg, err := loader.LoadConfig(); err == nil && newCfg != nil {
+			mgr.Reload(newCfg)
+			return true
+		}
+	}
+	return false
+}
+
+func buildConfigWriteSuccessResult(
+	loader *config.ConfigLoader,
+	action string,
+	configObject interface{},
+	monitorReloaded bool,
+	restartResult *GatewayRestartResult,
+	sentinelPath string,
+	sentinelPayload *RestartSentinelPayload,
+) map[string]interface{} {
+	runtimeEffect := "written_only"
+	if action == "config.apply" || action == "config.patch" {
+		runtimeEffect = "restart_scheduled"
+	}
+
+	result := map[string]interface{}{
+		"ok":         true,
+		"path":       loader.ConfigPath(),
+		"config":     config.RedactConfigObject(configObject),
+		"validation": configValidationSuccess(),
+		"verification": map[string]interface{}{
+			"action":           action,
+			"configWritten":    true,
+			"monitorReloaded":  monitorReloaded,
+			"runtimeEffect":    runtimeEffect,
+			"restartScheduled": restartResult != nil && restartResult.Scheduled,
+			"sentinelWritten":  sentinelPayload != nil,
+		},
+	}
+
+	if snapshot, err := loader.ReadConfigFileSnapshot(); err == nil && snapshot != nil {
+		redacted := config.RedactConfigSnapshot(snapshot)
+		result["snapshot"] = redacted
+		result["config"] = redacted.Config
+		if snapshot.Hash != "" {
+			result["hash"] = snapshot.Hash
+		}
+	}
+	if restartResult != nil {
+		result["restart"] = restartResult
+	}
+	if sentinelPayload != nil {
+		result["sentinel"] = map[string]interface{}{
+			"path":    sentinelPath,
+			"payload": sentinelPayload,
+		}
+	}
+	return result
 }
 
 // ConfigHandlers 返回 config.* 方法处理器映射。
@@ -163,11 +267,7 @@ func handleConfigSet(ctx *MethodHandlerContext) {
 	}
 	validationErrs := config.ValidateOpenAcosmiConfig(&candidateConfig)
 	if len(validationErrs) > 0 {
-		issues := make([]string, len(validationErrs))
-		for i, ve := range validationErrs {
-			issues[i] = ve.Error()
-		}
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "invalid config"))
+		ctx.Respond(false, nil, configValidationErrorShape(validationErrs))
 		return
 	}
 
@@ -195,18 +295,16 @@ func handleConfigSet(ctx *MethodHandlerContext) {
 	}
 
 	loader.ClearCache()
-
-	// 触发 Monitor 频道热更新（无需重启 Gateway）
-	if mgr := ctx.Context.ChannelMonitorMgr; mgr != nil {
-		if newCfg, err := loader.LoadConfig(); err == nil && newCfg != nil {
-			mgr.Reload(newCfg)
-		}
-	}
-	ctx.Respond(true, map[string]interface{}{
-		"ok":     true,
-		"path":   loader.ConfigPath(),
-		"config": config.RedactConfigObject(restored),
-	}, nil)
+	monitorReloaded := reloadChannelMonitor(ctx, loader)
+	ctx.Respond(true, buildConfigWriteSuccessResult(
+		loader,
+		"config.set",
+		restored,
+		monitorReloaded,
+		nil,
+		"",
+		nil,
+	), nil)
 }
 
 // ---------- config.apply ----------
@@ -217,6 +315,11 @@ func handleConfigApply(ctx *MethodHandlerContext) {
 	loader := ctx.Context.ConfigLoader
 	if loader == nil {
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "config loader not available"))
+		return
+	}
+	rollback, rollbackErr := captureGatewayConfigRollback(loader)
+	if rollbackErr != nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to snapshot config rollback: "+rollbackErr.Error()))
 		return
 	}
 
@@ -254,7 +357,7 @@ func handleConfigApply(ctx *MethodHandlerContext) {
 	}
 	validationErrs := config.ValidateOpenAcosmiConfig(&candidateConfig)
 	if len(validationErrs) > 0 {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "invalid config"))
+		ctx.Respond(false, nil, configValidationErrorShape(validationErrs))
 		return
 	}
 
@@ -281,13 +384,7 @@ func handleConfigApply(ctx *MethodHandlerContext) {
 		return
 	}
 	loader.ClearCache()
-
-	// 触发 Monitor 频道热更新（无需重启 Gateway）
-	if mgr := ctx.Context.ChannelMonitorMgr; mgr != nil {
-		if newCfg, err := loader.LoadConfig(); err == nil && newCfg != nil {
-			mgr.Reload(newCfg)
-		}
-	}
+	monitorReloaded := reloadChannelMonitor(ctx, loader)
 
 	sessionKey, _ := ctx.Params["sessionKey"].(string)
 	sessionKey = strings.TrimSpace(sessionKey)
@@ -325,25 +422,23 @@ func handleConfigApply(ctx *MethodHandlerContext) {
 	// 调度网关重启（对应 TS scheduleGatewaySigusr1Restart）
 	var restartResult *GatewayRestartResult
 	if gr := ctx.Context.GatewayRestarter; gr != nil {
-		restartResult = gr.ScheduleRestart(restartDelayMs, "config.apply")
+		restartResult = gr.ScheduleRestart(GatewayRestartPlan{
+			DelayMs:  restartDelayMs,
+			Reason:   "config.apply",
+			Rollback: rollback,
+		})
 	}
 
 	// 构建响应
-	result := map[string]interface{}{
-		"ok":     true,
-		"path":   loader.ConfigPath(),
-		"config": config.RedactConfigObject(restored),
-	}
-	if restartResult != nil {
-		result["restart"] = restartResult
-	}
-	if sentinelPayload != nil {
-		result["sentinel"] = map[string]interface{}{
-			"path":    sentinelPath,
-			"payload": sentinelPayload,
-		}
-	}
-	ctx.Respond(true, result, nil)
+	ctx.Respond(true, buildConfigWriteSuccessResult(
+		loader,
+		"config.apply",
+		restored,
+		monitorReloaded,
+		restartResult,
+		sentinelPath,
+		sentinelPayload,
+	), nil)
 }
 
 // ---------- config.patch ----------
@@ -355,6 +450,11 @@ func handleConfigPatch(ctx *MethodHandlerContext) {
 	loader := ctx.Context.ConfigLoader
 	if loader == nil {
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "config loader not available"))
+		return
+	}
+	rollback, rollbackErr := captureGatewayConfigRollback(loader)
+	if rollbackErr != nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to snapshot config rollback: "+rollbackErr.Error()))
 		return
 	}
 
@@ -434,7 +534,7 @@ func handleConfigPatch(ctx *MethodHandlerContext) {
 	}
 	validationErrs := config.ValidateOpenAcosmiConfig(&mergedConfig)
 	if len(validationErrs) > 0 {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "invalid config"))
+		ctx.Respond(false, nil, configValidationErrorShape(validationErrs))
 		return
 	}
 
@@ -444,13 +544,7 @@ func handleConfigPatch(ctx *MethodHandlerContext) {
 		return
 	}
 	loader.ClearCache()
-
-	// 触发 Monitor 频道热更新（无需重启 Gateway）
-	if mgr := ctx.Context.ChannelMonitorMgr; mgr != nil {
-		if newCfg, err := loader.LoadConfig(); err == nil && newCfg != nil {
-			mgr.Reload(newCfg)
-		}
-	}
+	monitorReloaded := reloadChannelMonitor(ctx, loader)
 
 	sessionKey, _ := ctx.Params["sessionKey"].(string)
 	sessionKey = strings.TrimSpace(sessionKey)
@@ -488,23 +582,21 @@ func handleConfigPatch(ctx *MethodHandlerContext) {
 	// 调度网关重启
 	var restartResult *GatewayRestartResult
 	if gr := ctx.Context.GatewayRestarter; gr != nil {
-		restartResult = gr.ScheduleRestart(restartDelayMs, "config.patch")
+		restartResult = gr.ScheduleRestart(GatewayRestartPlan{
+			DelayMs:  restartDelayMs,
+			Reason:   "config.patch",
+			Rollback: rollback,
+		})
 	}
 
 	// 构建响应（对应 TS L334-L347）
-	result := map[string]interface{}{
-		"ok":     true,
-		"path":   loader.ConfigPath(),
-		"config": config.RedactConfigObject(resolved),
-	}
-	if restartResult != nil {
-		result["restart"] = restartResult
-	}
-	if sentinelPayload != nil {
-		result["sentinel"] = map[string]interface{}{
-			"path":    sentinelPath,
-			"payload": sentinelPayload,
-		}
-	}
-	ctx.Respond(true, result, nil)
+	ctx.Respond(true, buildConfigWriteSuccessResult(
+		loader,
+		"config.patch",
+		resolved,
+		monitorReloaded,
+		restartResult,
+		sentinelPath,
+		sentinelPayload,
+	), nil)
 }

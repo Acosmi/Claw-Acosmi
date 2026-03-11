@@ -7,9 +7,9 @@ package gateway
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Acosmi/ClawAcosmi/internal/media"
@@ -32,6 +32,7 @@ func STTHandlers() map[string]GatewayMethodHandler {
 // STTConfigGetResult stt.config.get 响应
 type STTConfigGetResult struct {
 	Configured bool              `json:"configured"`
+	Hash       string            `json:"hash,omitempty"`
 	Provider   string            `json:"provider,omitempty"`
 	Model      string            `json:"model,omitempty"`
 	BaseURL    string            `json:"baseUrl,omitempty"`
@@ -47,7 +48,7 @@ type STTProviderInfo struct {
 	Hint  string `json:"hint,omitempty"`
 }
 
-func handleSTTConfigGet(ctx *MethodHandlerContext) {
+func buildSTTConfigGetResult(cfg *types.STTConfig) STTConfigGetResult {
 	// 探测本地 Ollama 是否运行
 	ollamaHint := "本地 Ollama 语音模型"
 	if ollamaRunning := probeOllama(); ollamaRunning {
@@ -68,7 +69,6 @@ func handleSTTConfigGet(ctx *MethodHandlerContext) {
 		},
 	}
 
-	cfg := loadSTTConfigFromCtx(ctx)
 	if cfg != nil && cfg.Provider != "" {
 		result.Configured = true
 		result.Provider = cfg.Provider
@@ -78,50 +78,63 @@ func handleSTTConfigGet(ctx *MethodHandlerContext) {
 		result.HasAPIKey = cfg.APIKey != ""
 	}
 
+	return result
+}
+
+func handleSTTConfigGet(ctx *MethodHandlerContext) {
+	result := buildSTTConfigGetResult(loadSTTConfigFromCtx(ctx))
+	if loader := ctx.Context.ConfigLoader; loader != nil {
+		if snapshot, err := loader.ReadConfigFileSnapshot(); err == nil && snapshot != nil {
+			result.Hash = snapshot.Hash
+		}
+	}
+
 	ctx.Respond(true, result, nil)
 }
 
 // ---------- stt.config.set ----------
 
 func handleSTTConfigSet(ctx *MethodHandlerContext) {
-	// 从 map[string]interface{} 提取参数
-	paramsJSON, err := json.Marshal(ctx.Params)
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "invalid params"))
-		return
-	}
-	var params types.STTConfig
-	if err := json.Unmarshal(paramsJSON, &params); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "parse params: "+err.Error()))
-		return
-	}
+	executeConfigMutation(ctx, configMutationOptions{
+		Action: "stt.config.set",
+		Mutate: func(currentCfg *types.OpenAcosmiConfig) error {
+			if currentCfg.STT == nil {
+				currentCfg.STT = &types.STTConfig{}
+			}
+			current := currentCfg.STT
 
-	cfgLoader := ctx.Context.ConfigLoader
-	if cfgLoader == nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "config loader not available"))
-		return
-	}
-
-	currentCfg, err := cfgLoader.LoadConfig()
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "load config: "+err.Error()))
-		return
-	}
-	if currentCfg == nil {
-		currentCfg = &types.OpenAcosmiConfig{}
-	}
-
-	currentCfg.STT = &params
-
-	if err := cfgLoader.WriteConfigFile(currentCfg); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "save config: "+err.Error()))
-		return
-	}
-
-	ctx.Respond(true, map[string]interface{}{
-		"saved":    true,
-		"provider": params.Provider,
-	}, nil)
+			if provider, ok := readTrimmedStringParam(ctx.Params, "provider"); ok {
+				current.Provider = provider
+			}
+			if apiKeyRaw, ok := ctx.Params["apiKey"].(string); ok {
+				trimmed := strings.TrimSpace(apiKeyRaw)
+				if !strings.HasPrefix(trimmed, "••") {
+					current.APIKey = trimmed
+				}
+			}
+			if model, ok := readTrimmedStringParam(ctx.Params, "model"); ok {
+				current.Model = model
+			}
+			if baseURL, ok := readTrimmedStringParam(ctx.Params, "baseUrl"); ok {
+				current.BaseURL = baseURL
+			}
+			if binaryPath, ok := readTrimmedStringParam(ctx.Params, "binaryPath"); ok {
+				current.BinaryPath = binaryPath
+			}
+			if modelPath, ok := readTrimmedStringParam(ctx.Params, "modelPath"); ok {
+				current.ModelPath = modelPath
+			}
+			if language, ok := readTrimmedStringParam(ctx.Params, "language"); ok {
+				current.Language = language
+			}
+			return nil
+		},
+		AfterWrite: func(_ *MethodHandlerContext, cfg *types.OpenAcosmiConfig) map[string]interface{} {
+			return map[string]interface{}{
+				"stt": buildSTTConfigGetResult(cfg.STT),
+			}
+		},
+	})
 }
 
 // ---------- stt.test ----------

@@ -51,6 +51,14 @@ type SkillEntry struct {
 	Invocation *SkillInvocationPolicy
 }
 
+// ToolSkillBinding 是工具到技能的结构化绑定结果。
+// Guidance 仍保持 first-wins；SkillNames 保留所有有效绑定，供能力树/runtime 视图使用。
+type ToolSkillBinding struct {
+	PrimarySkill string   `json:"primarySkill,omitempty"`
+	SkillNames   []string `json:"skillNames,omitempty"`
+	Guidance     string   `json:"guidance,omitempty"`
+}
+
 // SkillEligibilityContext 技能适用性上下文。
 type SkillEligibilityContext struct {
 	RemoteNote string // 远程技能注释
@@ -131,7 +139,7 @@ func LoadSkillEntries(workspaceDir, managedDir, bundledDir string, cfg *types.Op
 
 	// 捆绑目录
 	if bundledDir != "" {
-		bundled := loadSkillsFromDir(bundledDir)
+		bundled := loadSkillsFromRoots(bundledDir)
 		allowBundled := resolveAllowBundled(cfg)
 		for _, b := range bundled {
 			if allowBundled == nil || allowBundled[b.Skill.Name] {
@@ -151,19 +159,19 @@ func LoadSkillEntries(workspaceDir, managedDir, bundledDir string, cfg *types.Op
 	if workspaceDir != "" {
 		docsSkillsDir := ResolveDocsSkillsDir(workspaceDir)
 		if docsSkillsDir != "" {
-			// 扫描 docs/skills/ 自身（平级技能目录）
-			entries = append(entries, loadSkillsFromDir(docsSkillsDir)...)
-			// 扫描分类子目录（tools/, providers/, general/, official/ 等）
-			subDirs, _ := os.ReadDir(docsSkillsDir)
-			for _, sd := range subDirs {
-				if sd.IsDir() && !strings.HasPrefix(sd.Name(), ".") {
-					entries = append(entries, loadSkillsFromDir(filepath.Join(docsSkillsDir, sd.Name()))...)
-				}
-			}
+			entries = append(entries, loadSkillsFromRoots(docsSkillsDir)...)
 		}
 	}
 
 	return deduplicateEntries(entries)
+}
+
+func loadSkillsFromRoots(dir string) []SkillEntry {
+	var entries []SkillEntry
+	for _, root := range loadSkillSearchRoots(dir) {
+		entries = append(entries, loadSkillsFromDir(root)...)
+	}
+	return entries
 }
 
 // loadSkillsFromDir 从目录加载技能。
@@ -299,12 +307,13 @@ func formatSkillsForPrompt(skills []Skill) string {
 //
 // 策略:
 //  1. 从 workspaceDir 向上遍历 3 层（适用于 workspace 在项目内的场景）
-//  2. 从 CWD 向上遍历 4 层（适用于 monorepo 布局：CWD=backend/，docs/skills/ 在上级）
-//  3. 环境变量 OPENACOSMI_DOCS_SKILLS_DIR 显式覆盖
+//  2. 从当前可执行文件定位 .app/Contents/Resources/docs/skills
+//  3. 从 CWD 向上遍历 4 层（适用于 monorepo 布局：CWD=backend/，docs/skills/ 在上级）
+//  4. 环境变量 OPENACOSMI_DOCS_SKILLS_DIR 显式覆盖
 func ResolveDocsSkillsDir(workspaceDir string) string {
 	// 0. 环境变量显式覆盖
 	if override := os.Getenv("OPENACOSMI_DOCS_SKILLS_DIR"); override != "" {
-		if info, err := os.Stat(override); err == nil && info.IsDir() {
+		if looksLikeSkillsDir(override) {
 			return override
 		}
 	}
@@ -314,7 +323,7 @@ func ResolveDocsSkillsDir(workspaceDir string) string {
 		current := workspaceDir
 		for depth := 0; depth < 3; depth++ {
 			candidate := filepath.Join(current, "docs", "skills")
-			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			if looksLikeSkillsDir(candidate) {
 				return candidate
 			}
 			next := filepath.Dir(current)
@@ -325,12 +334,21 @@ func ResolveDocsSkillsDir(workspaceDir string) string {
 		}
 	}
 
-	// 2. 从 CWD 向上查找（monorepo fallback: CWD=backend/ → parent=项目根）
+	// 2. 从当前可执行文件推导打包资源目录
+	if execPath, err := os.Executable(); err == nil {
+		for _, candidate := range skillsDirCandidatesForExecPath(execPath) {
+			if looksLikeSkillsDir(candidate) && strings.HasSuffix(filepath.ToSlash(candidate), "/docs/skills") {
+				return candidate
+			}
+		}
+	}
+
+	// 3. 从 CWD 向上查找（monorepo fallback: CWD=backend/ → parent=项目根）
 	if cwd, err := os.Getwd(); err == nil {
 		current := cwd
 		for depth := 0; depth < 4; depth++ {
 			candidate := filepath.Join(current, "docs", "skills")
-			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			if looksLikeSkillsDir(candidate) {
 				return candidate
 			}
 			next := filepath.Dir(current)
@@ -386,22 +404,49 @@ func FormatSkillIndex(resolvedSkills []Skill) string {
 // P1-9: D9 derivation — validation via capability tree instead of flat Registry.
 // P1-10: Dynamic group tools (argus_/remote_/mcp_) no longer produce warnings.
 func ResolveToolSkillBindings(entries []SkillEntry) map[string]string {
-	bindings := make(map[string]string)
+	return ToolSkillGuidanceMap(ResolveToolSkillBindingSet(entries))
+}
+
+// FilterPromptSkillEntries 返回当前运行时真正参与模型调用的技能条目。
+// 语义与 prompt 构建保持一致：先应用配置过滤，再排除 manual-only 技能。
+func FilterPromptSkillEntries(entries []SkillEntry, cfg *types.OpenAcosmiConfig, skillFilter []string) []SkillEntry {
+	eligible := filterSkillEntries(entries, cfg, skillFilter)
+	promptEntries := make([]SkillEntry, 0, len(eligible))
+	for _, e := range eligible {
+		if !e.DisableModelInvocation {
+			promptEntries = append(promptEntries, e)
+		}
+	}
+	return promptEntries
+}
+
+// ResolveToolSkillNames 从技能列表构建 toolName → 绑定技能名列表。
+// 与 ResolveToolSkillBindings 不同，这里保留所有有效绑定，用于能力树运行时视图。
+func ResolveToolSkillNames(entries []SkillEntry) map[string][]string {
+	return ToolSkillNameMap(ResolveToolSkillBindingSet(entries))
+}
+
+// ResolvePromptToolSkillBindingSet 构建当前运行时实际生效的工具绑定集合。
+// 会先应用配置禁用和 manual-only 过滤，避免展示或注入无效绑定。
+func ResolvePromptToolSkillBindingSet(entries []SkillEntry, cfg *types.OpenAcosmiConfig, skillFilter []string) map[string]ToolSkillBinding {
+	return ResolveToolSkillBindingSet(FilterPromptSkillEntries(entries, cfg, skillFilter))
+}
+
+// ResolveToolSkillBindingSet 返回结构化绑定结果。
+// Guidance 采用 first-wins；SkillNames 记录全部有效绑定顺序。
+func ResolveToolSkillBindingSet(entries []SkillEntry) map[string]ToolSkillBinding {
+	bindings := make(map[string]ToolSkillBinding)
 	for _, e := range entries {
 		if e.Metadata == nil || len(e.Metadata.Tools) == 0 {
 			continue
 		}
-		desc := e.Skill.Description
-		if len(desc) > 120 {
-			desc = desc[:117] + "..."
-		}
-		if desc == "" {
-			continue
-		}
+		desc := truncateToolBindingDescription(e.Skill.Description)
+		seenTools := make(map[string]bool)
 		for _, toolName := range e.Metadata.Tools {
-			if _, exists := bindings[toolName]; exists {
+			if seenTools[toolName] {
 				continue
 			}
+			seenTools[toolName] = true
 			// P1-9: validate against tree (covers static + dynamic tools)
 			if !capabilities.IsInTreeOrDynamic(toolName) {
 				slog.Warn("skill binds to unknown tool", "skill", e.Skill.Name, "tool", toolName)
@@ -411,10 +456,61 @@ func ResolveToolSkillBindings(entries []SkillEntry) map[string]string {
 				slog.Warn("skill binds to non-bindable tool", "skill", e.Skill.Name, "tool", toolName)
 				continue
 			}
-			bindings[toolName] = desc
+			binding := bindings[toolName]
+			if binding.PrimarySkill == "" {
+				binding.PrimarySkill = e.Skill.Name
+			}
+			if binding.Guidance == "" && desc != "" {
+				binding.Guidance = desc
+			}
+			binding.SkillNames = appendUniqueString(binding.SkillNames, e.Skill.Name)
+			bindings[toolName] = binding
 		}
 	}
 	return bindings
+}
+
+// ToolSkillGuidanceMap 从结构化绑定结果提取 toolName → guidance。
+func ToolSkillGuidanceMap(bindingSet map[string]ToolSkillBinding) map[string]string {
+	bindings := make(map[string]string, len(bindingSet))
+	for toolName, binding := range bindingSet {
+		if binding.Guidance != "" {
+			bindings[toolName] = binding.Guidance
+		}
+	}
+	return bindings
+}
+
+// ToolSkillNameMap 从结构化绑定结果提取 toolName → bound skill names。
+func ToolSkillNameMap(bindingSet map[string]ToolSkillBinding) map[string][]string {
+	names := make(map[string][]string, len(bindingSet))
+	for toolName, binding := range bindingSet {
+		if len(binding.SkillNames) == 0 {
+			continue
+		}
+		names[toolName] = append([]string(nil), binding.SkillNames...)
+	}
+	return names
+}
+
+func truncateToolBindingDescription(desc string) string {
+	if len(desc) > 120 {
+		return desc[:117] + "..."
+	}
+	return desc
+}
+
+func appendUniqueString(dst []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return dst
+	}
+	for _, existing := range dst {
+		if existing == value {
+			return dst
+		}
+	}
+	return append(dst, value)
 }
 
 // resolveAllowBundled 解析捆绑技能白名单。

@@ -294,6 +294,7 @@ func RequiresExecApproval(ask infra.ExecAsk, security infra.ExecSecurity, analys
 }
 
 // RecordAllowlistUse 记录白名单被使用。
+// 使用 exec-approvals 锁保护写入，防止并发丢失。
 func RecordAllowlistUse(
 	approvals *infra.ExecApprovalsFile,
 	agentID string,
@@ -323,10 +324,13 @@ func RecordAllowlistUse(
 			break
 		}
 	}
+	unlock := infra.AcquireExecApprovalsLock()
 	_ = infra.SaveExecApprovals(approvals)
+	unlock()
 }
 
 // AddAllowlistEntry 添加新白名单条目。
+// 使用 exec-approvals 锁保护写入，防止并发丢失。
 func AddAllowlistEntry(approvals *infra.ExecApprovalsFile, agentID, pattern string) {
 	trimmed := strings.TrimSpace(pattern)
 	if trimmed == "" {
@@ -354,5 +358,7 @@ func AddAllowlistEntry(approvals *infra.ExecApprovalsFile, agentID, pattern stri
 		Pattern:    trimmed,
 		LastUsedAt: &now,
 	})
+	unlock := infra.AcquireExecApprovalsLock()
 	_ = infra.SaveExecApprovals(approvals)
+	unlock()
 }

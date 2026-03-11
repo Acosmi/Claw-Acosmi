@@ -1,0 +1,69 @@
+/* CrabClaw Side Panel — Global Styles */
+
+:root {
+  /* Brand */
+  --cc-orange: #FF4500;
+  --cc-orange-dark: #E63E00;
+  --cc-orange-light: #FF6B35;
+
+  /* Semantic */
+  --cc-blue: #4A9EFF;
+  --cc-green: #4ADE80;
+  --cc-red: #F87171;
+  --cc-yellow: #FBBF24;
+  --cc-purple: #A78BFA;
+
+  /* Dark theme */
+  --cc-bg-0: #0f0f1a;
+  --cc-bg-1: #161625;
+  --cc-bg-2: #1e1e32;
+  --cc-bg-3: #282845;
+  --cc-border: #2a2a4a;
+  --cc-text: #e8e8f0;
+  --cc-text-dim: #8888a0;
+  --cc-text-muted: #555570;
+
+  /* Spacing */
+  --cc-radius: 8px;
+  --cc-radius-sm: 4px;
+
+  /* Fonts */
+  --cc-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --cc-mono: 'SF Mono', Menlo, Monaco, 'Courier New', monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--cc-font);
+  font-size: 13px;
+  color: var(--cc-text);
+  background: var(--cc-bg-0);
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--cc-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--cc-text-muted); }
+
+/* Selection */
+::selection {
+  background: rgba(255, 69, 0, 0.3);
+  color: white;
+}

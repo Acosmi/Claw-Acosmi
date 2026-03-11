@@ -54,6 +54,36 @@ func TestResolveGatewayPort(t *testing.T) {
 	}
 }
 
+func TestDerivePort_ZeroBase(t *testing.T) {
+	// When base port is 0, derivePort must return the fallback, not a privileged port.
+	got := DeriveDefaultBrowserControlPort(0)
+	if got != DefaultBrowserControlPort {
+		t.Errorf("DeriveDefaultBrowserControlPort(0) = %d, want fallback %d", got, DefaultBrowserControlPort)
+	}
+
+	got = DeriveDefaultBridgePort(0)
+	if got != DefaultBridgePort {
+		t.Errorf("DeriveDefaultBridgePort(0) = %d, want fallback %d", got, DefaultBridgePort)
+	}
+
+	got = DeriveDefaultCanvasHostPort(0)
+	if got != DefaultCanvasHostPort {
+		t.Errorf("DeriveDefaultCanvasHostPort(0) = %d, want fallback %d", got, DefaultCanvasHostPort)
+	}
+
+	// Negative base must also return fallback.
+	got = DeriveDefaultBrowserControlPort(-1)
+	if got != DefaultBrowserControlPort {
+		t.Errorf("DeriveDefaultBrowserControlPort(-1) = %d, want fallback %d", got, DefaultBrowserControlPort)
+	}
+
+	// Normal derivation should still work.
+	got = DeriveDefaultBrowserControlPort(19001)
+	if got != 19003 {
+		t.Errorf("DeriveDefaultBrowserControlPort(19001) = %d, want 19003", got)
+	}
+}
+
 func TestConfigCandidates(t *testing.T) {
 	candidates := ResolveConfigCandidates()
 	if len(candidates) == 0 {
@@ -154,6 +184,34 @@ func TestResolveStateDirUsesCrabClawEnvOverride(t *testing.T) {
 	got := ResolveStateDir()
 	if got != tmpDir {
 		t.Fatalf("expected state dir %s, got %s", tmpDir, got)
+	}
+}
+
+func TestResolveConfigCandidatesUseProfileSuffix(t *testing.T) {
+	tmpHome := t.TempDir()
+	oldHome := os.Getenv("OPENACOSMI_HOME")
+	oldProfile := os.Getenv("OPENACOSMI_PROFILE")
+	oldCrabProfile := os.Getenv("CRABCLAW_PROFILE")
+	t.Cleanup(func() {
+		_ = os.Setenv("OPENACOSMI_HOME", oldHome)
+		_ = os.Setenv("OPENACOSMI_PROFILE", oldProfile)
+		_ = os.Setenv("CRABCLAW_PROFILE", oldCrabProfile)
+	})
+	_ = os.Setenv("OPENACOSMI_HOME", tmpHome)
+	_ = os.Setenv("OPENACOSMI_PROFILE", "staging")
+	_ = os.Setenv("CRABCLAW_PROFILE", "")
+
+	candidates := ResolveConfigCandidates()
+	want := filepath.Join(tmpHome, NewStateDirname+"-staging", ConfigFilename)
+	found := false
+	for _, candidate := range candidates {
+		if candidate == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("ResolveConfigCandidates() missing %q in %v", want, candidates)
 	}
 }
 
@@ -482,5 +540,100 @@ func TestLoadConfigAppliesDefaults(t *testing.T) {
 	// A2 修复后: 空 JSON 不会创建 logging
 	if cfg.Logging != nil {
 		t.Errorf("expected nil logging after LoadConfig on empty JSON (TS parity)")
+	}
+}
+
+func TestLoadConfigRepairsLegacyQwenPortalRuntimeProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "qwen-portal.json")
+	raw := `{
+		"models": {
+			"providers": {
+				"qwen-portal": {
+					"apiKey": "qwen-key"
+				}
+			}
+		},
+		"agents": {
+			"defaults": {
+				"model": {
+					"fallbacks": ["qwen-portal/qwen3.5-plus"]
+				}
+			}
+		}
+	}`
+	_ = os.WriteFile(cfgPath, []byte(raw), 0600)
+
+	loader := NewConfigLoader(WithConfigPath(cfgPath))
+	cfg, err := loader.LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Models == nil || cfg.Models.Providers == nil {
+		t.Fatal("models.providers should exist")
+	}
+	provCfg := cfg.Models.Providers["qwen-portal"]
+	if provCfg == nil {
+		t.Fatal("qwen-portal provider should exist")
+	}
+	if provCfg.API != "openai-completions" {
+		t.Fatalf("provider API = %q, want %q", provCfg.API, "openai-completions")
+	}
+	if provCfg.BaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
+		t.Fatalf("provider BaseURL = %q", provCfg.BaseURL)
+	}
+	if provCfg.APIKey != "qwen-key" {
+		t.Fatalf("provider APIKey = %q", provCfg.APIKey)
+	}
+	if len(provCfg.Models) == 0 {
+		t.Fatal("provider models should be repaired")
+	}
+
+	runtimeCfg := cfg.Models.Providers["qwen"]
+	if runtimeCfg == nil {
+		t.Fatal("qwen runtime provider should be mirrored from legacy qwen-portal config")
+	}
+	if runtimeCfg.APIKey != "qwen-key" {
+		t.Fatalf("runtime provider APIKey = %q", runtimeCfg.APIKey)
+	}
+	if runtimeCfg.BaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
+		t.Fatalf("runtime provider BaseURL = %q", runtimeCfg.BaseURL)
+	}
+}
+
+func TestLoadConfigRepairsMissingMinimaxProviderFromModelRefs(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "minimax.json")
+	raw := `{
+		"agents": {
+			"defaults": {
+				"model": {
+					"primary": "minimax/MiniMax-M2.5"
+				}
+			}
+		}
+	}`
+	_ = os.WriteFile(cfgPath, []byte(raw), 0600)
+
+	loader := NewConfigLoader(WithConfigPath(cfgPath))
+	cfg, err := loader.LoadConfig()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Models == nil || cfg.Models.Providers == nil {
+		t.Fatal("models.providers should exist")
+	}
+	provCfg := cfg.Models.Providers["minimax"]
+	if provCfg == nil {
+		t.Fatal("minimax provider should be restored from model refs")
+	}
+	if provCfg.API != "openai-completions" {
+		t.Fatalf("provider API = %q, want %q", provCfg.API, "openai-completions")
+	}
+	if provCfg.BaseURL != "https://api.minimax.io/v1" {
+		t.Fatalf("provider BaseURL = %q", provCfg.BaseURL)
+	}
+	if len(provCfg.Models) == 0 {
+		t.Fatal("provider models should be restored")
 	}
 }

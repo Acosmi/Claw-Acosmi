@@ -16,16 +16,14 @@ import (
 // - JSON Lines 格式输出
 
 const (
-	// DefaultLogDir 日志文件默认目录。
-	// 固定 /tmp/openacosmi 以与原版兼容（macOS 上 os.TempDir() 是随机路径）。
-	DefaultLogDir = "/tmp/openacosmi"
-
 	logPrefix   = "openacosmi"
 	logSuffix   = ".log"
 	maxLogAge   = 24 * time.Hour
 	rollingFmt  = "2006-01-02" // Go 日期格式
 	rollingName = logPrefix + "-" + rollingFmt + logSuffix
 )
+
+var DefaultLogDir = filepath.Join(os.TempDir(), "openacosmi")
 
 // FileWriter 文件日志写入器，支持按日期自动滚动。
 type FileWriter struct {

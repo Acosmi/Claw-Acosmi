@@ -153,8 +153,10 @@ func buildSelfUpdateSection(hasGateway, isMinimal bool) string {
 	}
 	return "## Crab Claw（蟹爪） Self-Update\n" +
 		"Get Updates (self-update) is ONLY allowed when the user explicitly asks for it.\n" +
-		"Do not run config.apply or update.run unless the user explicitly requests; if not explicit, ask first.\n" +
-		"Actions: config.get, config.schema, config.apply (validate + write full config, then restart), update.run.\n" +
+		"Do not run config.patch, config.apply, config.set, or update.run unless the user explicitly requests; if not explicit, ask first.\n" +
+		"Actions: config.get, config.schema, config.patch (minimal merge patch + validate + restart), config.apply (validate + write full config + restart), config.set (validate + write full config without restart), update.run.\n" +
+		"Prefer top-level specialized config tools (browser_config, remote_approval_config, image_config, stt_config, docconv_config, media_config) when available; use gateway specialized actions only as fallback.\n" +
+		"Do not call config.patch and then config.apply for the same change; config.patch already writes and schedules restart.\n" +
 		"After restart, Crab Claw（蟹爪） pings the last active session automatically."
 }
 

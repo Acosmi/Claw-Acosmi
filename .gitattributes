@@ -1,0 +1,24 @@
+# 默认：自动检测
+* text=auto
+
+# Windows 批处理脚本 — 必须使用 CRLF 行尾，否则 CMD 无法解析
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+
+# Unix shell 脚本 — 必须使用 LF 行尾
+*.sh     text eol=lf
+*.command text eol=lf
+
+# macOS Info.plist
+*.plist  text eol=lf
+
+# 二进制文件 — 不转换
+*.png    binary
+*.jpg    binary
+*.ico    binary
+*.dylib  binary
+*.so     binary
+*.dll    binary
+*.exe    binary
+*.app    binary

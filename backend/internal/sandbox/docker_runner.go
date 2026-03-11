@@ -20,6 +20,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
+	"github.com/Acosmi/ClawAcosmi/internal/statepaths"
 )
 
 // DockerExecutionResult mirrors the Wasm ExecutionResult for Docker-based execution.
@@ -266,11 +269,11 @@ func ResolveSandboxMounts(mc SandboxMountConfig) (binds []string, workDir string
 	}
 	skillsDir := mc.SkillsDir
 	if skillsDir == "" && homeDir != "" {
-		skillsDir = filepath.Join(homeDir, ".openacosmi", "skills")
+		skillsDir = filepath.Join(statepaths.ResolveStateDir(), "skills")
 	}
 	configFile := mc.ConfigFile
 	if configFile == "" && homeDir != "" {
-		configFile = filepath.Join(homeDir, ".openacosmi", "config.json")
+		configFile = config.ResolveCanonicalConfigPath()
 	}
 
 	// ── 公共只读挂载（L0 和 L1 共享）──

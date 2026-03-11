@@ -4,6 +4,7 @@
 // 前端仅保留 icon/color/bg 等视觉属性。
 
 import { html } from "lit";
+import { normalizeBasePath } from "../navigation.ts";
 
 // ---------- 后端返回的类型定义 ----------
 
@@ -35,9 +36,16 @@ export interface WizardProvider {
 
 // ---------- 前端唯一硬编码：视觉属性映射 ----------
 
-const PROVIDER_UI_META: Record<string, { icon: any; color: string; bg: string }> = {
+function publicAssetUrl(basePath: string, assetPath: string): string {
+    const base = normalizeBasePath(basePath);
+    return base ? `${base}${assetPath}` : assetPath;
+}
+
+type ProviderIconRenderer = (basePath: string) => any;
+
+const PROVIDER_UI_META: Record<string, { icon: ProviderIconRenderer | any; color: string; bg: string }> = {
     "google": {
-        icon: html`<img src="/providers/google.svg" style="width:75%; height:75%; object-fit:contain;" />`,
+        icon: (basePath) => html`<img src="${publicAssetUrl(basePath, "/providers/google.svg")}" style="width:75%; height:75%; object-fit:contain;" />`,
         color: "#1890FF", bg: "#E6F7FF"
     },
     "qwen": {
@@ -65,19 +73,19 @@ const PROVIDER_UI_META: Record<string, { icon: any; color: string; bg: string }>
         color: "#2F54EB", bg: "#F0F5FF"
     },
     "moonshot": {
-        icon: html`<img src="/providers/kimi.ico" style="width:100%; height:100%; object-fit:contain; border-radius: 50%;" />`,
+        icon: (basePath) => html`<img src="${publicAssetUrl(basePath, "/providers/kimi.ico")}" style="width:100%; height:100%; object-fit:contain; border-radius: 50%;" />`,
         color: "#1890FF", bg: "#E6F7FF"
     },
     "openai": {
-        icon: html`<img src="/providers/openai.svg" style="width:70%; height:70%; object-fit:contain; filter: invert(0);" />`,
+        icon: (basePath) => html`<img src="${publicAssetUrl(basePath, "/providers/openai.svg")}" style="width:70%; height:70%; object-fit:contain; filter: invert(0);" />`,
         color: "#52C41A", bg: "#F6FFED"
     },
     "anthropic": {
-        icon: html`<img src="/providers/anthropic.svg" style="width:60%; height:60%; object-fit:contain; filter: invert(0);" />`,
+        icon: (basePath) => html`<img src="${publicAssetUrl(basePath, "/providers/anthropic.svg")}" style="width:60%; height:60%; object-fit:contain; filter: invert(0);" />`,
         color: "#FF4D4F", bg: "#FFF1F0"
     },
     "xai": {
-        icon: html`<img src="/providers/xai.svg" style="width:70%; height:70%; object-fit:contain;" />`,
+        icon: (basePath) => html`<img src="${publicAssetUrl(basePath, "/providers/xai.svg")}" style="width:70%; height:70%; object-fit:contain;" />`,
         color: "#000000", bg: "#F5F5F5"
     },
     "qianfan": {
@@ -127,7 +135,7 @@ const PROVIDER_UI_META: Record<string, { icon: any; color: string; bg: string }>
 };
 
 const DEFAULT_UI = {
-    icon: html`<div style="font-weight:bold; font-size:14px; color:#8C8C8C; display:flex; align-items:center; justify-content:center; height:100%;">?</div>`,
+    icon: () => html`<div style="font-weight:bold; font-size:14px; color:#8C8C8C; display:flex; align-items:center; justify-content:center; height:100%;">?</div>`,
     color: "#8C8C8C",
     bg: "#F5F5F5"
 };
@@ -135,17 +143,22 @@ const DEFAULT_UI = {
 // ---------- 合并函数 ----------
 
 /** 合并后端数据 + 前端视觉属性 */
-export function mergeWithUI(backendProviders: any[]): WizardProvider[] {
-    return backendProviders.map(p => ({
-        ...p,
-        ...(PROVIDER_UI_META[p.id] || DEFAULT_UI)
-    }));
+export function mergeWithUI(backendProviders: any[], basePath: string = ""): WizardProvider[] {
+    return backendProviders.map((p) => {
+        const ui = PROVIDER_UI_META[p.id] || DEFAULT_UI;
+        const icon = typeof ui.icon === "function" ? ui.icon(basePath) : ui.icon;
+        return {
+            ...p,
+            icon,
+            color: ui.color,
+            bg: ui.bg,
+        };
+    });
 }
 
 // ---------- 静态 fallback（后端不可用时兜底） ----------
 
-/** @deprecated 仅作为后端不可用时的兜底。数据源应为后端 wizard.v2.providers.list。 */
-export const FALLBACK_PROVIDERS: WizardProvider[] = mergeWithUI([
+const FALLBACK_PROVIDER_DATA = [
     // --- 优先推荐组 ---
     { id: "google", name: "Google (Gemini)", desc: "Gemini 系列模型，多模态能力出众。支持 OAuth 一键授权或 API Key。", category: "oauth_priority", sortOrder: 1, authModes: ["oauth", "apiKey"], defaultModelRef: "google/gemini-3.1-pro-preview", models: [{ id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro", reasoning: true, input: ["text", "image"], contextWindow: 1048576, maxTokens: 65536 }, { id: "gemini-3-flash-preview", name: "Gemini 3 Flash", reasoning: false, input: ["text", "image"], contextWindow: 1048576, maxTokens: 65536 }, { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", reasoning: true, input: ["text", "image"], contextWindow: 1048576, maxTokens: 65536 }, { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", reasoning: true, input: ["text", "image"], contextWindow: 1048576, maxTokens: 65536 }], customBaseUrlAllowed: false, requiresBaseUrl: false },
     { id: "qwen", name: "Qwen 通义千问 (阿里)", desc: "通义千问大模型，中文开源天花板。支持 Portal 设备码授权或 API Key。", category: "oauth_priority", sortOrder: 2, authModes: ["deviceCode", "apiKey"], defaultModelRef: "qwen/qwen3.5-plus", models: [{ id: "qwen3.5-plus", name: "Qwen3.5 Plus (旗舰多模态)", reasoning: false, input: ["text", "image"], contextWindow: 1000000, maxTokens: 81920 }, { id: "qwen3-max", name: "Qwen3 Max (旗舰推理)", reasoning: true, input: ["text"], contextWindow: 256000, maxTokens: 32000 }, { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus (代码)", reasoning: false, input: ["text"], contextWindow: 262000, maxTokens: 65536 }, { id: "qwen3-235b-a22b", name: "Qwen 3 235B (开源旗舰)", reasoning: true, input: ["text"], contextWindow: 131072, maxTokens: 16384 }, { id: "qwq-plus", name: "QwQ Plus (推理专家)", reasoning: true, input: ["text"], contextWindow: 131072, maxTokens: 16384 }, { id: "qwen-max", name: "Qwen Max (经典)", reasoning: false, input: ["text"], contextWindow: 131072, maxTokens: 16384 }], customBaseUrlAllowed: false, requiresBaseUrl: false },
@@ -174,7 +187,14 @@ export const FALLBACK_PROVIDERS: WizardProvider[] = mergeWithUI([
     // --- 本地推理与自定义组 ---
     { id: "custom-openai", name: "自定义端点 (OpenAI 兼容)", desc: "支持接入 OpenRouter, vLLM 等符合 OpenAI 协议的自定义服务。", category: "local_custom", sortOrder: 1, authModes: ["apiKey"], defaultModelRef: "openai-compat/custom", models: [{ id: "custom", name: "自定义模型ID请在下方填入", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 8192 }], customBaseUrlAllowed: true, requiresBaseUrl: true },
     { id: "ollama", name: "Ollama (本地私有化)", desc: "零配置接入本地私有化模型体系。", category: "local_custom", sortOrder: 2, authModes: ["none"], defaultModelRef: "ollama/llama3.3", models: [{ id: "llama3.3", name: "Llama 3.3", reasoning: false, input: ["text"], contextWindow: 131072, maxTokens: 8192 }, { id: "qwen3:32b", name: "Qwen 3 32B", reasoning: true, input: ["text"], contextWindow: 131072, maxTokens: 8192 }], customBaseUrlAllowed: true, requiresBaseUrl: false },
-]);
+];
+
+/** @deprecated 仅作为后端不可用时的兜底。数据源应为后端 wizard.v2.providers.list。 */
+export function getFallbackProviders(basePath: string = ""): WizardProvider[] {
+    return mergeWithUI(FALLBACK_PROVIDER_DATA, basePath);
+}
+
+export const FALLBACK_PROVIDERS: WizardProvider[] = getFallbackProviders();
 
 // ---------- 旧接口兼容 ----------
 

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Acosmi/ClawAcosmi/internal/statepaths"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
@@ -336,11 +337,7 @@ func resolveConfigDir() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "openacosmi")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), ".openacosmi")
-	}
-	return filepath.Join(home, ".openacosmi")
+	return statepaths.ResolveStateDir()
 }
 
 // resolveArchiveType 解析 archive 类型。

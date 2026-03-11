@@ -3,6 +3,7 @@ package gateway
 import (
 	"testing"
 
+	"github.com/Acosmi/ClawAcosmi/internal/infra"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
@@ -55,6 +56,181 @@ func TestConvertWizardV2PayloadToConfig_ProviderMapping(t *testing.T) {
 	}
 	if ds.APIKey != "sk-ds-zzz" {
 		t.Errorf("deepseek APIKey: got %q, want %q", ds.APIKey, "sk-ds-zzz")
+	}
+}
+
+func TestConvertWizardV2PayloadToConfig_QwenAPIKeyUsesRuntimeProviderConfig(t *testing.T) {
+	payload := &WizardV2Payload{
+		PrimaryConfig: map[string]string{
+			"google": "google-key",
+		},
+		FallbackConfig: map[string]string{
+			"qwen": "qwen-key",
+		},
+		ProviderSelections: map[string]WizardV2ProviderSelection{
+			"google": {Model: "gemini-3.1-pro-preview", AuthMode: "apiKey"},
+			"qwen":   {Model: "qwen3.5-plus", AuthMode: "apiKey"},
+		},
+	}
+
+	cfg := &types.OpenAcosmiConfig{}
+	convertWizardV2PayloadToConfig(payload, cfg)
+
+	qwen := cfg.Models.Providers["qwen"]
+	if qwen == nil {
+		t.Fatal("qwen runtime provider should be created")
+	}
+	if _, ok := cfg.Models.Providers["qwen-portal"]; ok {
+		t.Fatal("qwen-portal config should not be materialized for API key mode")
+	}
+	if qwen.APIKey != "qwen-key" {
+		t.Fatalf("qwen API key = %q", qwen.APIKey)
+	}
+	if qwen.BaseURL == "" {
+		t.Fatal("qwen baseUrl should be populated from bridge config")
+	}
+	if len(qwen.Models) == 0 {
+		t.Fatal("qwen models should be populated from bridge config")
+	}
+	if cfg.Agents == nil || cfg.Agents.Defaults == nil || cfg.Agents.Defaults.Model == nil || cfg.Agents.Defaults.Model.Fallbacks == nil {
+		t.Fatal("fallbacks should be created")
+	}
+	gotFallbacks := *cfg.Agents.Defaults.Model.Fallbacks
+	if len(gotFallbacks) != 1 || gotFallbacks[0] != "qwen/qwen3.5-plus" {
+		t.Fatalf("fallbacks = %#v, want []string{\"qwen/qwen3.5-plus\"}", gotFallbacks)
+	}
+}
+
+func TestConvertWizardV2PayloadToConfig_DeviceCodeProvidersKeepRuntimeConfigKeys(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		model    string
+		marker   string
+		wantRef  string
+		authMode string
+	}{
+		{
+			name:     "qwen",
+			provider: "qwen",
+			model:    "qwen3.5-plus",
+			marker:   "device-code-qwen",
+			wantRef:  "qwen/qwen3.5-plus",
+			authMode: "deviceCode",
+		},
+		{
+			name:     "minimax",
+			provider: "minimax",
+			model:    "MiniMax-M2.5",
+			marker:   "device-code-minimax",
+			wantRef:  "minimax/MiniMax-M2.5",
+			authMode: "deviceCode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := &WizardV2Payload{
+				PrimaryConfig: map[string]string{
+					tt.provider: tt.marker,
+				},
+				ProviderSelections: map[string]WizardV2ProviderSelection{
+					tt.provider: {Model: tt.model, AuthMode: tt.authMode},
+				},
+			}
+
+			cfg := &types.OpenAcosmiConfig{}
+			convertWizardV2PayloadToConfig(payload, cfg)
+
+			providerCfg := cfg.Models.Providers[tt.provider]
+			if providerCfg == nil {
+				t.Fatalf("%s runtime provider should be created", tt.provider)
+			}
+			if providerCfg.Auth != types.ModelAuthOAuth {
+				t.Fatalf("%s auth mode = %q, want oauth", tt.provider, providerCfg.Auth)
+			}
+			if providerCfg.APIKey != "" {
+				t.Fatalf("%s API key should stay empty in device flow mode", tt.provider)
+			}
+			if providerCfg.BaseURL == "" {
+				t.Fatalf("%s baseUrl should be populated from bridge config", tt.provider)
+			}
+			if len(providerCfg.Models) == 0 {
+				t.Fatalf("%s models should be populated from bridge config", tt.provider)
+			}
+			portalKey := tt.provider + "-portal"
+			if _, ok := cfg.Models.Providers[portalKey]; ok {
+				t.Fatalf("%s config should not be materialized; runtime key must remain %s", portalKey, tt.provider)
+			}
+			if cfg.Agents == nil || cfg.Agents.Defaults == nil || cfg.Agents.Defaults.Model == nil {
+				t.Fatal("agents.defaults.model should be created")
+			}
+			if cfg.Agents.Defaults.Model.Primary != tt.wantRef {
+				t.Fatalf("primary = %q, want %q", cfg.Agents.Defaults.Model.Primary, tt.wantRef)
+			}
+		})
+	}
+}
+
+func TestConvertWizardV2PayloadToConfig_PrimaryExtrasBecomeFallbacks(t *testing.T) {
+	payload := &WizardV2Payload{
+		PrimaryConfig: map[string]string{
+			"google": "google-key",
+			"openai": "openai-key",
+		},
+		ProviderSelections: map[string]WizardV2ProviderSelection{
+			"google": {Model: "gemini-2.5-pro", AuthMode: "apiKey"},
+			"openai": {Model: "gpt-4o", AuthMode: "apiKey"},
+		},
+	}
+
+	cfg := &types.OpenAcosmiConfig{}
+	convertWizardV2PayloadToConfig(payload, cfg)
+
+	if cfg.Agents == nil || cfg.Agents.Defaults == nil || cfg.Agents.Defaults.Model == nil {
+		t.Fatal("agents.defaults.model should be created")
+	}
+	if got := cfg.Agents.Defaults.Model.Primary; got != "google/gemini-2.5-pro" {
+		t.Fatalf("primary model: got %q, want %q", got, "google/gemini-2.5-pro")
+	}
+	if cfg.Agents.Defaults.Model.Fallbacks == nil {
+		t.Fatal("fallbacks should not be nil when multiple primary providers are configured")
+	}
+	wantFallbacks := []string{"openai/gpt-4o"}
+	if got := *cfg.Agents.Defaults.Model.Fallbacks; len(got) != len(wantFallbacks) || got[0] != wantFallbacks[0] {
+		t.Fatalf("fallbacks: got %#v, want %#v", got, wantFallbacks)
+	}
+}
+
+func TestConvertWizardV2PayloadToConfig_FallbacksAppendSecondaryPageProviders(t *testing.T) {
+	payload := &WizardV2Payload{
+		PrimaryConfig: map[string]string{
+			"openai": "openai-key",
+		},
+		FallbackConfig: map[string]string{
+			"deepseek": "deepseek-key",
+		},
+		ProviderSelections: map[string]WizardV2ProviderSelection{
+			"openai":   {Model: "gpt-4o", AuthMode: "apiKey"},
+			"deepseek": {Model: "deepseek-chat", AuthMode: "apiKey"},
+		},
+	}
+
+	cfg := &types.OpenAcosmiConfig{}
+	convertWizardV2PayloadToConfig(payload, cfg)
+
+	if cfg.Agents == nil || cfg.Agents.Defaults == nil || cfg.Agents.Defaults.Model == nil {
+		t.Fatal("agents.defaults.model should be created")
+	}
+	if got := cfg.Agents.Defaults.Model.Primary; got != "openai/gpt-4o" {
+		t.Fatalf("primary model: got %q, want %q", got, "openai/gpt-4o")
+	}
+	if cfg.Agents.Defaults.Model.Fallbacks == nil {
+		t.Fatal("fallbacks should not be nil")
+	}
+	wantFallbacks := []string{"deepseek/deepseek-chat"}
+	if got := *cfg.Agents.Defaults.Model.Fallbacks; len(got) != len(wantFallbacks) || got[0] != wantFallbacks[0] {
+		t.Fatalf("fallbacks: got %#v, want %#v", got, wantFallbacks)
 	}
 }
 
@@ -221,6 +397,48 @@ func TestConvertWizardV2PayloadToConfig_PreservesExistingConfig(t *testing.T) {
 	}
 	if ant.APIKey != "existing-key" {
 		t.Errorf("existing anthropic APIKey should be preserved, got %q", ant.APIKey)
+	}
+}
+
+func TestSyncWizardV2ExecSecurity_UpdatesExecApprovalsDefaults(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	file, err := infra.EnsureExecApprovals()
+	if err != nil {
+		t.Fatalf("ensure exec approvals: %v", err)
+	}
+	file.Defaults = &infra.ExecApprovalsDefaults{
+		Security: infra.ExecSecurityDeny,
+		Ask:      infra.ExecAskOnMiss,
+	}
+	if err := infra.SaveExecApprovals(file); err != nil {
+		t.Fatalf("seed exec approvals: %v", err)
+	}
+	socketPath := file.Socket.Path
+	socketToken := file.Socket.Token
+
+	if err := syncWizardV2ExecSecurity("sandboxed"); err != nil {
+		t.Fatalf("sync wizard exec security: %v", err)
+	}
+
+	snapshot := infra.ReadExecApprovalsSnapshot()
+	if snapshot.File == nil || snapshot.File.Defaults == nil {
+		t.Fatal("expected exec approvals defaults to exist")
+	}
+	if got := snapshot.File.Defaults.Security; got != infra.ExecSecuritySandboxed {
+		t.Fatalf("expected security %q, got %q", infra.ExecSecuritySandboxed, got)
+	}
+	if got := snapshot.File.Defaults.EscalationFallback; got != infra.ExecEscalationFallbackBase {
+		t.Fatalf("expected escalation fallback %q, got %q", infra.ExecEscalationFallbackBase, got)
+	}
+	if got := snapshot.File.Defaults.Ask; got != infra.ExecAskOnMiss {
+		t.Fatalf("expected ask policy to be preserved, got %q", got)
+	}
+	if snapshot.File.Socket == nil {
+		t.Fatal("expected socket config to be preserved")
+	}
+	if snapshot.File.Socket.Path != socketPath || snapshot.File.Socket.Token != socketToken {
+		t.Fatal("expected socket path/token to remain unchanged")
 	}
 }
 
@@ -454,6 +672,73 @@ func TestResetThenApply_NoStaleProviders(t *testing.T) {
 	}
 	if cfg.Agents.Defaults.Model.Primary != "openai/gpt-4.1" {
 		t.Errorf("Primary model: got %q, want %q", cfg.Agents.Defaults.Model.Primary, "openai/gpt-4.1")
+	}
+}
+
+func TestResetThenApply_MemoryLLMFallsBackToPrimaryModel(t *testing.T) {
+	cfg := &types.OpenAcosmiConfig{
+		Models: &types.ModelsConfig{
+			Providers: map[string]*types.ModelProviderConfig{
+				"deepseek": {
+					APIKey:  "sk-ds-old",
+					BaseURL: "https://api.deepseek.com",
+				},
+			},
+		},
+		Agents: &types.AgentsConfig{
+			Defaults: &types.AgentDefaultsConfig{
+				Model: &types.AgentModelListConfig{Primary: "deepseek/deepseek-chat"},
+			},
+		},
+		Memory: &types.MemoryConfig{
+			UHMS: &types.MemoryUHMSConfig{
+				Enabled:     true,
+				LLMProvider: "deepseek",
+				LLMModel:    "deepseek-chat",
+				LLMApiKey:   "sk-ds-old",
+				LLMBaseURL:  "https://api.deepseek.com",
+			},
+		},
+	}
+
+	resetWizardManagedSections(cfg)
+
+	payload := &WizardV2Payload{
+		PrimaryConfig: map[string]string{
+			"openai": "sk-openai-new",
+		},
+		ProviderSelections: map[string]WizardV2ProviderSelection{
+			"openai": {Model: "gpt-4.1", AuthMode: "apiKey"},
+		},
+		MemoryConfig: WizardV2MemoryConfig{},
+	}
+	convertWizardV2PayloadToConfig(payload, cfg)
+
+	if cfg.Memory == nil || cfg.Memory.UHMS == nil {
+		t.Fatal("Memory.UHMS should be initialized")
+	}
+	if cfg.Memory.UHMS.LLMProvider != "" {
+		t.Fatalf("Memory.UHMS.LLMProvider = %q, want empty to inherit primary model", cfg.Memory.UHMS.LLMProvider)
+	}
+	if cfg.Memory.UHMS.LLMModel != "" {
+		t.Fatalf("Memory.UHMS.LLMModel = %q, want empty to inherit primary model", cfg.Memory.UHMS.LLMModel)
+	}
+
+	got := resolveEffectiveUHMSLLMConfig(cfg.Memory.UHMS, cfg)
+	if got.Provider != "openai" {
+		t.Fatalf("resolved provider = %q, want openai", got.Provider)
+	}
+	if got.Model != "gpt-4.1" {
+		t.Fatalf("resolved model = %q, want gpt-4.1", got.Model)
+	}
+	if got.APIKey != "sk-openai-new" {
+		t.Fatalf("resolved API key = %q, want sk-openai-new", got.APIKey)
+	}
+	if got.BaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("resolved BaseURL = %q, want https://api.openai.com/v1", got.BaseURL)
+	}
+	if !got.Inherited {
+		t.Fatal("resolved config should be marked as inherited")
 	}
 }
 

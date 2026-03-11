@@ -126,8 +126,11 @@ func (w ApprovalWorkflow) MarkStageResolved(stageType, requestID, action string)
 		status = ApprovalStageEdited
 	case "reject", "deny":
 		status = ApprovalStageRejected
+	case "skip":
+		status = ApprovalStageSkipped
 	default:
-		status = strings.ToLower(strings.TrimSpace(action))
+		// 未知 action 映射为 pending（安全默认），防止任意字符串被 recompute 视为 approved
+		status = ApprovalStagePending
 	}
 	now := time.Now().UnixMilli()
 	for i := range w.Stages {
@@ -223,6 +226,11 @@ func (w ApprovalWorkflow) recompute() ApprovalWorkflow {
 	}
 	if !hasStage {
 		status = ""
+	}
+	// edited 是"批准但有修改"，workflow 整体已完成。
+	// 如果没有 pending/rejected，将 edited 视为 approved（附带 edited 语义）。
+	if status == ApprovalStageEdited {
+		status = ApprovalStageApproved
 	}
 	if current == "" && len(w.Stages) > 0 {
 		current = w.Stages[len(w.Stages)-1].Type

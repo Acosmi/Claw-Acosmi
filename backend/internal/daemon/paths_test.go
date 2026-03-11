@@ -1,6 +1,9 @@
 package daemon
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestResolveHomeDir(t *testing.T) {
 	tests := []struct {
@@ -81,6 +84,22 @@ func TestResolveGatewayStateDir(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestResolveGatewayLogPaths_UsesProfileAwareFallback(t *testing.T) {
+	env := map[string]string{
+		"HOME":               "/home/user",
+		"OPENACOSMI_PROFILE": "staging",
+	}
+
+	stdoutPath, stderrPath := ResolveGatewayLogPaths(env)
+	wantDir := filepath.Join("/home/user", ".openacosmi-staging", "logs")
+	if stdoutPath != filepath.Join(wantDir, "gateway.stdout.log") {
+		t.Fatalf("stdoutPath = %q", stdoutPath)
+	}
+	if stderrPath != filepath.Join(wantDir, "gateway.stderr.log") {
+		t.Fatalf("stderrPath = %q", stderrPath)
 	}
 }
 

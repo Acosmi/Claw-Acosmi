@@ -160,6 +160,14 @@ func (s *MediaSubsystem) RegisterPublisher(platform Platform, pub MediaPublisher
 	slog.Info("media publisher registered", "platform", platform)
 }
 
+// SetTrendingSources 替换运行时热点源配置。
+func (s *MediaSubsystem) SetTrendingSources(sources []TrendingSource) {
+	if s == nil || s.Aggregator == nil {
+		return
+	}
+	s.Aggregator.SetSources(sources)
+}
+
 // RegisterInteractor 注册社交互动器。
 // 替换初始化时以 nil 创建的 social_interact 工具实例。
 // 若工具列表中不存在 social_interact（EnableInteract=false 时），则新增。

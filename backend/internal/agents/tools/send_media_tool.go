@@ -20,7 +20,7 @@ func CreateSendMediaTool(_ MediaSender) *AgentTool {
 	return &AgentTool{
 		Name:        "send_media",
 		Label:       "Send Media",
-		Description: "Send a file or media to the current conversation channel. Do NOT provide 'target' — it defaults to current channel. Use file_path with an ABSOLUTE path. Only use media_base64 if data is already in base64 form.",
+		Description: "Send a file or media to the current conversation channel. Do NOT provide 'target' — it defaults to current channel. Use file_path with an ABSOLUTE path. If the user refers to the latest image already attached in this chat, you may omit both file_path and media_base64 and the tool will reuse that attachment automatically. Only use media_base64 if data is already in base64 form.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

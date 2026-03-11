@@ -52,10 +52,11 @@ func openaiStreamChat(ctx context.Context, req ChatRequest, onEvent func(StreamE
 	}
 
 	body := openaiRequest{
-		Model:     req.Model,
-		MaxTokens: maxTokens,
-		Stream:    true,
-		Messages:  toOpenAIMessages(req.SystemPrompt, req.Messages),
+		Model:         req.Model,
+		MaxTokens:     maxTokens,
+		Stream:        true,
+		StreamOptions: &openaiStreamOptions{IncludeUsage: true},
+		Messages:      toOpenAIMessages(req.SystemPrompt, req.Messages),
 	}
 	if len(req.Tools) > 0 {
 		body.Tools = toOpenAITools(req.Tools)
@@ -99,12 +100,17 @@ func openaiStreamChat(ctx context.Context, req ChatRequest, onEvent func(StreamE
 // ---------- OpenAI 请求结构 ----------
 
 type openaiRequest struct {
-	Model       string          `json:"model"`
-	MaxTokens   int             `json:"max_tokens"`
-	Stream      bool            `json:"stream"`
-	Messages    []openaiMessage `json:"messages"`
-	Tools       []openaiTool    `json:"tools,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
+	Model         string               `json:"model"`
+	MaxTokens     int                  `json:"max_tokens"`
+	Stream        bool                 `json:"stream"`
+	StreamOptions *openaiStreamOptions `json:"stream_options,omitempty"`
+	Messages      []openaiMessage      `json:"messages"`
+	Tools         []openaiTool         `json:"tools,omitempty"`
+	Temperature   *float64             `json:"temperature,omitempty"`
+}
+
+type openaiStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type openaiMessage struct {
@@ -313,10 +319,7 @@ func parseOpenAISSE(r io.Reader, onEvent func(StreamEvent)) (*ChatResult, error)
 				} `json:"delta"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
-			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
+			Usage map[string]interface{} `json:"usage"`
 		}
 		if json.Unmarshal([]byte(data), &chunk) != nil {
 			continue
@@ -382,8 +385,7 @@ func parseOpenAISSE(r io.Reader, onEvent func(StreamEvent)) (*ChatResult, error)
 		}
 
 		if chunk.Usage != nil {
-			result.Usage.InputTokens = chunk.Usage.PromptTokens
-			result.Usage.OutputTokens = chunk.Usage.CompletionTokens
+			mergeOpenAIUsage(&result.Usage, chunk.Usage)
 			onEvent(StreamEvent{Type: EventUsage, Usage: &result.Usage})
 		}
 	}
@@ -412,6 +414,86 @@ func parseOpenAISSE(r io.Reader, onEvent func(StreamEvent)) (*ChatResult, error)
 	result.AssistantMessage = ChatMessage{Role: "assistant", Content: blocks}
 
 	return &result, nil
+}
+
+func mergeOpenAIUsage(dst *UsageInfo, raw map[string]interface{}) {
+	if dst == nil || raw == nil {
+		return
+	}
+
+	input := firstPositiveInt(
+		readIntFromMap(raw, "input_tokens", "prompt_tokens"),
+	)
+	output := firstPositiveInt(
+		readIntFromMap(raw, "output_tokens", "completion_tokens"),
+	)
+	cacheRead := firstPositiveInt(
+		readIntFromMap(raw, "cache_read_input_tokens", "cache_read"),
+		readNestedIntFromMap(raw, "prompt_tokens_details", "cached_tokens"),
+		readNestedIntFromMap(raw, "input_tokens_details", "cached_tokens"),
+	)
+	cacheWrite := firstPositiveInt(
+		readIntFromMap(raw, "cache_creation_input_tokens", "cache_write"),
+		readNestedIntFromMap(raw, "prompt_tokens_details", "cache_creation_input_tokens"),
+		readNestedIntFromMap(raw, "input_tokens_details", "cache_creation_input_tokens"),
+	)
+	total := firstPositiveInt(
+		readIntFromMap(raw, "total_tokens", "total"),
+	)
+	if total == 0 {
+		total = input + output + cacheRead + cacheWrite
+	}
+
+	if input > 0 {
+		dst.InputTokens = input
+	}
+	if output > 0 {
+		dst.OutputTokens = output
+	}
+	if cacheRead > 0 {
+		dst.CacheReadTokens = cacheRead
+	}
+	if cacheWrite > 0 {
+		dst.CacheWriteTokens = cacheWrite
+	}
+	if total > 0 {
+		dst.TotalTokens = total
+	}
+}
+
+func readIntFromMap(raw map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case float64:
+			return int(typed)
+		case int:
+			return typed
+		case int64:
+			return int(typed)
+		}
+	}
+	return 0
+}
+
+func readNestedIntFromMap(raw map[string]interface{}, parentKey, childKey string) int {
+	parent, ok := raw[parentKey].(map[string]interface{})
+	if !ok {
+		return 0
+	}
+	return readIntFromMap(parent, childKey)
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 // ---------- 错误解析 ----------

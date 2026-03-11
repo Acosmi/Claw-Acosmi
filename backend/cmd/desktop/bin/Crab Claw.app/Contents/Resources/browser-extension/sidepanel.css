@@ -1,0 +1,183 @@
+/* sidepanel.css — CrabClaw Side Panel */
+
+:root {
+  --cc-orange: #FF4500;
+  --cc-orange-dark: #E63E00;
+  --cc-blue: #0066CC;
+  --cc-green: #00AA00;
+  --cc-red: #dc3545;
+  --cc-gray: #888;
+  --cc-bg: #1a1a2e;
+  --cc-bg-surface: #16213e;
+  --cc-border: #2a2a4a;
+  --cc-text: #e0e0e0;
+  --cc-text-dim: #777;
+  --cc-radius: 6px;
+  --cc-mono: 'SF Mono', Menlo, Monaco, 'Courier New', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--cc-text);
+  background: var(--cc-bg);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- Header ---- */
+.sp-header {
+  background: var(--cc-bg-surface);
+  border-bottom: 1px solid var(--cc-border);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sp-header h1 {
+  font-size: 14px;
+  color: var(--cc-orange);
+  font-weight: 700;
+}
+
+.sp-status {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.sp-status.native { background: rgba(0,102,204,0.3); color: #6bb3ff; }
+.sp-status.websocket { background: rgba(0,200,0,0.2); color: #6bff6b; }
+.sp-status.off { background: rgba(255,255,255,0.08); color: var(--cc-text-dim); }
+
+/* ---- Log Stream ---- */
+.sp-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: var(--cc-mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.sp-log-item {
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  display: flex;
+  gap: 6px;
+}
+
+.sp-log-time {
+  color: var(--cc-text-dim);
+  flex-shrink: 0;
+  min-width: 55px;
+}
+
+.sp-log-dir {
+  flex-shrink: 0;
+  font-weight: 700;
+  min-width: 18px;
+}
+
+.sp-log-dir.in { color: #6bb3ff; }
+.sp-log-dir.out { color: #6bff6b; }
+.sp-log-dir.sys { color: var(--cc-orange); }
+.sp-log-dir.err { color: #ff6b6b; }
+
+.sp-log-type {
+  color: #b8b8d0;
+  flex-shrink: 0;
+  min-width: 90px;
+}
+
+.sp-log-detail {
+  color: var(--cc-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sp-empty {
+  text-align: center;
+  color: var(--cc-text-dim);
+  padding: 40px 20px;
+  font-size: 12px;
+}
+
+/* ---- Command Input ---- */
+.sp-cmd {
+  background: var(--cc-bg-surface);
+  border-top: 1px solid var(--cc-border);
+  padding: 8px 12px;
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.sp-cmd input {
+  flex: 1;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius);
+  color: var(--cc-text);
+  font-family: var(--cc-mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.sp-cmd input:focus {
+  border-color: var(--cc-orange);
+}
+
+.sp-cmd input::placeholder {
+  color: var(--cc-text-dim);
+}
+
+.sp-cmd button {
+  padding: 6px 12px;
+  background: var(--cc-orange);
+  color: white;
+  border: none;
+  border-radius: var(--cc-radius);
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.sp-cmd button:hover {
+  background: var(--cc-orange-dark);
+}
+
+/* ---- Status Overview ---- */
+.sp-overview {
+  background: var(--cc-bg-surface);
+  border-bottom: 1px solid var(--cc-border);
+  padding: 6px 14px;
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.sp-stat {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.sp-stat-label {
+  color: var(--cc-text-dim);
+}
+
+.sp-stat-value {
+  font-weight: 600;
+}

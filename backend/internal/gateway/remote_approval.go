@@ -24,6 +24,7 @@ import (
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/runner"
 	"github.com/Acosmi/ClawAcosmi/internal/channels"
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ---------- Provider 接口 ----------
@@ -46,7 +47,8 @@ type ApprovalCardRequest struct {
 	Reason         string    `json:"reason"`
 	RunID          string    `json:"runId,omitempty"`
 	SessionID      string    `json:"sessionId,omitempty"`
-	TTLMinutes     int       `json:"ttlMinutes"` // full/L3 永久授权时为 0
+	TTLMinutes     int       `json:"ttlMinutes"`           // full/L3 永久授权时为 0
+	TaskScoped     bool      `json:"taskScoped,omitempty"` // L2 挂载审批按任务自动回收
 	CallbackURL    string    `json:"callbackUrl"`
 	RequestedAt    time.Time `json:"requestedAt"`
 	// OriginatorChatID 发起操作的群聊 ID（如飞书 chat_id），用于审批卡片群发。
@@ -73,7 +75,7 @@ type ApprovalCallbackPayload struct {
 const (
 	ApprovalTypePlanConfirm    = "plan_confirm"    // 方案确认（展示 PlanSteps）
 	ApprovalTypeExecEscalation = "exec_escalation" // 执行提权（展示命令 + 风险等级）
-	ApprovalTypeMountAccess    = "mount_access"    // 挂载访问（展示路径 + 读写权限 + TTL）
+	ApprovalTypeMountAccess    = "mount_access"    // 挂载访问（展示路径 + 读写权限 + 任务范围）
 	ApprovalTypeDataExport     = "data_export"     // 数据导出（展示目标频道 + 文件 + 脱敏）
 	ApprovalTypeResultReview   = "result_review"   // 最终结果签收
 )
@@ -86,6 +88,7 @@ type TypedApprovalRequest struct {
 	ID               string                  `json:"id"`
 	Reason           string                  `json:"reason"`
 	TTLMinutes       int                     `json:"ttlMinutes"`
+	TaskScoped       bool                    `json:"taskScoped,omitempty"`
 	RequestedAt      time.Time               `json:"requestedAt"`
 	SessionKey       string                  `json:"sessionKey,omitempty"`
 	OriginatorChatID string                  `json:"originatorChatId,omitempty"`
@@ -137,6 +140,7 @@ type TypedApprovalResultNotification struct {
 	Approved   bool                    `json:"approved"`
 	Reason     string                  `json:"reason,omitempty"`
 	TTLMinutes int                     `json:"ttlMinutes,omitempty"`
+	TaskScoped bool                    `json:"taskScoped,omitempty"`
 	Workflow   runner.ApprovalWorkflow `json:"workflow,omitempty"`
 
 	RequestedLevel string   `json:"requestedLevel,omitempty"`
@@ -1187,11 +1191,7 @@ func (n *RemoteApprovalNotifier) EnabledProviderNames() []string {
 // ---------- 配置持久化 ----------
 
 func (n *RemoteApprovalNotifier) configFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".openacosmi", remoteApprovalConfigFile)
+	return filepath.Join(config.ResolveStateDir(), remoteApprovalConfigFile)
 }
 
 func (n *RemoteApprovalNotifier) loadConfig() error {

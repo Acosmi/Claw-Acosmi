@@ -292,6 +292,113 @@
   padding: 0 22px 12px;
 }
 
+.config-hub {
+  padding: 22px 22px 0;
+}
+
+.config-hub__header {
+  margin-bottom: 18px;
+}
+
+.config-hub__title {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  color: var(--text-strong);
+}
+
+.config-hub__subtitle {
+  margin: 10px 0 0;
+  max-width: 72ch;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.config-hub__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.config-hub-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  min-height: 176px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--card) 94%, transparent) 0%, color-mix(in srgb, var(--panel) 94%, transparent) 100%);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform var(--duration-fast) ease,
+    border-color var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease,
+    background var(--duration-fast) ease;
+}
+
+.config-hub-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  box-shadow: var(--shadow-md);
+}
+
+.config-hub-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.config-hub-card__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.config-hub-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.config-hub-card__icon svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+}
+
+.config-hub-card__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-strong);
+  letter-spacing: -0.02em;
+}
+
+.config-hub-card__desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  flex: 1;
+}
+
+.config-hub-card__action {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
 /* Diff Panel */
 .config-diff {
   margin: 18px 22px 0;
@@ -1388,6 +1495,14 @@
   .config-update-secondary {
     padding: 0 16px 12px;
     justify-content: center;
+  }
+
+  .config-hub {
+    padding: 18px 16px 0;
+  }
+
+  .config-hub__grid {
+    grid-template-columns: 1fr;
   }
 
   .config-section-hero {

@@ -1,0 +1,52 @@
+version: '3'
+
+vars:
+  APPICON_SOURCE: "../../../logo1.png"
+  OPENVIKING_FFI_MANIFEST: "../../../cli-rust/libs/openviking-rs/Cargo.toml"
+  OPENVIKING_FFI_DYLIB: "../../../cli-rust/libs/openviking-rs/target/release/libopenviking_ffi.dylib"
+
+tasks:
+  build:ffi:
+    desc: Build the Rust FFI used by the desktop host
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds:
+      - cargo build --manifest-path {{.OPENVIKING_FFI_MANIFEST}} -p openviking-ffi --release
+      - test -f {{.OPENVIKING_FFI_DYLIB}}
+
+  build:ui:
+    desc: Build the Control UI before staging desktop assets
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds:
+      - npm --prefix ../../../ui run build
+
+  stage:ui:
+    desc: Stage Control UI assets into the desktop embed directory
+    dir: '{{.USER_WORKING_DIR}}'
+    deps:
+      - task: build:ui
+    cmds:
+      - bash ../../../scripts/desktop/stage_control_ui.sh
+
+  prepare:appicon:
+    desc: Copy the canonical desktop icon source into the build workspace
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds:
+      - test -f {{.APPICON_SOURCE}}
+      - cp {{.APPICON_SOURCE}} build/appicon.png
+
+  generate:icons:
+    desc: Generate macOS and Windows icon assets from the app icon
+    dir: '{{.USER_WORKING_DIR}}'
+    deps:
+      - task: prepare:appicon
+    cmds:
+      - '{{.WAILS3_BIN}} generate icons -input build/appicon.png -macfilename build/darwin/icons.icns -windowsfilename build/windows/icon.ico'
+
+  verify:layout:
+    desc: Check the expected desktop build layout
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds:
+      - test -f main.go
+      - test -f main_wails.go
+      - test -f wails_app.go
+      - test -f ../../../scripts/desktop/stage_control_ui.sh

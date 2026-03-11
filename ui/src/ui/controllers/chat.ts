@@ -13,6 +13,7 @@ import {
   startChatReadonlyRun,
   updateChatReadonlyRunFromChat,
 } from "../chat/readonly-run-state.ts";
+import { globalChatEventStore } from "../event-store.ts";
 import { generateUUID } from "../uuid.ts";
 
 export type ChatState = {
@@ -95,6 +96,39 @@ function shouldAppendChatMessage(existing: unknown[], incoming: unknown): boolea
   return prevContent !== nextContent;
 }
 
+function areChatMessagesEquivalentIgnoringTimestamp(left: unknown, right: unknown): boolean {
+  if (!left || typeof left !== "object" || !right || typeof right !== "object") {
+    return false;
+  }
+  const leftRole = typeof (left as Record<string, unknown>).role === "string"
+    ? (left as Record<string, unknown>).role
+    : "";
+  const rightRole = typeof (right as Record<string, unknown>).role === "string"
+    ? (right as Record<string, unknown>).role
+    : "";
+  if (!leftRole || leftRole !== rightRole) {
+    return false;
+  }
+  const leftText = normalizeReadonlyRunAnchorText(extractText(left));
+  const rightText = normalizeReadonlyRunAnchorText(extractText(right));
+  if (leftText !== null || rightText !== null) {
+    return leftText === rightText;
+  }
+  const leftContent = JSON.stringify((left as Record<string, unknown>).content ?? null);
+  const rightContent = JSON.stringify((right as Record<string, unknown>).content ?? null);
+  return leftContent === rightContent;
+}
+
+function findLatestPendingUserMessage(messages: unknown[]): unknown | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i] as Record<string, unknown> | undefined;
+    if (message?.role === "user") {
+      return message;
+    }
+  }
+  return null;
+}
+
 function shouldRestorePersistedWorkflow(run: ChatReadonlyRunState, messages: unknown[]): boolean {
   if (run.phase !== "complete") {
     return true;
@@ -143,11 +177,10 @@ export async function loadChatHistory(state: ChatState) {
       if (messages.length === 0) {
         // transcript 尚未写入，保留预填充的用户消息不清空
       } else {
-        // 有历史记录：若末尾已是 user 消息（transcript 已写入新消息），直接用 messages；
-        // 否则将预填充的用户消息追加到历史末尾，避免在旧会话切换时新消息不可见（根因 A 修复）
-        const pendingMsg = state.chatMessages[0];
-        const lastMsg = messages[messages.length - 1] as any;
-        if (pendingMsg && lastMsg?.role !== "user") {
+        // 有历史记录时，优先保留本地最后一条 optimistic user 消息；
+        // 仅当 transcript 尚未包含同等内容时才追加，避免本地发送时被历史刷新吞掉或重复。
+        const pendingMsg = findLatestPendingUserMessage(state.chatMessages);
+        if (pendingMsg && !messages.some((message) => areChatMessagesEquivalentIgnoringTimestamp(message, pendingMsg))) {
           state.chatMessages = [...messages, pendingMsg];
         } else {
           state.chatMessages = messages;
@@ -226,6 +259,7 @@ export async function sendChatMessage(
       timestamp: now,
     },
   ];
+  (state as any)._skipEmptyHistory = true;
 
   state.chatSending = true;
   state.lastError = null;
@@ -272,6 +306,7 @@ export async function sendChatMessage(
     return runId;
   } catch (err) {
     const error = String(err);
+    (state as any)._skipEmptyHistory = false;
     state.chatRunId = null;
     state.chatStream = null;
     state.chatStreamStartedAt = null;
@@ -318,6 +353,10 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
   if (!payload) {
     return null;
   }
+
+  // P4 事件收敛: 终态事件先归档到全局 store，确保跨 session 事件不丢失
+  globalChatEventStore.record(payload);
+
   if (payload.sessionKey !== state.sessionKey) {
     return null;
   }

@@ -33,8 +33,6 @@ func NormalizeProviderID(provider string) string {
 		return "zai"
 	case "openacosmi-zen":
 		return "openacosmi"
-	case "qwen":
-		return "qwen-portal"
 	case "kimi-code":
 		return "kimi-coding"
 	}

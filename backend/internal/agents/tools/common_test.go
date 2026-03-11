@@ -189,6 +189,22 @@ func TestFormatToolSummary(t *testing.T) {
 	}
 }
 
+func TestResolveToolDisplay_SpecializedConfigTool(t *testing.T) {
+	d := ResolveToolDisplay("browser_config", map[string]any{
+		"action":   "set",
+		"baseHash": "hash-123",
+	})
+	if d.Title != "Browser Config" {
+		t.Errorf("title = %q", d.Title)
+	}
+	if d.Verb != "set" {
+		t.Errorf("verb = %q", d.Verb)
+	}
+	if d.Detail != "hash-123" {
+		t.Errorf("detail = %q", d.Detail)
+	}
+}
+
 // ---------- callid.go ----------
 
 func TestSanitizeToolCallID_Strict(t *testing.T) {

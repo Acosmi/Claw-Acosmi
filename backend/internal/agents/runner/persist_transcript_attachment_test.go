@@ -27,6 +27,8 @@ func TestPersistToTranscript_WithAttachments(t *testing.T) {
 		SessionID:   sessionID,
 		SessionFile: sessionFile,
 		Prompt:      "look at this image",
+		Provider:    "anthropic",
+		ModelID:     "claude-sonnet-4-5",
 		Attachments: []session.ContentBlock{
 			{
 				Type:     "image",
@@ -53,7 +55,13 @@ func TestPersistToTranscript_WithAttachments(t *testing.T) {
 	}
 
 	log := slog.Default()
-	r.persistToTranscript(params, messages, log)
+	r.persistToTranscript(params, messages, nil, llmclient.UsageInfo{
+		InputTokens:      120,
+		OutputTokens:     45,
+		CacheReadTokens:  30,
+		CacheWriteTokens: 10,
+		TotalTokens:      205,
+	}, map[string]int{"view_image": 2}, log)
 
 	// 读取 transcript 验证
 	entries, err := mgr.LoadSessionMessages(sessionID, sessionFile)
@@ -103,6 +111,34 @@ func TestPersistToTranscript_WithAttachments(t *testing.T) {
 		t.Fatalf("expected third block type=document, got %q", blockType)
 	}
 
+	assistantEntry := entries[len(entries)-1]
+	if provider, _ := assistantEntry["provider"].(string); provider != "anthropic" {
+		t.Fatalf("expected assistant provider=anthropic, got %q", provider)
+	}
+	if model, _ := assistantEntry["model"].(string); model != "claude-sonnet-4-5" {
+		t.Fatalf("expected assistant model=claude-sonnet-4-5, got %q", model)
+	}
+	usage, ok := assistantEntry["usage"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected assistant usage map, got %T", assistantEntry["usage"])
+	}
+	if cacheRead, _ := usage["cache_read_input_tokens"].(float64); int(cacheRead) != 30 {
+		t.Fatalf("expected assistant cache_read_input_tokens=30, got %v", usage["cache_read_input_tokens"])
+	}
+	if cacheWrite, _ := usage["cache_creation_input_tokens"].(float64); int(cacheWrite) != 10 {
+		t.Fatalf("expected assistant cache_creation_input_tokens=10, got %v", usage["cache_creation_input_tokens"])
+	}
+	if total, _ := usage["total_tokens"].(float64); int(total) != 205 {
+		t.Fatalf("expected assistant total_tokens=205, got %v", usage["total_tokens"])
+	}
+	toolCalls, ok := assistantEntry["toolCalls"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected assistant toolCalls map, got %T", assistantEntry["toolCalls"])
+	}
+	if count, _ := toolCalls["view_image"].(float64); int(count) != 2 {
+		t.Fatalf("expected assistant toolCalls.view_image=2, got %v", toolCalls["view_image"])
+	}
+
 	// 清理
 	os.Remove(sessionFile)
 }
@@ -123,6 +159,8 @@ func TestPersistToTranscript_NoAttachments(t *testing.T) {
 		SessionID:   sessionID,
 		SessionFile: sessionFile,
 		Prompt:      "hello",
+		Provider:    "openai",
+		ModelID:     "gpt-5",
 	}
 
 	messages := []llmclient.ChatMessage{
@@ -131,7 +169,10 @@ func TestPersistToTranscript_NoAttachments(t *testing.T) {
 	}
 
 	log := slog.Default()
-	r.persistToTranscript(params, messages, log)
+	r.persistToTranscript(params, messages, nil, llmclient.UsageInfo{
+		InputTokens:  11,
+		OutputTokens: 7,
+	}, nil, log)
 
 	entries, err := mgr.LoadSessionMessages(sessionID, sessionFile)
 	if err != nil {

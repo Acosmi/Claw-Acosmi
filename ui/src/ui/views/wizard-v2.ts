@@ -1,36 +1,88 @@
 import { html, nothing } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import type { AppViewState } from "../app-view-state.ts";
-import { type WizardProvider, mergeWithUI, FALLBACK_PROVIDERS } from "./wizard-v2-providers.ts";
+import type { ConfigSnapshot } from "../types.ts";
+import { needsInitialSetup } from "../controllers/config.ts";
+import { normalizeBasePath } from "../navigation.ts";
+import { type WizardProvider, mergeWithUI, getFallbackProviders } from "./wizard-v2-providers.ts";
 
 // 动态 provider 列表（会话级缓存，首次打开时从后端获取）
 let providers: WizardProvider[] = [];
+type WizardSkillGroupDef = {
+   key: string;
+   defaultOn: boolean;
+   tools: string[];
+};
+let skillGroups: WizardSkillGroupDef[] = [];
+type WizardMode = "setup" | "recovery";
+type WizardStepKey =
+   | "welcome"
+   | "primary"
+   | "fallback"
+   | "skills"
+   | "channels"
+   | "subagents"
+   | "memory"
+   | "security"
+   | "done";
+type WizardStepDef = {
+   key: WizardStepKey;
+   label: string;
+};
+type WizardRecoveryBackupEntry = {
+   index: number;
+   path: string;
+   size: number;
+   modTime: string;
+   valid: boolean;
+};
+type WizardCompletionKind = "setup" | "recovery-reconfigure" | "recovery-restore";
 
 // ─── Constants & Types ───
 
-const STEPS = [
-   "欢迎",
-   "主模型",
-   "备用模型",
-   "技能",
-   "频道",
-   "子智能体",
-   "记忆系统",
-   "安全级别",
-   "完成"
+const SETUP_STEPS: WizardStepDef[] = [
+   { key: "welcome", label: "欢迎" },
+   { key: "primary", label: "主模型" },
+   { key: "fallback", label: "备用模型" },
+   { key: "skills", label: "技能" },
+   { key: "channels", label: "频道" },
+   { key: "subagents", label: "子智能体" },
+   { key: "memory", label: "记忆系统" },
+   { key: "security", label: "安全与设置" },
+   { key: "done", label: "完成" },
 ];
 
-
+const RECOVERY_STEPS: WizardStepDef[] = [
+   { key: "welcome", label: "恢复" },
+   { key: "primary", label: "最小配置" },
+   { key: "done", label: "完成" },
+];
 
 // Local prototype state (isolated from main app state for safety)
 let stepIndex = 0;
 let primaryConfig: Record<string, string> = {};
 let fallbackConfig: Record<string, string> = {};
+let wizardMode: WizardMode = "setup";
+let recoveryBackups: WizardRecoveryBackupEntry[] = [];
+let recoveryBackupsLoading = false;
+let recoveryRestoreError: string | null = null;
+let openSecuritySettingsAfterFinish = false;
+let completionKind: WizardCompletionKind = "setup";
+
+const DEFAULT_MEMORY_CONFIG = {
+   enableVector: false,
+   hostingType: "local",
+   apiEndpoint: "",
+   llmProvider: "",
+   llmModel: "",
+   llmApiKey: "",
+   llmBaseUrl: "",
+};
+const DEFAULT_SECURITY_LEVEL = "sandboxed";
 
 // Mock states for UI interactivity
 let securityAck = false;
-// D8 derivation: skill groups from capability tree WizardGroups
-let selectedSkills: Record<string, boolean> = { fs: true, runtime: true, ui: true, web: true, memory: true, sessions: true, system: false, messaging: false };
+let selectedSkills: Record<string, boolean> = {};
 let channelConfig: any = {
    feishu: { appId: "", appSecret: "" },
    wecom: { appId: "", appSecret: "" },
@@ -38,44 +90,297 @@ let channelConfig: any = {
    telegram: { botToken: "" }
 };
 let subAgentsConfig: Record<string, { enabled: boolean }> = {};
-let memoryConfig = { enableVector: false, hostingType: "local", apiEndpoint: "", llmProvider: "", llmModel: "", llmApiKey: "", llmBaseUrl: "" };
-let securityLevelConfig = "allowlist"; // Default
+let memoryConfig = { ...DEFAULT_MEMORY_CONFIG };
+let securityLevelConfig = DEFAULT_SECURITY_LEVEL;
 let isRestarting = false;
 let restartProgress = 0;
+let stepTransitioning = false;
 let providerSelections: Record<string, { model: string, authMode: string }> = {}; // Store selected model/authMode per provider
 let customBaseUrls: Record<string, string> = {}; // Store base URLs for custom providers
 let pendingOauthSelection: string | null = null; // Track which provider is waiting for app selection
 // Device Code OAuth state
 let deviceCodeState: Record<string, { userCode: string, verificationUri: string, sessionId: string, polling: boolean, error?: string }> = {};
 
+const FALLBACK_SKILL_GROUPS: WizardSkillGroupDef[] = [
+   { key: "fs", defaultOn: true, tools: ["read", "write", "list_dir", "apply_patch"] },
+   { key: "runtime", defaultOn: true, tools: ["exec"] },
+   { key: "ui", defaultOn: true, tools: ["canvas"] },
+   { key: "web", defaultOn: true, tools: ["browser", "web_search", "web_fetch"] },
+   { key: "memory", defaultOn: true, tools: ["memory_search", "memory_get"] },
+   { key: "sessions", defaultOn: true, tools: ["sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"] },
+   { key: "ai", defaultOn: true, tools: ["image"] },
+   { key: "system", defaultOn: true, tools: ["nodes", "cron", "gateway"] },
+   { key: "messaging", defaultOn: true, tools: ["message"] },
+];
+
+const SKILL_GROUP_META: Record<string, { name: string; icon: string; desc: string }> = {
+   fs: { name: "文件系统", icon: "📁", desc: "读取、写入、列目录与补丁应用" },
+   runtime: { name: "命令执行", icon: "⚡", desc: "终端命令与运行时控制" },
+   ui: { name: "画布", icon: "🖼️", desc: "画布展示与界面交互" },
+   web: { name: "网页与浏览器", icon: "🌐", desc: "搜索、抓取与浏览器自动化" },
+   memory: { name: "记忆调用", icon: "🧠", desc: "长期记忆搜索与读取" },
+   sessions: { name: "会话管理", icon: "💬", desc: "查看、发送和派生会话" },
+   ai: { name: "多模态 AI", icon: "🧩", desc: "图像理解等多模态能力" },
+   system: { name: "系统管理", icon: "⚙️", desc: "节点、定时任务与网关控制" },
+   messaging: { name: "消息推送", icon: "📤", desc: "主动发送消息到外部频道" },
+};
+
 // ─── Controller functions ───
 
 const DRAFT_KEY = "openacosmi_wizard_v2_draft";
 const DRAFT_RESUME_KEY = "openacosmi_wizard_v2_resume";
 
+function normalizeWizardSecurityLevel(value: unknown): string {
+   switch (value) {
+      case "deny":
+      case "allowlist":
+      case "sandboxed":
+      case "full":
+         return value;
+      default:
+         return DEFAULT_SECURITY_LEVEL;
+   }
+}
+
+function publicAssetUrl(basePath: string, assetPath: string): string {
+   const base = normalizeBasePath(basePath);
+   return base ? `${base}${assetPath}` : assetPath;
+}
+
+function getWizardSteps(): WizardStepDef[] {
+   return wizardMode === "recovery" ? RECOVERY_STEPS : SETUP_STEPS;
+}
+
+function clampWizardStepIndex(): void {
+   const steps = getWizardSteps();
+   stepIndex = Math.min(stepIndex, Math.max(steps.length - 1, 0));
+}
+
+function clearWizardDraftStorage(): void {
+   try {
+      localStorage.removeItem(DRAFT_KEY);
+      localStorage.removeItem(DRAFT_RESUME_KEY);
+   } catch { }
+}
+
+function hasValidRecoveryBackup(entries: WizardRecoveryBackupEntry[] | null | undefined): boolean {
+   return Array.isArray(entries) && entries.some((entry) => entry.valid);
+}
+
+function hasRecoveryIssues(snapshot: Pick<ConfigSnapshot, "valid" | "issues"> | null | undefined): boolean {
+   if (snapshot?.valid === false) {
+      return true;
+   }
+   return Array.isArray(snapshot?.issues) && snapshot.issues.length > 0;
+}
+
+export function resolveWizardV2Mode(
+   snapshot: ConfigSnapshot | null | undefined,
+   opts?: {
+      onboarding?: boolean;
+      recoveryBackups?: WizardRecoveryBackupEntry[] | null;
+      draftMode?: WizardMode | null;
+   },
+): WizardMode {
+   if (opts?.onboarding) {
+      return "setup";
+   }
+   if (hasRecoveryIssues(snapshot)) {
+      return "recovery";
+   }
+   if (snapshot?.exists === false) {
+      return hasValidRecoveryBackup(opts?.recoveryBackups) ? "recovery" : "setup";
+   }
+   if (needsInitialSetup(snapshot) && hasValidRecoveryBackup(opts?.recoveryBackups)) {
+      return "recovery";
+   }
+   return opts?.draftMode === "recovery" ? "recovery" : "setup";
+}
+
+function describeRecoveryHints(snapshot: ConfigSnapshot | null | undefined): string[] {
+   const hints: string[] = [];
+   if (snapshot?.exists === false) {
+      hints.push("未检测到当前配置文件。");
+   }
+   if (snapshot?.valid === false) {
+      hints.push("当前配置无法解析或内容已损坏。");
+   }
+   const issues = Array.isArray(snapshot?.issues) ? snapshot.issues : [];
+   for (const issue of issues.slice(0, 2)) {
+      if (!issue?.message) {
+         continue;
+      }
+      const path = typeof issue.path === "string" && issue.path.trim().length > 0 ? `${issue.path}: ` : "";
+      hints.push(`${path}${issue.message}`);
+   }
+   if (hints.length === 0 && hasValidRecoveryBackup(recoveryBackups)) {
+      hints.push("检测到历史可用备份，可直接回滚到最近一次可用配置。");
+   }
+   if (hints.length === 0) {
+      hints.push("当前配置不可继续使用，建议先恢复到最小可用状态。");
+   }
+   return hints;
+}
+
+function resolveWizardSkillGroups(): WizardSkillGroupDef[] {
+   return skillGroups.length > 0 ? skillGroups : FALLBACK_SKILL_GROUPS;
+}
+
+function defaultSelectedSkillsFromGroups(): Record<string, boolean> {
+   const next: Record<string, boolean> = {};
+   for (const group of resolveWizardSkillGroups()) {
+      next[group.key] = group.defaultOn;
+   }
+   return next;
+}
+
+function mergeSelectedSkillsWithGroups(existing: Record<string, boolean> | null | undefined): Record<string, boolean> {
+   const merged = defaultSelectedSkillsFromGroups();
+   if (!existing) {
+      return merged;
+   }
+   for (const group of resolveWizardSkillGroups()) {
+      if (typeof existing[group.key] === "boolean") {
+         merged[group.key] = existing[group.key];
+      }
+   }
+   return merged;
+}
+
+export function shouldResumeWizardV2Draft(
+   state: Pick<AppViewState, "onboarding">,
+   opts?: { resumeDraft?: boolean },
+): boolean {
+   if (opts?.resumeDraft === true) {
+      return true;
+   }
+   if (state.onboarding) {
+      return false;
+   }
+   return localStorage.getItem(DRAFT_RESUME_KEY) === "1";
+}
+
+async function ensureWizardSkillGroups(state: AppViewState): Promise<void> {
+   if (skillGroups.length > 0 || !state.client) {
+      return;
+   }
+   try {
+      const res = await state.client.request<{ groups?: WizardSkillGroupDef[] }>("wizard.v2.skill-groups.list", {});
+      const groups = Array.isArray(res?.groups) ? res.groups : [];
+      skillGroups = groups.length > 0 ? groups : FALLBACK_SKILL_GROUPS;
+   } catch {
+      skillGroups = FALLBACK_SKILL_GROUPS;
+   }
+}
+
+async function loadWizardRecoveryBackups(state: AppViewState): Promise<void> {
+   recoveryBackupsLoading = false;
+   recoveryRestoreError = null;
+   recoveryBackups = [];
+   if (!state.client) {
+      return;
+   }
+   recoveryBackupsLoading = true;
+   try {
+      const res = await state.client.request<{ backups?: WizardRecoveryBackupEntry[] }>("system.backup.list", {});
+      recoveryBackups = Array.isArray(res?.backups) ? res.backups : [];
+   } catch {
+      recoveryBackups = [];
+   } finally {
+      recoveryBackupsLoading = false;
+   }
+}
+
+function finalizeWizardRestart(state: AppViewState): void {
+   const interval = setInterval(() => {
+      restartProgress += Math.floor(Math.random() * 15) + 5;
+      if (restartProgress >= 100) {
+         restartProgress = 100;
+         isRestarting = false;
+         stepTransitioning = false;
+         clearInterval(interval);
+         clearWizardDraftStorage();
+      }
+      state.requestUpdate();
+   }, 300);
+}
+
+async function runWizardRestartSequence(
+   state: AppViewState,
+   task: () => Promise<unknown>,
+): Promise<void> {
+   isRestarting = true;
+   restartProgress = 0;
+   state.requestUpdate();
+
+   try {
+      restartProgress = 20;
+      state.requestUpdate();
+
+      const timeoutPromise = new Promise((resolve) =>
+         setTimeout(() => resolve({ ok: true, timeout: true }), 5000),
+      );
+      await Promise.race([
+         task().catch(() => ({ ok: true, disconnected: true })),
+         timeoutPromise,
+      ]);
+
+      restartProgress = 60;
+      state.requestUpdate();
+   } catch (err) {
+      console.warn("wizard restart flow error:", err);
+      restartProgress = 60;
+      state.requestUpdate();
+   }
+
+   finalizeWizardRestart(state);
+}
+
+function exitOnboardingMode(state: AppViewState): void {
+   state.onboarding = false;
+   if (typeof window === "undefined") {
+      return;
+   }
+   const url = new URL(window.location.href);
+   if (!url.searchParams.has("onboarding")) {
+      return;
+   }
+   url.searchParams.delete("onboarding");
+   window.history.replaceState({}, "", url.toString());
+}
+
 export function saveWizardV2Draft(): void {
    const draft = {
+      wizardMode,
       stepIndex, primaryConfig, fallbackConfig, securityAck,
       selectedSkills, channelConfig, subAgentsConfig, memoryConfig,
-      securityLevelConfig, providerSelections, customBaseUrls
+      securityLevelConfig, providerSelections, customBaseUrls,
+      openSecuritySettingsAfterFinish,
    };
    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
 }
 
 function resetWizardV2State(): void {
+   stepTransitioning = false;
    stepIndex = 0;
+   wizardMode = "setup";
    primaryConfig = {};
    fallbackConfig = {};
    securityAck = false;
-   selectedSkills = { fs: true, runtime: true, ui: true, web: true, memory: true, sessions: true, system: false, messaging: false };
+   selectedSkills = defaultSelectedSkillsFromGroups();
    channelConfig = { feishu: { appId: "", appSecret: "" }, wecom: { appId: "", appSecret: "" }, dingtalk: { appKey: "", appSecret: "" }, telegram: { botToken: "" } };
    subAgentsConfig = {};
-   memoryConfig = { enableVector: false, hostingType: "local", apiEndpoint: "", llmProvider: "", llmModel: "", llmApiKey: "", llmBaseUrl: "" };
-   securityLevelConfig = "allowlist";
+   memoryConfig = { ...DEFAULT_MEMORY_CONFIG };
+   securityLevelConfig = DEFAULT_SECURITY_LEVEL;
    providerSelections = {};
    customBaseUrls = {};
    pendingOauthSelection = null;
    deviceCodeState = {};
+   recoveryBackups = [];
+   recoveryBackupsLoading = false;
+   recoveryRestoreError = null;
+   openSecuritySettingsAfterFinish = false;
+   completionKind = "setup";
 }
 
 function ensureProviderSelections(): void {
@@ -87,51 +392,64 @@ function ensureProviderSelections(): void {
 }
 
 export async function startWizardV2(state: AppViewState, opts?: { resumeDraft?: boolean }): Promise<void> {
+   let draftMode: WizardMode | null = null;
+
    // 从后端动态获取 provider 目录（会话级缓存）
    if (providers.length === 0) {
       try {
          const res = await state.client!.request<any>("wizard.v2.providers.list", {});
-         providers = res?.providers?.length ? mergeWithUI(res.providers) : FALLBACK_PROVIDERS;
+         providers = res?.providers?.length ? mergeWithUI(res.providers, state.basePath ?? "") : getFallbackProviders(state.basePath ?? "");
       } catch {
-         providers = FALLBACK_PROVIDERS;
+         providers = getFallbackProviders(state.basePath ?? "");
       }
    }
+   await ensureWizardSkillGroups(state);
 
    // 默认全新启动向导，避免旧密钥/配置自动回填。
    // 仅在显式 resumeDraft=true 时恢复草稿。
-   const shouldResumeDraft = opts?.resumeDraft === true || localStorage.getItem(DRAFT_RESUME_KEY) === "1";
+   const shouldResumeDraft = shouldResumeWizardV2Draft(state, opts);
    const saved = shouldResumeDraft ? localStorage.getItem(DRAFT_KEY) : null;
    if (saved) {
       try {
          const draft = JSON.parse(saved);
          stepIndex = draft.stepIndex || 0;
+         draftMode = draft.wizardMode === "recovery" ? "recovery" : "setup";
          primaryConfig = draft.primaryConfig || {};
          fallbackConfig = draft.fallbackConfig || {};
          securityAck = draft.securityAck ?? false;
-         selectedSkills = draft.selectedSkills || { fs: true, runtime: true, ui: true, web: true, memory: true, sessions: true, system: false, messaging: false };
+         selectedSkills = mergeSelectedSkillsWithGroups(draft.selectedSkills);
          channelConfig = draft.channelConfig || { feishu: { appId: "", appSecret: "" }, wecom: { appId: "", appSecret: "" }, dingtalk: { appKey: "", appSecret: "" }, telegram: { botToken: "" } };
          subAgentsConfig = draft.subAgentsConfig || {};
-         memoryConfig = draft.memoryConfig || { enableVector: false, hostingType: "local", apiEndpoint: "", llmProvider: "", llmModel: "", llmApiKey: "", llmBaseUrl: "" };
-         securityLevelConfig = draft.securityLevelConfig || "allowlist";
+         memoryConfig = { ...DEFAULT_MEMORY_CONFIG, ...(draft.memoryConfig || {}) };
+         securityLevelConfig = normalizeWizardSecurityLevel(draft.securityLevelConfig);
          providerSelections = draft.providerSelections || {};
          customBaseUrls = draft.customBaseUrls || {};
+         openSecuritySettingsAfterFinish = draft.openSecuritySettingsAfterFinish === true;
       } catch (e) {
          console.error("Failed to parse wizard draft", e);
          resetWizardV2State();
          ensureProviderSelections();
-         try {
-            localStorage.removeItem(DRAFT_KEY);
-            localStorage.removeItem(DRAFT_RESUME_KEY);
-         } catch { }
+         clearWizardDraftStorage();
       }
    } else {
       resetWizardV2State();
       ensureProviderSelections();
-      try {
-         localStorage.removeItem(DRAFT_KEY);
-         localStorage.removeItem(DRAFT_RESUME_KEY);
-      } catch { }
+      clearWizardDraftStorage();
    }
+
+    await loadWizardRecoveryBackups(state);
+
+   wizardMode = resolveWizardV2Mode(state.configSnapshot, {
+      onboarding: state.onboarding,
+      recoveryBackups,
+      draftMode,
+   });
+   completionKind = wizardMode === "recovery" ? "recovery-reconfigure" : "setup";
+   if (wizardMode === "recovery") {
+      securityAck = true;
+      openSecuritySettingsAfterFinish = false;
+   }
+   clampWizardStepIndex();
 
    isRestarting = false;
    restartProgress = 0;
@@ -144,95 +462,80 @@ export async function startWizardV2(state: AppViewState, opts?: { resumeDraft?: 
 }
 
 export function closeWizardV2(state: AppViewState, saveDraft: boolean = false): void {
+   stepTransitioning = false;
    if (saveDraft) {
       saveWizardV2Draft();
       try { localStorage.setItem(DRAFT_RESUME_KEY, "1"); } catch { }
    } else {
-      try {
-         localStorage.removeItem(DRAFT_KEY);
-         localStorage.removeItem(DRAFT_RESUME_KEY);
-      } catch { }
+      clearWizardDraftStorage();
    }
+   exitOnboardingMode(state);
    state.wizardV2Open = false;
    state.requestUpdate();
 }
 
 async function nextStep(state: AppViewState) {
-   if (stepIndex === STEPS.length - 2) {
+   const steps = getWizardSteps();
+   if (stepTransitioning) {
+      return;
+   }
+   stepTransitioning = true;
+   if (stepIndex === steps.length - 2) {
       // 进入最后"完成"步骤前，先将配置发送到后端持久化
       stepIndex++;
-      isRestarting = true;
-      restartProgress = 0;
       state.requestUpdate();
 
-      try {
-         // 构建 WizardV2Payload — 与后端 WizardV2Payload 结构对齐
-         const payload = {
-            primaryConfig,
-            fallbackConfig,
-            providerSelections,
-            customBaseUrls,
-            securityAck,
-            selectedSkills,
-            channelConfig,
-            subAgentsConfig,
-            memoryConfig,
-            securityLevelConfig
-         };
+      completionKind = wizardMode === "recovery" ? "recovery-reconfigure" : "setup";
 
-         // 调用后端 wizard.v2.apply RPC
-         // 后端流程: parsePayload → convertToConfig → WriteConfigFile(自动 Keyring 脱敏) → ScheduleRestart(热重载)
-         // 注意: 热重载会断开 WS，所以用 timeout 兜底 — 配置在重启前已落盘
-         restartProgress = 20;
-         state.requestUpdate();
+      // 构建 WizardV2Payload — 与后端 WizardV2Payload 结构对齐
+      const payload = {
+         primaryConfig,
+         fallbackConfig,
+         providerSelections,
+         customBaseUrls,
+         securityAck: wizardMode === "recovery" ? true : securityAck,
+         selectedSkills,
+         channelConfig,
+         subAgentsConfig,
+         memoryConfig,
+         securityLevelConfig
+      };
 
-         const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ ok: true, timeout: true }), 5000));
-         const res = await Promise.race([
-            state.client!.request<any>("wizard.v2.apply", payload).catch(() => ({ ok: true, disconnected: true })),
-            timeoutPromise
-         ]) as any;
-
-         // 无论是正常返回、超时还是 WS 断开，配置都已写入后端 — 继续完成动画
-         restartProgress = 60;
-         state.requestUpdate();
-
-         const interval = setInterval(() => {
-            restartProgress += Math.floor(Math.random() * 15) + 5;
-            if (restartProgress >= 100) {
-               restartProgress = 100;
-               isRestarting = false;
-               clearInterval(interval);
-               // 清除草稿（配置已持久化到后端）
-               try {
-                  localStorage.removeItem(DRAFT_KEY);
-                  localStorage.removeItem(DRAFT_RESUME_KEY);
-               } catch { }
-            }
-            state.requestUpdate();
-         }, 300);
-      } catch (err: any) {
-         // 兜底: 即使出错也视为成功（配置可能已保存，只是 WS 断了）
-         console.warn("wizard.v2.apply error (config may still be saved):", err);
-         restartProgress = 60;
-         state.requestUpdate();
-         const interval = setInterval(() => {
-            restartProgress += Math.floor(Math.random() * 15) + 5;
-            if (restartProgress >= 100) {
-               restartProgress = 100;
-               isRestarting = false;
-               clearInterval(interval);
-               try {
-                  localStorage.removeItem(DRAFT_KEY);
-                  localStorage.removeItem(DRAFT_RESUME_KEY);
-               } catch { }
-            }
-            state.requestUpdate();
-         }, 300);
-      }
-   } else if (stepIndex < STEPS.length - 1) {
+      await runWizardRestartSequence(state, async () => {
+         await state.client!.request<any>("wizard.v2.apply", payload);
+      });
+   } else if (stepIndex < steps.length - 1) {
       stepIndex++;
       state.requestUpdate();
+      window.setTimeout(() => {
+         stepTransitioning = false;
+      }, 220);
+      return;
    }
+   stepTransitioning = false;
+}
+
+async function restoreLatestRecoveryBackup(state: AppViewState): Promise<void> {
+   if (stepTransitioning || recoveryBackupsLoading || !state.client) {
+      return;
+   }
+   const backup = recoveryBackups.find((entry) => entry.valid);
+   if (!backup) {
+      recoveryRestoreError = "未找到可直接恢复的有效备份，请继续手动补齐最小配置。";
+      state.requestUpdate();
+      return;
+   }
+
+   stepTransitioning = true;
+   recoveryRestoreError = null;
+   completionKind = "recovery-restore";
+   stepIndex = getWizardSteps().length - 1;
+   state.requestUpdate();
+
+   await runWizardRestartSequence(state, async () => {
+      await state.client!.request("system.backup.restore", { index: backup.index });
+      await state.client!.request("system.restart", { reason: "wizard.recovery.restore", delayMs: 100 });
+   });
 }
 
 function prevStep(state: AppViewState) {
@@ -251,6 +554,16 @@ function getDefaultMemoryModel(provider: string): string {
       case "openai": return "gpt-4o-mini";
       case "anthropic": return "claude-haiku-4-5-20251001";
       case "ollama": return "llama3.2";
+      default: return "";
+   }
+}
+
+function getDefaultMemoryBaseUrl(provider: string): string {
+   switch (provider) {
+      case "deepseek": return "https://api.deepseek.com";
+      case "openai": return "https://api.openai.com/v1";
+      case "anthropic": return "https://api.anthropic.com";
+      case "ollama": return "http://localhost:11434";
       default: return "";
    }
 }
@@ -471,15 +784,28 @@ function renderProviders(state: AppViewState, configMap: Record<string, string>,
 export function renderWizardV2(state: AppViewState) {
    if (!state.wizardV2Open) return nothing;
 
-   const currentStepName = STEPS[stepIndex];
+   const steps = getWizardSteps();
+   const currentStepKey = steps[stepIndex]?.key ?? steps[0]?.key ?? "welcome";
+   const logoSrc = publicAssetUrl(state.basePath ?? "", "/logo1.png");
+   const recoveryHints = describeRecoveryHints(state.configSnapshot);
+   const latestValidBackup = recoveryBackups.find((entry) => entry.valid) ?? null;
 
    // Conditionally disable the primary next button if requirement not met
    let canNext = true;
-   if (stepIndex === 0) { // Welcome
+   if (currentStepKey === "welcome" && wizardMode === "setup") {
       canNext = securityAck;
-   } else if (stepIndex === 1) { // Primary Model
+   } else if (currentStepKey === "primary") {
       canNext = Object.values(primaryConfig).some(val => val.trim().length > 0);
    }
+
+   const nextButtonLabel =
+      currentStepKey === "security"
+         ? "应用配置"
+         : currentStepKey === "primary" && wizardMode === "recovery"
+            ? "覆盖当前坏配置"
+            : stepIndex === steps.length - 2
+               ? "完成"
+               : "下一步";
 
    return html`
     <div class="wizard-v2-overlay">
@@ -488,7 +814,7 @@ export function renderWizardV2(state: AppViewState) {
         <!-- Header / Progress Bar -->
         <div class="wizard-v2-header">
            <div class="wizard-v2-step-indicator">
-              ${STEPS.map((s, idx) => {
+              ${steps.map((step, idx) => {
       const isActive = idx === stepIndex;
       const isCompleted = idx < stepIndex;
       let cls = "wizard-v2-step pending";
@@ -498,9 +824,9 @@ export function renderWizardV2(state: AppViewState) {
       return html`
                   <div class="${cls}">
                     <div class="wizard-v2-step-circle">${isCompleted ? "✓" : idx + 1}</div>
-                    <div class="wizard-v2-step-label">${s}</div>
+                    <div class="wizard-v2-step-label">${step.label}</div>
                   </div>
-                  ${idx < STEPS.length - 1 ? html`<div class="wizard-v2-step-connector ${isCompleted ? 'completed' : ''}"></div>` : nothing}
+                  ${idx < steps.length - 1 ? html`<div class="wizard-v2-step-connector ${isCompleted ? 'completed' : ''}"></div>` : nothing}
                 `;
    })}
            </div>
@@ -509,70 +835,129 @@ export function renderWizardV2(state: AppViewState) {
         <!-- Body / Content -->
         <div class="wizard-v2-body">
             ${keyed(stepIndex, html`
-            ${stepIndex === 0 ? html`
-              <!-- 1. 欢迎页 / 安全须知 -->
-              <div style="text-align:center; margin-bottom: 24px;">
-                <img src="/logo1.png" alt="Crab Claw（蟹爪） Logo" style="width: 80px; height: auto;" />
-              </div>
-              <h2 class="wizard-v2-title" style="text-align:center; margin-top: 0; margin-bottom: 8px;">欢迎使用 Crab Claw（蟹爪）</h2>
-              <p class="wizard-v2-subtitle" style="text-align:center; margin-top: 0; margin-bottom: 24px;">由原 OpenClaw 重构升级的新一代安全智能体网关</p>
+            ${currentStepKey === "welcome" ? html`
+              ${wizardMode === "recovery" ? html`
+                <div style="text-align:center; margin-bottom: 24px;">
+                  <img src=${logoSrc} alt="Crab Claw（蟹爪） Logo" style="width: 80px; height: auto;" />
+                </div>
+                <h2 class="wizard-v2-title" style="text-align:center; margin-top: 0; margin-bottom: 8px;">恢复到可用配置</h2>
+                <p class="wizard-v2-subtitle" style="text-align:center; margin-top: 0; margin-bottom: 24px;">
+                  当前检测到配置缺失、损坏或不可继续使用。恢复模式会优先用最少步骤把系统拉回可用状态。
+                </p>
 
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; text-align: left;">
-                 <div style="background: #F8F9FA; padding: 12px 16px; border-radius: 8px; border: 1px solid #E4E7EB;">
-                    <div style="font-weight: 600; color: #1890FF; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;"><span>⚡</span> Rust+Go 混合架构</div>
-                    <div style="font-size: 13px; color: #5C6B77; line-height: 1.5;">极致性能体验，极低资源占用，即使是老旧低配硬件也能流畅运行无阻。</div>
-                 </div>
-                 <div style="background: #F8F9FA; padding: 12px 16px; border-radius: 8px; border: 1px solid #E4E7EB;">
-                    <div style="font-weight: 600; color: #52C41A; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;"><span>🧠</span> 字节开源级分布式记忆</div>
-                    <div style="font-size: 13px; color: #5C6B77; line-height: 1.5;">引入字节跳动同源 OpenViking 分布式文件记忆系统，打造 AI 的太虚永忆。</div>
-                 </div>
-                 <div style="background: #F8F9FA; padding: 12px 16px; border-radius: 8px; border: 1px solid #E4E7EB;">
-                    <div style="font-weight: 600; color: #FAAD14; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;"><span>🛡️</span> Rust 原生级沙箱</div>
-                    <div style="font-size: 13px; color: #5C6B77; line-height: 1.5;">自研 oa-sandbox 底层隔离引擎，深入操作系统内核切断风险外溢路径。</div>
-                 </div>
-                 <div style="background: #F8F9FA; padding: 12px 16px; border-radius: 8px; border: 1px solid #E4E7EB;">
-                    <div style="font-weight: 600; color: #F5222D; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;"><span>�</span> 4级安全防护制</div>
-                    <div style="font-size: 13px; color: #5C6B77; line-height: 1.5;">新增四级动态隔离审批制度，复杂指令拦截升级，确保风险完全处于掌控之中。</div>
-                 </div>
-                 <div style="background: #F8F9FA; padding: 12px 16px; border-radius: 8px; border: 1px solid #E4E7EB;">
-                    <div style="font-weight: 600; color: #722ED1; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;"><span>🏛️</span> 三级指挥体系</div>
-                    <div style="font-size: 13px; color: #5C6B77; line-height: 1.5;">严格遵守“用户 ➔ 主智能体(站长) ➔ 子智能体”的垂直管理与委托确认范式。</div>
-                 </div>
-                 <div style="background: #F8F9FA; padding: 12px 16px; border-radius: 8px; border: 1px solid #E4E7EB;">
-                    <div style="font-weight: 600; color: #13C2C2; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;"><span>📡</span> 异步队列与主动报告</div>
-                    <div style="font-size: 13px; color: #5C6B77; line-height: 1.5;">任务离线挂载，执行完毕后主动跨频道发送看板报告，不再需要傻傻等待。</div>
-                 </div>
-              </div>
-              
-              <div class="wizard-v2-provider-card" style="border-left: 4px solid #FF4D4F; background: #FFF1F0; text-align: left;">
-                 <h3 style="color:#FF4D4F; margin-top:0; font-size: 15px;">⚠️ 安全底线与知情同意</h3>
-                 <p style="color:#666; line-height: 1.6; font-size: 13px; margin-bottom: 12px;">
-                    本网关具备高度自动化执行能力。启动前请您必定知悉：<br/>
-                    • 授予权限后，AI 将能在授权范围内读取本地文件并执行代码环境操作；<br/>
-                    • 请务必将您的**敏感配置信息与密钥**远离 AI 所在的沙箱或操作目录；<br/>
-                    • 强烈建议在生产环境至少保持**标准白名单模式(Allowlist)**开启。
-                 </p>
-                 <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; font-size: 14px;">
-                    <input type="checkbox" id="v2-security-ack" .checked=${securityAck} @change=${(e: Event) => {
-            securityAck = (e.target as HTMLInputElement).checked;
-            state.requestUpdate();
-         }} />
-                    我已了解风险并愿意继续使用
-                 </label>
-              </div>
+                <div class="wizard-v2-provider-card" style="text-align:left; margin-bottom: 16px;">
+                  <h3 style="margin-top:0; margin-bottom:10px; font-size:15px;">恢复模式会做什么</h3>
+                  <div style="display:grid; gap:8px; color:#5C6B77; font-size:13px; line-height:1.6;">
+                    <div>1. 优先恢复最近一次可用配置（如果检测到有效备份）。</div>
+                    <div>2. 如果不能直接恢复，就只补最小必要配置。</div>
+                    <div>3. 恢复完成后会直接覆盖当前坏配置。</div>
+                  </div>
+                </div>
+
+                <div class="wizard-v2-provider-card" style="text-align:left; margin-bottom: 16px; border-left: 4px solid #FAAD14; background: #FFFBE6;">
+                  <h3 style="margin-top:0; margin-bottom:10px; font-size:15px; color:#D48806;">当前检测结果</h3>
+                  <div style="display:grid; gap:8px; color:#666; font-size:13px; line-height:1.6;">
+                    ${recoveryHints.map((hint) => html`<div>• ${hint}</div>`)}
+                  </div>
+                </div>
+
+                ${latestValidBackup ? html`
+                  <div class="wizard-v2-provider-card wizard-v2-provider-card-selected" style="text-align:left; margin-bottom: 16px;">
+                    <div style="display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+                      <div>
+                        <div style="font-weight:600; margin-bottom:6px;">恢复最近可用配置</div>
+                        <div style="font-size:13px; color:#666; line-height:1.6;">
+                          检测到最近一份有效备份，恢复后会直接覆盖当前坏配置并触发网关重载。<br/>
+                          备份时间：${latestValidBackup.modTime}
+                        </div>
+                      </div>
+                      <button
+                        class="wizard-v2-btn wizard-v2-btn-primary"
+                        ?disabled=${recoveryBackupsLoading || stepTransitioning}
+                        @click=${() => restoreLatestRecoveryBackup(state)}
+                      >
+                        直接恢复最近配置
+                      </button>
+                    </div>
+                  </div>
+                ` : html`
+                  <div class="wizard-v2-provider-card" style="text-align:left; margin-bottom: 16px;">
+                    <div style="font-weight:600; margin-bottom:6px;">没有可直接回滚的有效备份</div>
+                    <div style="font-size:13px; color:#666; line-height:1.6;">
+                      继续下一步，重新补齐主模型等最小必要配置。
+                    </div>
+                  </div>
+                `}
+
+                ${recoveryRestoreError ? html`
+                  <div class="wizard-v2-provider-card" style="text-align:left; margin-bottom: 16px; border-left: 4px solid #FF4D4F; background: #FFF1F0;">
+                    <div style="font-size:13px; color:#A8071A; line-height:1.6;">${recoveryRestoreError}</div>
+                  </div>
+                ` : nothing}
+
+                <div class="wizard-v2-provider-card" style="text-align:left; background:#F8F9FA;">
+                  <div style="font-weight:600; margin-bottom:6px;">安全与权限设置已移到设置层</div>
+                  <div style="font-size:13px; color:#666; line-height:1.6;">
+                    恢复流程只处理最小可用配置。详细安全级别、权限审批和高级策略，请在恢复完成后到“设置 &gt; 安全”调整。
+                  </div>
+                </div>
+              ` : html`
+                <div style="text-align:center; margin-bottom: 24px;">
+                  <img src=${logoSrc} alt="Crab Claw（蟹爪） Logo" style="width: 80px; height: auto;" />
+                </div>
+                <h2 class="wizard-v2-title" style="text-align:center; margin-top: 0; margin-bottom: 8px;">首次初始化 Crab Claw</h2>
+                <p class="wizard-v2-subtitle" style="text-align:center; margin-top: 0; margin-bottom: 24px;">
+                  本向导会帮助你完成最小可用配置。初始化完成后，详细安全和权限设置统一在设置层管理。
+                </p>
+
+                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; text-align: left;">
+                  <div style="background: #F8F9FA; padding: 12px 16px; border-radius: 8px; border: 1px solid #E4E7EB;">
+                    <div style="font-weight: 600; color: #1890FF; margin-bottom: 4px;">主模型</div>
+                    <div style="font-size: 13px; color: #5C6B77; line-height: 1.5;">先补齐一个可运行的主模型，确保系统能立即使用。</div>
+                  </div>
+                  <div style="background: #F8F9FA; padding: 12px 16px; border-radius: 8px; border: 1px solid #E4E7EB;">
+                    <div style="font-weight: 600; color: #52C41A; margin-bottom: 4px;">常用能力</div>
+                    <div style="font-size: 13px; color: #5C6B77; line-height: 1.5;">后续可按需接入备用模型、技能、频道与记忆能力。</div>
+                  </div>
+                  <div style="background: #F8F9FA; padding: 12px 16px; border-radius: 8px; border: 1px solid #E4E7EB;">
+                    <div style="font-weight: 600; color: #FAAD14; margin-bottom: 4px;">安全设置</div>
+                    <div style="font-size: 13px; color: #5C6B77; line-height: 1.5;">默认采用推荐安全配置；详细策略在“设置 &gt; 安全”中调整。</div>
+                  </div>
+                </div>
+
+                <div class="wizard-v2-provider-card" style="border-left: 4px solid #FAAD14; background: #FFFBE6; text-align: left;">
+                  <h3 style="color:#D48806; margin-top:0; font-size: 15px;">初始化前请确认</h3>
+                  <p style="color:#666; line-height: 1.6; font-size: 13px; margin-bottom: 12px;">
+                    • 本向导会把当前配置写入桌面应用；<br/>
+                    • API Key 等敏感信息请只填写你准备交给本机使用的配置；<br/>
+                    • 详细安全级别、权限审批与高级策略，完成后可到“设置 &gt; 安全”继续配置。
+                  </p>
+                  <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; font-size: 14px;">
+                     <input type="checkbox" id="v2-security-ack" .checked=${securityAck} @change=${(e: Event) => {
+               securityAck = (e.target as HTMLInputElement).checked;
+               state.requestUpdate();
+            }} />
+                     我已了解并准备开始初始化
+                  </label>
+                </div>
+              `}
             ` : nothing}
 
-            ${stepIndex === 1 ? html`
+            ${currentStepKey === "primary" ? html`
               <!-- 2. 系统主模型选择（必填） -->
-              <h2 class="wizard-v2-title">配置系统主模型 <span style="color:#FF4D4F; font-size:14px;">*必填</span></h2>
+              <h2 class="wizard-v2-title">
+                ${wizardMode === "recovery" ? "重新补齐最小可用主模型" : "配置系统主模型"} <span style="color:#FF4D4F; font-size:14px;">*必填</span>
+              </h2>
               <p class="wizard-v2-subtitle">
-                 所有主流 AI 服务商已预配置完成，您只需填入对应的 API Key 即可启用。<br/>
-                 <span class="wizard-v2-highlight">由于这是主节点系统，至少需要配置一个服务商作为骨干大脑。</span>
+                 ${wizardMode === "recovery"
+         ? html`恢复模式只要求补齐最小必要配置。选择一个可用主模型后，系统会直接覆盖当前坏配置。`
+         : html`所有主流 AI 服务商已预配置完成，您只需填入对应的 API Key 即可启用。<br/>
+                 <span class="wizard-v2-highlight">由于这是主节点系统，至少需要配置一个服务商作为骨干大脑。</span>`}
               </p>
               ${renderProviders(state, primaryConfig, true)}
             ` : nothing}
 
-            ${stepIndex === 2 ? html`
+            ${currentStepKey === "fallback" ? html`
               <!-- 3. 系统备用模型（选填） -->
               <h2 class="wizard-v2-title">配置系统备用模型 <span style="color:#999; font-size:14px;">(选填)</span></h2>
               <p class="wizard-v2-subtitle">
@@ -582,7 +967,7 @@ export function renderWizardV2(state: AppViewState) {
               ${renderProviders(state, fallbackConfig, false)}
             ` : nothing}
 
-            ${stepIndex === 3 ? html`
+            ${currentStepKey === "skills" ? html`
               <!-- 4. 技能 -->
               <h2 class="wizard-v2-title">技能池预置与加载</h2>
               
@@ -597,28 +982,27 @@ export function renderWizardV2(state: AppViewState) {
               <p class="wizard-v2-subtitle">系统检测到如下核心技能。如果有需要额外 API Key 的技能，请在下方填入。</p>
               
               <div class="wizard-v2-providers-grid">
-                 ${/* D8 derivation: skill groups from capability tree WizardGroups */[
-            { key: "fs", name: "文件系统", desc: "读取、写入、列目录 (read/write/list_dir)", icon: "📁" },
-            { key: "runtime", name: "命令执行", desc: "终端命令执行 (exec/bash)", icon: "⚡" },
-            { key: "ui", name: "画布", desc: "画布交互 (canvas)", icon: "🖼️" },
-            { key: "web", name: "网页与浏览器", desc: "搜索、抓取与浏览器 (browser/web_search/fetch)", icon: "🌐" },
-            { key: "memory", name: "记忆调用", desc: "搜索和获取长期记忆 (memory_*)", icon: "🧠" },
-            { key: "sessions", name: "会话管理", desc: "列出、发送、生成会话 (sessions_*)", icon: "💬" },
-            { key: "system", name: "系统管理", desc: "节点、定时任务与网关 (nodes/cron/gateway)", icon: "⚙️" },
-            { key: "messaging", name: "消息推送", desc: "主动发送消息到频道 (message)", icon: "📤" },
-         ].map(sg => html`
+                 ${resolveWizardSkillGroups().map((group) => {
+            const meta = SKILL_GROUP_META[group.key] ?? {
+               name: group.key,
+               icon: "🧩",
+               desc: group.tools.join(" / "),
+            };
+            const toolSummary = group.tools.length > 0 ? `(${group.tools.join(", ")})` : "";
+            return html`
                     <label class="wizard-v2-provider-card" style="display:flex; align-items:center; gap: 12px; cursor: pointer;">
-                       <input type="checkbox" .checked=${selectedSkills[sg.key] ?? false} @change=${(e: Event) => { selectedSkills[sg.key] = (e.target as HTMLInputElement).checked; state.requestUpdate(); }}>
+                       <input type="checkbox" .checked=${selectedSkills[group.key] ?? group.defaultOn} @change=${(e: Event) => { selectedSkills[group.key] = (e.target as HTMLInputElement).checked; state.requestUpdate(); }}>
                        <div>
-                         <div style="font-weight:600;">${sg.icon} ${sg.name}</div>
-                         <div style="font-size:12px; color:#888;">${sg.desc}</div>
+                         <div style="font-weight:600;">${meta.icon} ${meta.name}</div>
+                         <div style="font-size:12px; color:#888;">${meta.desc}${toolSummary ? ` ${toolSummary}` : ""}</div>
                        </div>
                     </label>
-                 `)}
+                 `;
+         })}
               </div>
             ` : nothing}
 
-            ${stepIndex === 4 ? html`
+            ${currentStepKey === "channels" ? html`
               <!-- 5. 频道 -->
               <h2 class="wizard-v2-title">接入通讯频道</h2>
               <p class="wizard-v2-subtitle">将 Crab Claw（蟹爪） 接入您的 IM 矩阵，让智能体主动触达业务一线。</p>
@@ -654,7 +1038,7 @@ export function renderWizardV2(state: AppViewState) {
               </div>
             ` : nothing}
 
-            ${stepIndex === 5 ? html`
+            ${currentStepKey === "subagents" ? html`
               <!-- 6. 子智能选择 (纯展示) -->
               <h2 class="wizard-v2-title">认识子智能体 (Sub-Agents) <span style="color:#999; font-size:14px;">(信息展示)</span></h2>
               <p class="wizard-v2-subtitle">
@@ -698,7 +1082,7 @@ export function renderWizardV2(state: AppViewState) {
               </div>
             ` : nothing}
 
-            ${stepIndex === 6 ? html`
+            ${currentStepKey === "memory" ? html`
               <!-- 7. 记忆系统 -->
               <h2 class="wizard-v2-title">配置记忆系统 <span style="color:#999; font-size:14px;">(选填 - 高级特性)</span></h2>
               <p class="wizard-v2-subtitle">
@@ -753,18 +1137,27 @@ export function renderWizardV2(state: AppViewState) {
 
               <!-- Bug#11: 记忆提取 LLM 配置 -->
               <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08);">
-                <h3 style="font-size:15px; font-weight:600; margin-bottom:8px;">记忆提取 LLM 配置 <span style="font-size:12px; color:#8C8C8C; font-weight:normal;">（可选 — 不填则使用关键词启发式提取）</span></h3>
-                <p style="font-size:13px; color:#8C8C8C; margin-bottom:12px;">配置独立的 LLM 用于从对话中自动提取和归类长期记忆。如不配置，系统将使用基于关键词的启发式提取（准确度较低但无需额外 API 费用）。</p>
+                <h3 style="font-size:15px; font-weight:600; margin-bottom:8px;">记忆提取 LLM 配置 <span style="font-size:12px; color:#8C8C8C; font-weight:normal;">（可选 — 不单独配置时默认跟随主模型）</span></h3>
+                <p style="font-size:13px; color:#8C8C8C; margin-bottom:12px;">可为记忆提取单独指定一套 LLM；如不单独配置，系统会默认复用主模型配置。只有在最终没有可用 LLM 时，才会退化到基于关键词的启发式提取。</p>
+                <div style="margin-bottom:12px; padding:10px 12px; border-radius:10px; border:1px solid rgba(250,173,20,0.35); background:rgba(250,173,20,0.08); color:#FAAD14; font-size:13px; line-height:1.5;">
+                  提示：默认使用主模型进行记忆分级提取；仅当你希望记忆提取走独立模型时，才需要在这里单独填写。
+                </div>
 
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
                   <div class="wizard-v2-provider-input-group">
                     <label>LLM Provider</label>
                     <select class="wizard-v2-input" .value=${memoryConfig.llmProvider} @change=${(e: Event) => {
             memoryConfig.llmProvider = (e.target as HTMLSelectElement).value;
-            if (!memoryConfig.llmModel) { memoryConfig.llmModel = getDefaultMemoryModel(memoryConfig.llmProvider); }
+            if (!memoryConfig.llmProvider) {
+               memoryConfig.llmModel = "";
+               memoryConfig.llmApiKey = "";
+               memoryConfig.llmBaseUrl = "";
+            } else if (!memoryConfig.llmModel) {
+               memoryConfig.llmModel = getDefaultMemoryModel(memoryConfig.llmProvider);
+            }
             state.requestUpdate();
          }}>
-                      <option value="">不配置（使用启发式提取）</option>
+                      <option value="">跟随主模型（默认）</option>
                       <option value="deepseek">DeepSeek</option>
                       <option value="openai">OpenAI</option>
                       <option value="anthropic">Anthropic</option>
@@ -777,11 +1170,11 @@ export function renderWizardV2(state: AppViewState) {
                   </div>
                   <div class="wizard-v2-provider-input-group">
                     <label>API Key</label>
-                    <input type="password" class="wizard-v2-input" placeholder="独立 API Key（可留空复用主 Agent 配置）" .value=${memoryConfig.llmApiKey} @input=${(e: Event) => { memoryConfig.llmApiKey = (e.target as HTMLInputElement).value; state.requestUpdate(); }} />
+                    <input type="password" class="wizard-v2-input" placeholder="独立 API Key（可留空复用主模型 / Provider 配置）" .value=${memoryConfig.llmApiKey} @input=${(e: Event) => { memoryConfig.llmApiKey = (e.target as HTMLInputElement).value; state.requestUpdate(); }} />
                   </div>
                   <div class="wizard-v2-provider-input-group">
-                    <label>Base URL</label>
-                    <input type="text" class="wizard-v2-input" placeholder="空=使用 provider 默认 URL" .value=${memoryConfig.llmBaseUrl} @input=${(e: Event) => { memoryConfig.llmBaseUrl = (e.target as HTMLInputElement).value; state.requestUpdate(); }} />
+                    <label>模型 URL 端点</label>
+                    <input type="text" class="wizard-v2-input" placeholder=${getDefaultMemoryBaseUrl(memoryConfig.llmProvider) || "空=跟随主模型或使用 provider 默认 URL"} .value=${memoryConfig.llmBaseUrl} @input=${(e: Event) => { memoryConfig.llmBaseUrl = (e.target as HTMLInputElement).value; state.requestUpdate(); }} />
                   </div>
                 </div>
               </div>
@@ -791,61 +1184,46 @@ export function renderWizardV2(state: AppViewState) {
               </div>
             ` : nothing}
 
-            ${stepIndex === 7 ? html`
-              <!-- 8. 安全级别 -->
-              <h2 class="wizard-v2-title">全局安全级别设置</h2>
+            ${currentStepKey === "security" ? html`
+              <h2 class="wizard-v2-title">安全与权限入口</h2>
               <p class="wizard-v2-subtitle" style="margin-bottom:24px;">
-                 定义系统执行危险操作和外部通信时的默认拦截策略。<br/>
-                 系统底层搭载 <b>Rust 原生沙箱引擎 (oa-sandbox)</b>，支持 Mac Seatbelt、Linux Landlock/Seccomp 及 Windows AppContainer，结合权限突围 (Escalation) 审批体系，构建 <b>4级动态隔离纵深防御架构</b>。
+                 初始化向导只保留默认安全配置。完整的安全级别、权限审批和风险策略统一在“设置 &gt; 安全”中继续配置。
               </p>
-              
-              <div class="wizard-v2-providers-grid" style="display: block;">
-                 <label class="wizard-v2-provider-card ${securityLevelConfig === 'deny' ? 'wizard-v2-provider-card-selected' : ''}" style="display:flex; align-items:flex-start; gap: 12px; cursor: pointer; margin-bottom: 16px;">
-                    <input type="radio" name="security-level" .checked=${securityLevelConfig === 'deny'} @change=${() => { securityLevelConfig = 'deny'; state.requestUpdate(); }} style="margin-top:4px;" />
-                    <div>
-                      <div style="font-weight:600; color: #8C8C8C;">绝缘模式 (Deny)</div>
-                      <div style="font-size:13px; color:#666; line-height:1.5;">完全禁止任何系统级文件修改、网络调用和终端命令执行。最安全，但助手将仅仅作为纯文本对话引擎发挥作用。</div>
-                    </div>
-                 </label>
 
-                 <label class="wizard-v2-provider-card ${securityLevelConfig === 'sandboxed' ? 'wizard-v2-provider-card-selected' : ''}" style="display:flex; align-items:flex-start; gap: 12px; cursor: pointer; margin-bottom: 16px;">
-                    <input type="radio" name="security-level" .checked=${securityLevelConfig === 'sandboxed'} @change=${() => { securityLevelConfig = 'sandboxed'; state.requestUpdate(); }} style="margin-top:4px;" />
-                    <div>
-                      <div style="font-weight:600; color: #1890FF;">沙箱模式 (Sandboxed)</div>
-                      <div style="font-size:13px; color:#666; line-height:1.5;">AI 的所有的操作将被严格限制在指定的容器宿主目录下，无法越界访问真实的系统环境与进程。高度安全。</div>
-                    </div>
-                 </label>
-                 
-                 <label class="wizard-v2-provider-card ${securityLevelConfig === 'allowlist' ? 'wizard-v2-provider-card-selected' : ''}" style="display:flex; align-items:flex-start; gap: 12px; cursor: pointer; margin-bottom: 16px; border: 1px solid #FAAD14;">
-                    <input type="radio" name="security-level" .checked=${securityLevelConfig === 'allowlist'} @change=${() => { securityLevelConfig = 'allowlist'; state.requestUpdate(); }} style="margin-top:4px;" />
-                    <div>
-                      <div style="font-weight:600; color: #FAAD14;">标准白名单模式 (Allowlist)</div>
-                      <div style="font-size:13px; color:#666; line-height:1.5;">针对安全库标记的可信指纹操作自动放行，对删除、覆盖及危险 Bash 指令等高危行为强制下发给用户进行确认阻断。平衡易用与安全。（⭐ 推荐配置）</div>
-                    </div>
-                 </label>
-                 
-                 <label class="wizard-v2-provider-card ${securityLevelConfig === 'full' ? 'wizard-v2-provider-card-selected' : ''}" style="display:flex; align-items:flex-start; gap: 12px; cursor: pointer; margin-bottom: 16px;">
-                    <input type="radio" name="security-level" .checked=${securityLevelConfig === 'full'} @change=${() => { securityLevelConfig = 'full'; state.requestUpdate(); }} style="margin-top:4px;" />
-                    <div>
-                      <div style="font-weight:600; color: #FF4D4F;">全权放行模式 (Full Access)</div>
-                      <div style="font-size:13px; color:#666; line-height:1.5;">赋予骨干网络最高的 root 级别等价权限。AI 完全免审直飞各项操作。实现全自动化效率飞跃，但在复杂代码库中风险不可控，需极度谨慎！</div>
-                    </div>
-                 </label>
+              <div class="wizard-v2-provider-card wizard-v2-provider-card-selected" style="text-align:left; margin-bottom: 16px;">
+                 <div style="font-weight:600; margin-bottom:8px;">默认写入推荐安全级别</div>
+                 <div style="font-size:13px; color:#666; line-height:1.6;">
+                    当前默认使用 <b>L2 沙箱全权限（sandboxed）</b>，优先保证初始化后的可用性。<br/>
+                    如果你需要更严格或更开放的策略，请在完成后到“设置 &gt; 安全”调整。
+                 </div>
               </div>
 
-              <div style="text-align:right; margin-top: 32px;">
-                 <button class="wizard-v2-btn wizard-v2-btn-primary" style="background:#FAAD14; border-color:#FAAD14;" @click=${() => nextStep(state)}> 安全策略部署与继续 </button>
-              </div>
+              <label class="wizard-v2-provider-card" style="display:flex; align-items:center; gap: 12px; cursor: pointer;">
+                 <input type="checkbox" .checked=${openSecuritySettingsAfterFinish} @change=${(e: Event) => {
+            openSecuritySettingsAfterFinish = (e.target as HTMLInputElement).checked;
+            state.requestUpdate();
+         }}>
+                 <div>
+                    <div style="font-weight:600;">完成后自动打开“设置 &gt; 安全”</div>
+                    <div style="font-size:12px; color:#888;">只做入口映射，不在初始化流程里展开复杂教学</div>
+                 </div>
+              </label>
             ` : nothing}
 
-            ${stepIndex === 8 ? html`
+            ${currentStepKey === "done" ? html`
               <!-- 9. 完成 -->
               <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; padding-bottom: 32px; animation: wizardV2FadeIn 0.5s ease-out;">
                  ${isRestarting ? html`
                      <div class="wizard-v2-restarting-container" style="text-align: center;">
                         <!-- Custom CSS Spinners added to stylesheet -->
                         <div class="wizard-v2-spinner"></div>
-                        <h2 class="wizard-v2-title" style="margin-top:24px;">Crab Claw 引擎启动中...</h2>
+                        <h2 class="wizard-v2-title" style="margin-top:24px;">
+                           ${completionKind === "recovery-restore"
+         ? "正在恢复最近可用配置..."
+         : completionKind === "recovery-reconfigure"
+            ? "正在重建最小可用配置..."
+            : "Crab Claw 引擎启动中..."}
+                        </h2>
                         
                         <div style="width: 300px; height: 6px; background: #e8e8e8; border-radius: 4px; margin: 20px auto; overflow: hidden;">
                            <div style="width: ${restartProgress}%; height: 100%; background: #1890FF; transition: width 0.3s ease;"></div>
@@ -854,29 +1232,46 @@ export function renderWizardV2(state: AppViewState) {
                            构建进度 ${restartProgress}%
                         </div>
                         
-                        <!-- System Advantages Animation Text -->
                         <div style="height: 48px; position:relative; overflow:hidden;">
-                           ${restartProgress < 30 ? html`<div class="wizard-v2-advantage-text">💎 万物互联: 支持 25+ 主流服务商自动发现接入</div>` :
-               (restartProgress < 60 ? html`<div class="wizard-v2-advantage-text">🚄 高效协同: 搭载 Code Auditor 与翻译专家子矩阵串联引擎</div>` :
-                  (restartProgress < 90 ? html`<div class="wizard-v2-advantage-text">🛡️ 铁壁防御: ${securityLevelConfig} 军工级沙箱控制拦截系统装载中</div>` :
-                     html`<div class="wizard-v2-advantage-text">🧠 核心记忆链唤醒...完成。</div>`))}
+                           ${completionKind === "recovery-restore"
+         ? html`<div class="wizard-v2-advantage-text">正在用最近一次可用配置覆盖当前坏配置…</div>`
+         : completionKind === "recovery-reconfigure"
+            ? html`<div class="wizard-v2-advantage-text">正在写入最小必要配置并重新拉起运行时…</div>`
+            : restartProgress < 30
+               ? html`<div class="wizard-v2-advantage-text">💎 万物互联: 支持 25+ 主流服务商自动发现接入</div>`
+               : (restartProgress < 60
+                  ? html`<div class="wizard-v2-advantage-text">🚄 高效协同: 搭载 Code Auditor 与翻译专家子矩阵串联引擎</div>`
+                  : (restartProgress < 90
+                     ? html`<div class="wizard-v2-advantage-text">🛡️ 默认安全策略与核心服务装载中</div>`
+                     : html`<div class="wizard-v2-advantage-text">🧠 核心记忆链唤醒...完成。</div>`))}
                         </div>
                      </div>
                  ` : html`
                      <div style="font-size: 64px; color: #52C41A; margin-bottom:16px;">✓</div>
-                     <h2 class="wizard-v2-title" style="margin-bottom:8px;">系统重燃启动成功！</h2>
+                     <h2 class="wizard-v2-title" style="margin-bottom:8px;">
+                        ${completionKind === "recovery-restore"
+         ? "最近可用配置已恢复"
+         : completionKind === "recovery-reconfigure"
+            ? "恢复配置已重建"
+            : "系统初始化完成"}
+                     </h2>
                      <p class="wizard-v2-subtitle" style="text-align:center;">
-                        您配置的骨干网模型和工作流已被热重载接管。<br/>
-                        欢迎回到 Crab Claw（蟹爪） 指挥中心。
+                        ${completionKind === "recovery-restore"
+         ? html`已使用最近一次可用备份覆盖当前坏配置，你现在可以继续回到主界面。`
+         : completionKind === "recovery-reconfigure"
+            ? html`最小必要配置已经重新写入，并覆盖当前不可用配置。详细安全与高级能力可稍后在设置中补充。`
+            : html`主模型与基础能力已完成初始化。详细安全与权限设置可在“设置 &gt; 安全”继续调整。`}
                      </p>
                      
                      <div style="display:flex; gap:16px; margin-top:16px;">
                         <button class="wizard-v2-btn wizard-v2-btn-secondary" @click=${() => {
-               // Reset wizard state
                isRestarting = false;
                restartProgress = 0;
                stepIndex = 0;
-               securityAck = false; // Require user to acknowledge again
+               if (wizardMode === "setup") {
+                  securityAck = false;
+               }
+               recoveryRestoreError = null;
                state.requestUpdate();
             }} style="padding: 12px 32px; font-size:16px;">
                            重新配置
@@ -884,17 +1279,29 @@ export function renderWizardV2(state: AppViewState) {
                         
                         <button class="wizard-v2-btn wizard-v2-btn-primary" @click=${() => {
                closeWizardV2(state);
-               state.tab = "chat"; // Force navigation to Chat tab
-               setTimeout(() => {
-                  // 1. Force a new web session to avoid sending to a previously stored remote channel (like Feishu)
-                  state.handleSendChat("/new");
-                  // 2. Queue the welcome message natively
-                  setTimeout(() => {
-                     state.handleSendChat("系统启动完成！请向我全面介绍一下 Crab Claw（蟹爪）系统的各项优势与核心能力，并做个简短的欢迎致辞。");
-                  }, 300);
-               }, 500);
+               if (wizardMode === "setup") {
+                  const targetTab = openSecuritySettingsAfterFinish ? "security" : "chat";
+                  state.setTab(targetTab);
+                  if (targetTab === "chat") {
+                     const waitForConnection = (attempts: number) => {
+                        if (state.connected || attempts <= 0) {
+                           state.handleSendChat("/new");
+                           setTimeout(() => {
+                              state.handleSendChat("系统启动完成！请向我全面介绍一下 Crab Claw（蟹爪）系统的各项优势与核心能力，并做个简短的欢迎致辞。");
+                           }, 300);
+                        } else {
+                           setTimeout(() => waitForConnection(attempts - 1), 500);
+                        }
+                     };
+                     setTimeout(() => waitForConnection(10), 500);
+                  }
+                  return;
+               }
+               state.setTab("overview");
             }} style="padding: 12px 32px; font-size:16px;">
-                           进入主界面
+                           ${wizardMode === "setup"
+         ? (openSecuritySettingsAfterFinish ? "前往安全设置" : "进入主界面")
+         : "返回主界面"}
                         </button>
                      </div>
                  `}
@@ -905,11 +1312,11 @@ export function renderWizardV2(state: AppViewState) {
 </div>
    
    <!-- Footer / Actions -->
-   ${stepIndex < 8 && !isRestarting ? html`
+   ${stepIndex < steps.length - 1 && !isRestarting ? html`
           <div class="wizard-v2-footer">
              <div style="display:flex; gap:12px;">
                 <button class="wizard-v2-btn wizard-v2-btn-secondary" @click=${() => prevStep(state)}>
-                   ${stepIndex === 0 ? "取消/不保存" : "上一步"}
+                   ${stepIndex === 0 ? "取消" : "上一步"}
                 </button>
                 <button class="wizard-v2-btn wizard-v2-btn-secondary" @click=${() => closeWizardV2(state, true)}>
                    稍后继续 (保存草稿并关闭)
@@ -921,7 +1328,7 @@ export function renderWizardV2(state: AppViewState) {
                 ?disabled=${!canNext}
                 style="opacity: ${canNext ? 1 : 0.5}; cursor: ${canNext ? 'pointer' : 'not-allowed'};"
              >
-                 ${stepIndex === 7 ? "最后一步" : "下一步"}
+                 ${nextButtonLabel}
              </button>
           </div>
         ` : nothing

@@ -11,6 +11,7 @@ import {
   createChatReadonlyRunState,
   persistChatReadonlyRun,
 } from "../chat/readonly-run-state.ts";
+import { globalChatEventStore } from "../event-store.ts";
 
 function createState(overrides: Partial<ChatState> = {}): ChatState {
   return {
@@ -163,6 +164,102 @@ describe("loadChatHistory", () => {
 
     expect(state.chatReadonlyRun?.phase).toBe("complete");
     expect(state.chatReadonlyRun?.finalMessageText).toBe("final answer with normalized spaces");
+  });
+
+  it("keeps the latest optimistic local user message when history refreshes mid-run", async () => {
+    const state = createState({
+      chatMessages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "old reply" }],
+          timestamp: 1,
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "new local question" }],
+          timestamp: 999,
+        },
+      ],
+      client: {
+        request: vi.fn(async (method: string) => {
+          if (method !== "chat.history") {
+            throw new Error(`unexpected method ${method}`);
+          }
+          return {
+            messages: [
+              {
+                role: "assistant",
+                content: [{ type: "text", text: "old reply" }],
+                timestamp: 1,
+              },
+            ],
+            thinkingLevel: null,
+          };
+        }),
+      } as never,
+    });
+    (state as any)._skipEmptyHistory = true;
+
+    await loadChatHistory(state);
+
+    expect(state.chatMessages).toHaveLength(2);
+    const last = state.chatMessages.at(-1) as { role?: string; content?: Array<{ text?: string }> };
+    expect(last?.role).toBe("user");
+    expect(last?.content?.[0]?.text).toBe("new local question");
+  });
+
+  it("does not duplicate the optimistic local user message once transcript already contains it", async () => {
+    const state = createState({
+      chatMessages: [
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "old reply" }],
+          timestamp: 1,
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "new local question" }],
+          timestamp: 999,
+        },
+      ],
+      client: {
+        request: vi.fn(async (method: string) => {
+          if (method !== "chat.history") {
+            throw new Error(`unexpected method ${method}`);
+          }
+          return {
+            messages: [
+              {
+                role: "assistant",
+                content: [{ type: "text", text: "old reply" }],
+                timestamp: 1,
+              },
+              {
+                role: "user",
+                content: [{ type: "text", text: "new local question" }],
+                timestamp: 1000,
+              },
+              {
+                role: "assistant",
+                content: [{ type: "text", text: "done" }],
+                timestamp: 1001,
+              },
+            ],
+            thinkingLevel: null,
+          };
+        }),
+      } as never,
+    });
+    (state as any)._skipEmptyHistory = true;
+
+    await loadChatHistory(state);
+
+    expect(
+      state.chatMessages.filter((message) => {
+        const record = message as { role?: string; content?: Array<{ text?: string }> };
+        return record.role === "user" && record.content?.[0]?.text === "new local question";
+      }),
+    ).toHaveLength(1);
   });
 
   it("restores archived workflow history for earlier assistant replies in the same session", async () => {
@@ -326,6 +423,41 @@ describe("handleChatEvent", () => {
 
     expect(handleChatEvent(state, payload)).toBe("final");
     expect(state.chatMessages).toHaveLength(1);
+  });
+
+  it("P4: records cross-session final events to globalChatEventStore even when sessionKey does not match", () => {
+    globalChatEventStore.clear();
+    const state = createState({ sessionKey: "main" });
+    const payload: ChatEventPayload = {
+      runId: "run-cross",
+      sessionKey: "other-session",
+      state: "final",
+      message: { role: "assistant", content: [{ type: "text", text: "cross done" }] },
+    };
+
+    // handleChatEvent returns null (sessionKey mismatch)
+    expect(handleChatEvent(state, payload)).toBe(null);
+
+    // But the event is archived in the store
+    expect(globalChatEventStore.hasTerminalEvents("other-session")).toBe(true);
+    const events = globalChatEventStore.drainTerminalEvents("other-session");
+    expect(events).toHaveLength(1);
+    expect(events[0].runId).toBe("run-cross");
+    expect(events[0].state).toBe("final");
+  });
+
+  it("P4: does not record delta events to globalChatEventStore", () => {
+    globalChatEventStore.clear();
+    const state = createState({ sessionKey: "main" });
+    const payload: ChatEventPayload = {
+      runId: "run-1",
+      sessionKey: "main",
+      state: "delta",
+      message: { role: "assistant", content: [{ type: "text", text: "streaming..." }] },
+    };
+
+    handleChatEvent(state, payload);
+    expect(globalChatEventStore.hasTerminalEvents("main")).toBe(false);
   });
 });
 

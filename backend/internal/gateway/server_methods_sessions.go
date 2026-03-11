@@ -39,13 +39,15 @@ func getSessionDefaults(cfg *types.OpenAcosmiConfig) GatewaySessionsDefaults {
 // ---------- sessions.list ----------
 func SessionsHandlers() map[string]GatewayMethodHandler {
 	return map[string]GatewayMethodHandler{
-		"sessions.list":    handleSessionsList,
-		"sessions.preview": handleSessionsPreview,
-		"sessions.resolve": handleSessionsResolve,
-		"sessions.patch":   handleSessionsPatch,
-		"sessions.reset":   handleSessionsReset,
-		"sessions.delete":  handleSessionsDelete,
-		"sessions.compact": handleSessionsCompact,
+		"sessions.list":       handleSessionsList,
+		"sessions.preview":    handleSessionsPreview,
+		"sessions.resolve":    handleSessionsResolve,
+		"sessions.patch":      handleSessionsPatch,
+		"sessions.reset":      handleSessionsReset,
+		"sessions.delete":     handleSessionsDelete,
+		"sessions.compact":    handleSessionsCompact,
+		"sessions.create":     handleSessionsCreate,
+		"sessions.ensureMain": handleSessionsEnsureMain,
 	}
 }
 
@@ -72,6 +74,11 @@ func handleSessionsList(ctx *MethodHandlerContext) {
 
 		// [BUG-1] 过滤 cron run key（与 TS listSessionsFromStore L577 一致）
 		if IsCronRunSessionKey(key) {
+			continue
+		}
+
+		// P1 域隔离: 过滤 task: 前缀条目（task 已迁移到独立 TaskStore）
+		if IsTaskSessionKey(key) {
 			continue
 		}
 
@@ -697,5 +704,95 @@ func handleSessionsCompact(ctx *MethodHandlerContext) {
 		"compacted": true,
 		"archived":  archivedPath,
 		"kept":      len(keptLines),
+	}, nil)
+}
+
+// ---------- sessions.create ----------
+// P2 身份收敛: 网关接管 session 创建，前端不再本地生成 sessionKey。
+// 请求: { channel?: string, label?: string }
+// 响应: { sessionKey: string, sessionId: string }
+
+func handleSessionsCreate(ctx *MethodHandlerContext) {
+	store := ctx.Context.SessionStore
+	if store == nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "session store not available"))
+		return
+	}
+
+	channel, _ := ctx.Params["channel"].(string)
+	label, _ := ctx.Params["label"].(string)
+
+	now := time.Now().UnixMilli()
+	sessionId := uuid.New().String()
+	sessionKey := fmt.Sprintf("user:%s", sessionId)
+
+	entry := &SessionEntry{
+		SessionKey: sessionKey,
+		SessionId:  sessionId,
+		Label:      label,
+		Channel:    channel,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	store.Save(entry)
+
+	ctx.Respond(true, map[string]interface{}{
+		"sessionKey": sessionKey,
+		"sessionId":  sessionId,
+	}, nil)
+}
+
+// ---------- sessions.ensureMain ----------
+// P2 身份收敛: 确保主 session 存在（幂等）。
+// 请求: { agentId?: string }
+// 响应: { sessionKey: string, sessionId: string, created: bool }
+
+func handleSessionsEnsureMain(ctx *MethodHandlerContext) {
+	store := ctx.Context.SessionStore
+	if store == nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "session store not available"))
+		return
+	}
+
+	// 解析 agent ID 和 main key（从配置或默认值）
+	agentID := routing.DefaultAgentID
+	if id, ok := ctx.Params["agentId"].(string); ok && id != "" {
+		agentID = id
+	}
+	mainKey := routing.DefaultMainKey
+	if ctx.Context != nil && ctx.Context.Config != nil && ctx.Context.Config.Session != nil {
+		if mk := ctx.Context.Config.Session.MainKey; mk != "" {
+			mainKey = mk
+		}
+	}
+
+	sessionKey := routing.BuildAgentMainSessionKey(agentID, mainKey)
+	entry := store.LoadSessionEntry(sessionKey)
+	if entry != nil {
+		// 已存在，直接返回
+		ctx.Respond(true, map[string]interface{}{
+			"sessionKey": sessionKey,
+			"sessionId":  entry.SessionId,
+			"created":    false,
+		}, nil)
+		return
+	}
+
+	// 不存在，创建
+	now := time.Now().UnixMilli()
+	sessionId := uuid.New().String()
+	entry = &SessionEntry{
+		SessionKey: sessionKey,
+		SessionId:  sessionId,
+		Label:      "main",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	store.Save(entry)
+
+	ctx.Respond(true, map[string]interface{}{
+		"sessionKey": sessionKey,
+		"sessionId":  sessionId,
+		"created":    true,
 	}, nil)
 }

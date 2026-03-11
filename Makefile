@@ -33,7 +33,7 @@ help: ## 显示帮助
 
 # ===== 一键启动（推荐） =====
 start: ## 一键启动（编译 + 启动全部服务 + 打开浏览器）
-	@./scripts/start.sh
+	@./一键部署脚本/linux-start.sh
 
 # ===== 开发启动 =====
 dev: argus gateway ## 完整编译 Argus + 启动 Gateway (dev mode)

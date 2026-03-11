@@ -90,6 +90,28 @@ func buildArgusEntry(bridge *argus.Bridge) subagentEntry {
 	return entry
 }
 
+func persistScreenObserverEnabled(ctx *MethodHandlerContext, enabled bool) error {
+	if ctx == nil || ctx.Context == nil || ctx.Context.ConfigLoader == nil {
+		return nil
+	}
+	cfg, err := ctx.Context.ConfigLoader.LoadConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.SubAgents == nil {
+		cfg.SubAgents = &types.SubAgentConfig{}
+	}
+	if cfg.SubAgents.ScreenObserver == nil {
+		cfg.SubAgents.ScreenObserver = &types.ScreenObserverSettings{}
+	}
+	cfg.SubAgents.ScreenObserver.Enabled = &enabled
+	if err := ctx.Context.ConfigLoader.WriteConfigFile(cfg); err != nil {
+		return err
+	}
+	ctx.Context.ConfigLoader.ClearCache()
+	return nil
+}
+
 func buildCoderEntry(confirmMgrAvailable bool, cfg *types.OpenAcosmiConfig) subagentEntry {
 	entry := subagentEntry{
 		ID:    "oa-coder",
@@ -166,6 +188,10 @@ func handleArgusCtl(ctx *MethodHandlerContext, action string) {
 	case "set_enabled":
 		enabled, _ := ctx.Params["value"].(bool)
 		if enabled {
+			if err := persistScreenObserverEnabled(ctx, true); err != nil {
+				ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to persist argus enabled state: "+err.Error()))
+				return
+			}
 			// 加锁防止多个 WS 连接并发创建 bridge
 			argusBridgeMu.Lock()
 			defer argusBridgeMu.Unlock()
@@ -228,6 +254,10 @@ func handleArgusCtl(ctx *MethodHandlerContext, action string) {
 			slog.Info("subagent.ctl: argus started via UI (new bridge)")
 			ctx.Respond(true, map[string]interface{}{"ok": true, "state": string(newBridge.State())}, nil)
 		} else {
+			if err := persistScreenObserverEnabled(ctx, false); err != nil {
+				ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to persist argus enabled state: "+err.Error()))
+				return
+			}
 			if bridge != nil {
 				bridge.Stop()
 				slog.Info("subagent.ctl: argus stopped via UI")

@@ -71,6 +71,9 @@ func TestClassifyIntent_TaskWrite(t *testing.T) {
 		"创建一个新文件",
 		"帮我写一个函数",
 		"修改这个配置",
+		"看下浏览器配置",
+		"远程审批配置怎么改",
+		"帮我调整 stt 配置",
 	}
 	for _, c := range cases {
 		tier := classifyIntent(c)
@@ -247,6 +250,61 @@ func TestFilterToolsByIntent_GreetingNoTools(t *testing.T) {
 	}
 }
 
+func TestPromoteBrowserContinuation_BrowserQuestionKeepsMultimodal(t *testing.T) {
+	prior := []llmclient.ChatMessage{{
+		Role: "assistant",
+		Content: []llmclient.ContentBlock{{
+			Type: "tool_use",
+			Name: "browser",
+			ID:   "tool-1",
+		}},
+	}}
+
+	analysis := analyzeIntent("为什么没有 browser 工具")
+	if analysis.Tier != intentQuestion {
+		t.Fatalf("expected base tier question, got %q", analysis.Tier)
+	}
+
+	promoted := promoteBrowserContinuation(analysis, "为什么没有 browser 工具", prior)
+	if promoted.Tier != intentTaskMultimodal {
+		t.Fatalf("expected multimodal promotion, got %q", promoted.Tier)
+	}
+}
+
+func TestPromoteBrowserContinuation_ShortFollowUpKeepsMultimodal(t *testing.T) {
+	prior := []llmclient.ChatMessage{{
+		Role: "assistant",
+		Content: []llmclient.ContentBlock{{
+			Type: "tool_use",
+			Name: "browser",
+			ID:   "tool-2",
+		}},
+	}}
+
+	analysis := analyzeIntent("继续")
+	promoted := promoteBrowserContinuation(analysis, "继续", prior)
+	if promoted.Tier != intentTaskMultimodal {
+		t.Fatalf("expected short browser continuation to stay multimodal, got %q", promoted.Tier)
+	}
+}
+
+func TestPromoteBrowserContinuation_DoesNotPromoteUnrelatedQuestion(t *testing.T) {
+	prior := []llmclient.ChatMessage{{
+		Role: "assistant",
+		Content: []llmclient.ContentBlock{{
+			Type: "tool_use",
+			Name: "browser",
+			ID:   "tool-3",
+		}},
+	}}
+
+	analysis := analyzeIntent("为什么 gateway 配置有问题")
+	promoted := promoteBrowserContinuation(analysis, "为什么 gateway 配置有问题", prior)
+	if promoted.Tier != analysis.Tier {
+		t.Fatalf("unrelated question should not be promoted, got %q from %q", promoted.Tier, analysis.Tier)
+	}
+}
+
 // ---------- P3-9: send_media 路由验证 ----------
 
 // TestSendMedia_RoutedToTierWithTool verifies that "桌面上的 logo.png 发给我"
@@ -289,6 +347,50 @@ func TestSendMedia_AvailableAtTaskLight(t *testing.T) {
 	}
 }
 
+func TestGateway_NotAvailableAtTaskWrite(t *testing.T) {
+	tools := mockToolDefs("gateway", "bash", "read_file")
+	filtered := filterToolsByIntent(tools, intentTaskWrite)
+	names := toolNames(filtered)
+
+	if contains(names, "gateway") {
+		t.Errorf("gateway should not be available at task_write, got tools: %v", names)
+	}
+}
+
+func TestGateway_AvailableAtTaskMultimodal(t *testing.T) {
+	tools := mockToolDefs("gateway", "bash", "read_file")
+	filtered := filterToolsByIntent(tools, intentTaskMultimodal)
+	names := toolNames(filtered)
+
+	if !contains(names, "gateway") {
+		t.Errorf("gateway should be available at task_multimodal, got tools: %v", names)
+	}
+}
+
+func TestSpecializedConfigTools_AvailableAtTaskWrite(t *testing.T) {
+	tools := mockToolDefs("browser_config", "remote_approval_config", "image_config", "stt_config", "docconv_config", "media_config", "bash")
+	filtered := filterToolsByIntent(tools, intentTaskWrite)
+	names := toolNames(filtered)
+
+	for _, expected := range []string{"browser_config", "remote_approval_config", "image_config", "stt_config", "docconv_config", "media_config"} {
+		if !contains(names, expected) {
+			t.Errorf("%s should be available at task_write, got tools: %v", expected, names)
+		}
+	}
+}
+
+func TestSpecializedConfigTools_NotAvailableAtTaskLight(t *testing.T) {
+	tools := mockToolDefs("browser_config", "remote_approval_config", "image_config", "stt_config", "docconv_config", "media_config", "bash")
+	filtered := filterToolsByIntent(tools, intentTaskLight)
+	names := toolNames(filtered)
+
+	for _, excluded := range []string{"browser_config", "remote_approval_config", "image_config", "stt_config", "docconv_config", "media_config"} {
+		if contains(names, excluded) {
+			t.Errorf("%s should not be available at task_light, got tools: %v", excluded, names)
+		}
+	}
+}
+
 func TestIntentGuidance_TaskLightPrefersSendMediaForKnownFiles(t *testing.T) {
 	guidance := intentGuidanceText(intentTaskLight)
 	if !strings.Contains(guidance, "use 'send_media' directly") {
@@ -296,6 +398,9 @@ func TestIntentGuidance_TaskLightPrefersSendMediaForKnownFiles(t *testing.T) {
 	}
 	if !strings.Contains(guidance, "Do NOT delegate to 'spawn_argus_agent'") {
 		t.Fatalf("task_light guidance should forbid argus detours for known files, got: %q", guidance)
+	}
+	if !strings.Contains(guidance, "data_export approval") {
+		t.Fatalf("task_light guidance should mention send_media export approval, got: %q", guidance)
 	}
 }
 
@@ -306,6 +411,9 @@ func TestIntentGuidance_MultimodalKeepsKnownFileSendOnSendMedia(t *testing.T) {
 	}
 	if !strings.Contains(guidance, "Only use 'spawn_argus_agent' if the file must first be discovered") {
 		t.Fatalf("multimodal guidance should scope argus to discovery/native interaction, got: %q", guidance)
+	}
+	if !strings.Contains(guidance, "data_export approval") {
+		t.Fatalf("multimodal guidance should mention send_media export approval, got: %q", guidance)
 	}
 }
 
@@ -329,6 +437,181 @@ func TestSendEmail_RoutedToTierWithTool(t *testing.T) {
 		if tier != c.want {
 			t.Errorf("classifyIntent(%q) = %q, want %q", c.input, tier, c.want)
 		}
+	}
+}
+
+// ---------- S0: 多信号分类器验证矩阵 (2026-03-10) ----------
+
+func TestClassifyIntent_MultiSignal_QuestionShapedTasks(t *testing.T) {
+	// 这些 prompt 在旧硬级联架构下被误分流到 question。
+	// 多信号评分后应正确路由到 task_light。
+	cases := []struct {
+		input string
+		want  intentTier
+		note  string
+	}{
+		// 动作动词 + 疑问助词 → 动词信号对冲疑问信号
+		{"查询下桌面有什么文件", intentTaskLight, "动词(查询)+目标(桌面) 压过 疑问(什么)"},
+		{"查看一下日志文件", intentTaskLight, "动词(查看)+目标(日志)"},
+		{"看看这个目录下有什么", intentTaskLight, "动词(看看)+目标(目录)"},
+		{"列出当前目录的文件", intentTaskLight, "动词(列出)+目标(目录)"},
+		{"打开这个文件", intentTaskLight, "动词(打开)"},
+		{"可以列一下当前目录吗", intentTaskLight, "动词(列一下)+目标(目录)"},
+
+		// 纯目标信号 + 疑问助词 → 目标信号对冲疑问信号
+		{"桌面里有什么文件", intentTaskLight, "目标(桌面) 压过 疑问(什么)"},
+		{"能看下日志吗", intentTaskLight, "祈使(能)+目标(日志) 压过 疑问(吗)"},
+		{"下载目录里有什么", intentTaskLight, "目标(下载+目录) 压过 疑问(什么)"},
+
+		// 配置目标信号
+		{"stt 配置有什么问题", intentTaskWrite, "配置目标+stt writeKeyword → task_write"},
+
+		// 纯疑问句 — 确认不退化
+		{"代码是谁写的？", intentQuestion, "纯疑问, 无目标信号"},
+		{"什么是 REST API？", intentQuestion, "纯概念查询"},
+		{"什么是文件描述符？", intentQuestion, "概念查询, 文件描述符不触发 FS 目标"},
+		{"这个API怎么用？", intentQuestion, "纯疑问, 无动作动词/目标"},
+
+		// F-02 根因修复: "文档" 歧义词移除后的回归验证
+		{"什么是技术文档？", intentQuestion, "概念查询, 文档不再触发 FS 目标"},
+		{"文档目录里有什么", intentTaskLight, "文档目录 — 由 '目录' alias 捕获"},
+		{"文档文件夹下的内容", intentTaskLight, "文档文件夹 — 由 '文件夹' alias 捕获"},
+	}
+	for _, c := range cases {
+		if tier := classifyIntent(c.input); tier != c.want {
+			t.Errorf("classifyIntent(%q) = %q, want %q (%s)", c.input, tier, c.want, c.note)
+		}
+	}
+}
+
+func TestComputeIntentScore_SignalCombinations(t *testing.T) {
+	cases := []struct {
+		input    string
+		wantSign string // "positive", "negative", "zero"
+		note     string
+	}{
+		// 纯疑问, 无任何正向信号 → 负分
+		{"什么是Docker？", "negative", "只有疑问信号"},
+		// 疑问 + FS 目标 → 正分
+		{"桌面里有什么文件", "positive", "目标(+0.6)压过疑问(-0.3)"},
+		// 疑问 + 动作动词 → 正分
+		{"查询下有什么问题", "positive", "动词(+0.4)压过疑问(-0.3)"},
+		// 疑问 + 祈使 → 正分
+		{"帮我看下这是什么", "positive", "祈使(+0.5)压过疑问(-0.3)"},
+		// 无信号 → 零分
+		{"写个脚本", "zero", "无疑问无目标无祈使无动词"},
+	}
+	for _, c := range cases {
+		lower := strings.ToLower(strings.TrimSpace(c.input))
+		score := computeIntentScore(lower, c.input)
+		switch c.wantSign {
+		case "positive":
+			if score <= 0 {
+				t.Errorf("computeIntentScore(%q) = %.1f, want positive (%s)", c.input, score, c.note)
+			}
+		case "negative":
+			if score >= 0 {
+				t.Errorf("computeIntentScore(%q) = %.1f, want negative (%s)", c.input, score, c.note)
+			}
+		case "zero":
+			if score != 0 {
+				t.Errorf("computeIntentScore(%q) = %.1f, want zero (%s)", c.input, score, c.note)
+			}
+		}
+	}
+}
+
+// ---------- S2: capability_manage 曝光策略 ----------
+
+func TestCapabilityManage_NotVisibleAtQuestion(t *testing.T) {
+	tools := mockToolDefs("capability_manage", "search_skills", "lookup_skill", "bash", "read_file")
+	filtered := filterToolsByIntent(tools, intentQuestion)
+	names := toolNames(filtered)
+
+	if contains(names, "capability_manage") {
+		t.Error("capability_manage should NOT be visible at question tier after S2 fix")
+	}
+}
+
+func TestCapabilityManage_VisibleAtTaskLight(t *testing.T) {
+	tools := mockToolDefs("capability_manage", "search_skills", "lookup_skill", "bash", "read_file")
+	filtered := filterToolsByIntent(tools, intentTaskLight)
+	names := toolNames(filtered)
+
+	if !contains(names, "capability_manage") {
+		t.Error("capability_manage should be visible at task_light tier")
+	}
+}
+
+// ---------- S3: 端到端路由 + 工具可见性 ----------
+
+func TestE2E_QueryRoutingWithToolVisibility(t *testing.T) {
+	allTools := mockToolDefs(
+		"bash", "read_file", "write_file", "list_dir", "send_media",
+		"search_skills", "lookup_skill", "memory_search", "memory_get",
+		"capability_manage", "browser", "gateway",
+	)
+
+	cases := []struct {
+		input       string
+		wantTier    intentTier
+		mustInclude []string
+		mustExclude []string
+	}{
+		{
+			"查询下桌面有什么文件", intentTaskLight,
+			[]string{"list_dir", "bash", "read_file"},
+			[]string{},
+		},
+		{
+			"桌面里有什么文件", intentTaskLight,
+			[]string{"list_dir", "bash"},
+			[]string{},
+		},
+		{
+			"代码是谁写的？", intentQuestion,
+			[]string{"search_skills"},
+			[]string{"bash", "list_dir", "capability_manage"},
+		},
+		{
+			"什么是 REST API？", intentQuestion,
+			[]string{"search_skills"},
+			[]string{"bash", "capability_manage"},
+		},
+		{
+			"删除 test.txt", intentTaskDelete,
+			[]string{"bash"},
+			[]string{},
+		},
+	}
+
+	for _, c := range cases {
+		tier := classifyIntent(c.input)
+		if tier != c.wantTier {
+			t.Errorf("classifyIntent(%q) = %q, want %q", c.input, tier, c.wantTier)
+			continue
+		}
+
+		filtered := filterToolsByIntent(allTools, tier)
+		names := toolNames(filtered)
+
+		for _, must := range c.mustInclude {
+			if !contains(names, must) {
+				t.Errorf("%q at tier %q: expected tool %q in %v", c.input, tier, must, names)
+			}
+		}
+		for _, excluded := range c.mustExclude {
+			if contains(names, excluded) {
+				t.Errorf("%q at tier %q: unexpected tool %q in %v", c.input, tier, excluded, names)
+			}
+		}
+	}
+}
+
+func TestIntentGuidance_QuestionNeverClaimLackCapabilities(t *testing.T) {
+	guidance := intentGuidanceText(intentQuestion)
+	if !strings.Contains(guidance, "NEVER claim you lack capabilities") {
+		t.Fatal("question guidance must include NEVER-claim-lack guardrail")
 	}
 }
 

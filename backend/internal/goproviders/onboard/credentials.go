@@ -11,7 +11,9 @@ import (
 	"strings"
 
 	"github.com/Acosmi/ClawAcosmi/internal/goproviders/authprofile"
+	"github.com/Acosmi/ClawAcosmi/internal/goproviders/common"
 	"github.com/Acosmi/ClawAcosmi/internal/goproviders/types"
+	"github.com/Acosmi/ClawAcosmi/internal/statepaths"
 )
 
 // ──────────────────────────────────────────────
@@ -201,9 +203,7 @@ func resolveAuthAgentDir(agentDir string) string {
 	if agentDir != "" {
 		return agentDir
 	}
-	// 默认使用 ~/.openacosmi/agent 目录
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".openacosmi", "agent")
+	return common.ResolveDefaultAgentDir()
 }
 
 // ──────────────────────────────────────────────
@@ -236,8 +236,7 @@ func resolveSiblingAgentDirs(primaryAgentDir string) []string {
 	if looksLikeStandardLayout {
 		agentsRoot = candidateAgentsRoot
 	} else {
-		home, _ := os.UserHomeDir()
-		agentsRoot = filepath.Join(home, ".openacosmi", "state", "agents")
+		agentsRoot = statepaths.ResolveRuntimeAgentsRoot()
 	}
 
 	entries, err := os.ReadDir(agentsRoot)

@@ -33,8 +33,12 @@ func clampPort(port, fallback int) int {
 	return fallback
 }
 
-// derivePort 从基础端口加偏移量派生端口
+// derivePort 从基础端口加偏移量派生端口。
+// 当 base <= 0 时直接返回 fallback，避免从无效端口派生出特权端口。
 func derivePort(base, offset, fallback int) int {
+	if base <= 0 {
+		return fallback
+	}
 	return clampPort(base+offset, fallback)
 }
 

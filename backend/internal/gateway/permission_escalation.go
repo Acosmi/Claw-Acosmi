@@ -66,6 +66,51 @@ func mergeMountRequests(base, extra []MountRequest) []MountRequest {
 	return sanitizeMountRequests(combined)
 }
 
+func shouldUseTaskScopedMountGrant(level string, mounts []MountRequest, runID string) bool {
+	if len(mounts) == 0 || strings.TrimSpace(runID) == "" {
+		return false
+	}
+	return infra.NormalizeExecSecurityValue(infra.ExecSecurity(level)) != infra.ExecSecurityFull
+}
+
+func grantExpired(grant *ActiveEscalationGrant, now time.Time) bool {
+	if grant == nil || grant.TaskScoped || grant.ExpiresAt.IsZero() {
+		return false
+	}
+	return !now.Before(grant.ExpiresAt)
+}
+
+func cloneMountRequests(reqs []MountRequest) []MountRequest {
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]MountRequest, len(reqs))
+	copy(out, reqs)
+	return out
+}
+
+func cloneGrant(grant *ActiveEscalationGrant) *ActiveEscalationGrant {
+	if grant == nil {
+		return nil
+	}
+	cloned := *grant
+	cloned.MountRequests = cloneMountRequests(grant.MountRequests)
+	return &cloned
+}
+
+func cloneGrants(grants []*ActiveEscalationGrant) []*ActiveEscalationGrant {
+	if len(grants) == 0 {
+		return nil
+	}
+	out := make([]*ActiveEscalationGrant, 0, len(grants))
+	for _, grant := range grants {
+		if cloned := cloneGrant(grant); cloned != nil {
+			out = append(out, cloned)
+		}
+	}
+	return out
+}
+
 // PendingEscalationRequest 等待审批的提权请求。
 type PendingEscalationRequest struct {
 	ID             string                  `json:"id"`
@@ -77,6 +122,7 @@ type PendingEscalationRequest struct {
 	RequestedAt    time.Time               `json:"requestedAt"`
 	TTLMinutes     int                     `json:"ttlMinutes"`              // 建议的 TTL
 	MountRequests  []MountRequest          `json:"mountRequests,omitempty"` // 临时路径放行
+	TaskScoped     bool                    `json:"taskScoped,omitempty"`    // L2 挂载审批按任务生效
 	Workflow       runner.ApprovalWorkflow `json:"workflow,omitempty"`
 }
 
@@ -98,20 +144,37 @@ type ActiveEscalationGrant struct {
 	ID            string         `json:"id"`
 	Level         string         `json:"level"` // 临时级别：allowlist | sandboxed | full
 	GrantedAt     time.Time      `json:"grantedAt"`
-	ExpiresAt     time.Time      `json:"expiresAt"`
+	ExpiresAt     time.Time      `json:"expiresAt,omitempty"`
 	RunID         string         `json:"runId,omitempty"`
 	SessionID     string         `json:"sessionId,omitempty"`
 	MountRequests []MountRequest `json:"mountRequests,omitempty"` // 临时路径放行配置
+	TaskScoped    bool           `json:"taskScoped,omitempty"`    // true = 任务结束自动回收
 }
 
 // EscalationStatus 提权状态快照（供 API 返回）。
 type EscalationStatus struct {
-	HasPending  bool                      `json:"hasPending"`
-	Pending     *PendingEscalationRequest `json:"pending,omitempty"`
-	HasActive   bool                      `json:"hasActive"`
-	Active      *ActiveEscalationGrant    `json:"active,omitempty"`
-	BaseLevel   string                    `json:"baseLevel"`   // exec-approvals 持久化级别
-	ActiveLevel string                    `json:"activeLevel"` // 有效级别（含临时提权）
+	HasPending   bool                      `json:"hasPending"`
+	Pending      *PendingEscalationRequest `json:"pending,omitempty"`
+	HasActive    bool                      `json:"hasActive"`
+	Active       *ActiveEscalationGrant    `json:"active,omitempty"`
+	ActiveGrants []*ActiveEscalationGrant  `json:"activeGrants,omitempty"`
+	BaseLevel    string                    `json:"baseLevel"`   // exec-approvals 持久化级别
+	ActiveLevel  string                    `json:"activeLevel"` // 有效级别（含临时提权）
+}
+
+func maxSecurityLevel(baseLevel, activeLevel string) string {
+	base := infra.NormalizeExecSecurityValue(infra.ExecSecurity(baseLevel))
+	if base == "" {
+		base = infra.ExecSecurityDeny
+	}
+	active := infra.NormalizeExecSecurityValue(infra.ExecSecurity(activeLevel))
+	if active == "" {
+		return string(base)
+	}
+	if infra.LevelOrder(active) > infra.LevelOrder(base) {
+		return string(active)
+	}
+	return string(base)
 }
 
 func buildTypedMountAccessResult(req *PendingEscalationRequest, result ApprovalResultNotification) *TypedApprovalResultNotification {
@@ -126,6 +189,7 @@ func buildTypedMountAccessResult(req *PendingEscalationRequest, result ApprovalR
 		TTLMinutes: result.TTLMinutes,
 		MountPath:  req.MountRequests[0].HostPath,
 		MountMode:  req.MountRequests[0].MountMode,
+		TaskScoped: req.TaskScoped,
 		Workflow:   req.Workflow,
 	}
 }
@@ -166,7 +230,7 @@ func notifyEscalationResult(remote *RemoteApprovalNotifier, req *PendingEscalati
 type EscalationManager struct {
 	mu              sync.Mutex
 	pending         *PendingEscalationRequest
-	active          *ActiveEscalationGrant
+	activeGrants    []*ActiveEscalationGrant
 	broadcaster     *Broadcaster
 	auditLogger     *EscalationAuditLogger
 	deescalateTimer *time.Timer
@@ -185,6 +249,72 @@ func NewEscalationManager(broadcaster *Broadcaster, auditLogger *EscalationAudit
 		maxAllowedLevel: string(infra.ExecSecuritySandboxed), // 默认上限 L2，L3 需显式启用
 		log:             slog.Default().With("subsystem", "escalation-mgr"),
 	}
+}
+
+func effectiveLevelForGrants(baseLevel string, grants []*ActiveEscalationGrant) string {
+	level := maxSecurityLevel(baseLevel, "")
+	for _, grant := range grants {
+		if grant == nil {
+			continue
+		}
+		level = maxSecurityLevel(level, grant.Level)
+	}
+	return level
+}
+
+func selectPrimaryGrant(grants []*ActiveEscalationGrant) *ActiveEscalationGrant {
+	var best *ActiveEscalationGrant
+	for _, grant := range grants {
+		if grant == nil {
+			continue
+		}
+		if best == nil {
+			best = grant
+			continue
+		}
+		bestRank := infra.LevelOrder(infra.ExecSecurity(best.Level))
+		grantRank := infra.LevelOrder(infra.ExecSecurity(grant.Level))
+		if grantRank > bestRank {
+			best = grant
+			continue
+		}
+		if grantRank == bestRank && grant.GrantedAt.After(best.GrantedAt) {
+			best = grant
+		}
+	}
+	return best
+}
+
+func (m *EscalationManager) currentEffectiveLevelLocked() string {
+	return effectiveLevelForGrants(readBaseSecurityLevel(), m.activeGrants)
+}
+
+func (m *EscalationManager) rescheduleDeescalateTimerLocked() {
+	if m.deescalateTimer != nil {
+		m.deescalateTimer.Stop()
+		m.deescalateTimer = nil
+	}
+
+	var nextExpiry time.Time
+	for _, grant := range m.activeGrants {
+		if grant == nil || grant.TaskScoped || grant.ExpiresAt.IsZero() {
+			continue
+		}
+		if nextExpiry.IsZero() || grant.ExpiresAt.Before(nextExpiry) {
+			nextExpiry = grant.ExpiresAt
+		}
+	}
+	if nextExpiry.IsZero() {
+		return
+	}
+
+	delay := time.Until(nextExpiry)
+	if delay <= 0 {
+		delay = time.Millisecond
+	}
+	m.deescalateTimer = time.AfterFunc(delay, func() {
+		m.autoDeescalate("ttl_expired")
+	})
 }
 
 // SetMaxAllowedLevel 设置权限上限（由配置注入）。
@@ -225,34 +355,50 @@ func (m *EscalationManager) RequestEscalationWithMetadata(opts EscalationRequest
 		return fmt.Errorf("already have a pending escalation request (id=%s)", m.pending.ID)
 	}
 
-	allowMountExtensionOnActive := m.active != nil &&
-		m.active.Level == opts.Level &&
-		len(sanitizedMounts) > 0
-	if m.active != nil && !allowMountExtensionOnActive {
-		return fmt.Errorf("already have an active escalation grant (level=%s, expires=%s)", m.active.Level, m.active.ExpiresAt.Format(time.RFC3339))
-	}
-
 	// 验证 level（支持 L1/L2/L3 提权）
-	if opts.Level != string(infra.ExecSecurityAllowlist) &&
-		opts.Level != string(infra.ExecSecuritySandboxed) &&
-		opts.Level != string(infra.ExecSecurityFull) {
+	normalizedLevel := infra.NormalizeExecSecurityValue(infra.ExecSecurity(opts.Level))
+	if normalizedLevel != infra.ExecSecurityAllowlist &&
+		normalizedLevel != infra.ExecSecuritySandboxed &&
+		normalizedLevel != infra.ExecSecurityFull {
 		return fmt.Errorf("invalid escalation level %q, must be \"allowlist\", \"sandboxed\", or \"full\"", opts.Level)
+	}
+	opts.Level = string(normalizedLevel)
+
+	if len(sanitizedMounts) > 0 {
+		if normalizedLevel != infra.ExecSecuritySandboxed {
+			return fmt.Errorf("mount access requires sandboxed level (got %q)", opts.Level)
+		}
+		if strings.TrimSpace(opts.RunID) == "" {
+			return fmt.Errorf("mount access requires runId for task-scoped grant")
+		}
 	}
 
 	// Design Fix 3: base level 已满足请求级别时不创建 pending。
-	// 例外: 同级路径放行扩展（mountRequests 非空）允许继续走审批。
+	// 例外: L2/sandboxed 的同级挂载扩展（mountRequests 非空）允许继续走审批。
+	// L3/full 为永久授权，不应再触发任何审批。
 	baseLevel := readBaseSecurityLevel()
 	baseSatisfied := infra.LevelOrder(infra.ExecSecurity(baseLevel)) >= infra.LevelOrder(infra.ExecSecurity(opts.Level))
-	if baseSatisfied && len(sanitizedMounts) == 0 {
+	if baseSatisfied && (len(sanitizedMounts) == 0 || infra.NormalizeExecSecurityValue(infra.ExecSecurity(baseLevel)) == infra.ExecSecurityFull) {
 		return fmt.Errorf("base level %q already satisfies requested level %q", baseLevel, opts.Level)
 	}
+
+	if len(sanitizedMounts) == 0 {
+		currentEffectiveLevel := effectiveLevelForGrants(baseLevel, m.activeGrants)
+		if infra.LevelOrder(infra.ExecSecurity(currentEffectiveLevel)) >= infra.LevelOrder(infra.ExecSecurity(opts.Level)) {
+			return fmt.Errorf("effective level %q already satisfies requested level %q", currentEffectiveLevel, opts.Level)
+		}
+	}
+
+	taskScoped := shouldUseTaskScopedMountGrant(opts.Level, sanitizedMounts, opts.RunID)
 
 	// 权限边界检查：requestedLevel 不得超过 maxAllowedLevel
 	if m.maxAllowedLevel != "" && infra.LevelOrder(infra.ExecSecurity(opts.Level)) > infra.LevelOrder(infra.ExecSecurity(m.maxAllowedLevel)) {
 		return fmt.Errorf("requested level %q exceeds max allowed level %q", opts.Level, m.maxAllowedLevel)
 	}
 
-	if opts.TTLMinutes <= 0 && !isPermanentEscalationLevel(opts.Level) {
+	if taskScoped {
+		opts.TTLMinutes = 0
+	} else if opts.TTLMinutes <= 0 && !isPermanentEscalationLevel(opts.Level) {
 		opts.TTLMinutes = 30 // 默认 30 分钟
 	}
 
@@ -266,6 +412,7 @@ func (m *EscalationManager) RequestEscalationWithMetadata(opts EscalationRequest
 		RequestedAt:    time.Now(),
 		TTLMinutes:     opts.TTLMinutes,
 		MountRequests:  sanitizedMounts,
+		TaskScoped:     taskScoped,
 		Workflow:       opts.Workflow,
 	}
 	if len(sanitizedMounts) == 1 {
@@ -281,6 +428,7 @@ func (m *EscalationManager) RequestEscalationWithMetadata(opts EscalationRequest
 		"reason", opts.Reason,
 		"runId", opts.RunID,
 		"ttlMinutes", opts.TTLMinutes,
+		"taskScoped", taskScoped,
 	)
 
 	// 审计日志
@@ -308,6 +456,7 @@ func (m *EscalationManager) RequestEscalationWithMetadata(opts EscalationRequest
 			"requestedAt":    m.pending.RequestedAt.UnixMilli(),
 			"ttlMinutes":     opts.TTLMinutes,
 			"mountRequests":  sanitizedMounts,
+			"taskScoped":     taskScoped,
 			"workflow":       m.pending.Workflow,
 		}, nil)
 	}
@@ -331,6 +480,7 @@ func (m *EscalationManager) RequestEscalationWithMetadata(opts EscalationRequest
 			RunID:            opts.RunID,
 			SessionID:        opts.SessionID,
 			TTLMinutes:       opts.TTLMinutes,
+			TaskScoped:       taskScoped,
 			RequestedAt:      m.pending.RequestedAt,
 			OriginatorChatID: opts.OriginatorChatID,
 			OriginatorUserID: opts.OriginatorUserID,
@@ -348,6 +498,7 @@ func (m *EscalationManager) RequestEscalationWithMetadata(opts EscalationRequest
 				OriginatorUserID: opts.OriginatorUserID,
 				MountPath:        sanitizedMounts[0].HostPath,
 				MountMode:        sanitizedMounts[0].MountMode,
+				TaskScoped:       taskScoped,
 				Workflow:         m.pending.Workflow,
 			}
 		}
@@ -377,7 +528,6 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 	}
 
 	req := m.pending
-	existingActive := m.active
 	m.pending = nil
 	stageType := ApprovalTypeExecEscalation
 	if req.ApprovalType == ApprovalTypeMountAccess {
@@ -437,7 +587,8 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 	}
 
 	baseLevel := readBaseSecurityLevel()
-	if infra.LevelOrder(infra.ExecSecurity(baseLevel)) >= infra.LevelOrder(infra.ExecSecurity(req.RequestedLevel)) {
+	if infra.LevelOrder(infra.ExecSecurity(baseLevel)) >= infra.LevelOrder(infra.ExecSecurity(req.RequestedLevel)) &&
+		len(req.MountRequests) == 0 {
 		resolvedWorkflow := req.Workflow
 		if resolvedWorkflow.ID != "" {
 			resolvedWorkflow = resolvedWorkflow.MarkStageResolved(stageType, req.ID, "approve")
@@ -486,20 +637,13 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 		return nil
 	}
 
-	if isPermanentEscalationLevel(req.RequestedLevel) {
+	if isPermanentEscalationLevel(req.RequestedLevel) && len(req.MountRequests) == 0 {
 		resolvedWorkflow := req.Workflow
 		if resolvedWorkflow.ID != "" {
 			resolvedWorkflow = resolvedWorkflow.MarkStageResolved(stageType, req.ID, "approve")
 		}
 		if err := persistBaseSecurityLevel(infra.ExecSecurityFull); err != nil {
 			return fmt.Errorf("persist permanent full access: %w", err)
-		}
-		if existingActive != nil && isPermanentEscalationLevel(existingActive.Level) {
-			m.active = nil
-			if m.deescalateTimer != nil {
-				m.deescalateTimer.Stop()
-				m.deescalateTimer = nil
-			}
 		}
 
 		m.log.Info("permanent escalation approved",
@@ -547,55 +691,53 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 	if resolvedWorkflow.ID != "" {
 		resolvedWorkflow = resolvedWorkflow.MarkStageResolved(stageType, req.ID, "approve")
 	}
-	if ttlMinutes <= 0 {
+	if req.TaskScoped {
+		ttlMinutes = 0
+	} else if ttlMinutes <= 0 {
 		ttlMinutes = req.TTLMinutes
 	}
-	if ttlMinutes <= 0 {
+	if ttlMinutes <= 0 && !req.TaskScoped {
 		ttlMinutes = 30
 	}
 
 	// 分级 TTL 硬上限（临时授权路径）
 	// L2(sandboxed): 4 小时（有沙箱保护但有网络）
 	// L1(allowlist): 8 小时（受限操作，风险较低）
-	switch req.RequestedLevel {
-	case string(infra.ExecSecuritySandboxed):
-		if ttlMinutes > 240 {
-			ttlMinutes = 240
-		}
-	case string(infra.ExecSecurityAllowlist):
-		if ttlMinutes > 480 {
-			ttlMinutes = 480
+	if !req.TaskScoped {
+		switch req.RequestedLevel {
+		case string(infra.ExecSecuritySandboxed):
+			if ttlMinutes > 240 {
+				ttlMinutes = 240
+			}
+		case string(infra.ExecSecurityAllowlist):
+			if ttlMinutes > 480 {
+				ttlMinutes = 480
+			}
 		}
 	}
 
 	now := time.Now()
-	mergedMounts := req.MountRequests
-	runID := req.RunID
-	sessionID := req.SessionID
-	if existingActive != nil && existingActive.Level == req.RequestedLevel {
-		mergedMounts = mergeMountRequests(existingActive.MountRequests, req.MountRequests)
-		if runID == "" {
-			runID = existingActive.RunID
-		}
-		if sessionID == "" {
-			sessionID = existingActive.SessionID
-		}
-	}
-	m.active = &ActiveEscalationGrant{
+	grant := &ActiveEscalationGrant{
 		ID:            req.ID,
 		Level:         req.RequestedLevel,
 		GrantedAt:     now,
-		ExpiresAt:     now.Add(time.Duration(ttlMinutes) * time.Minute),
-		RunID:         runID,
-		SessionID:     sessionID,
-		MountRequests: mergedMounts,
+		RunID:         req.RunID,
+		SessionID:     req.SessionID,
+		MountRequests: cloneMountRequests(req.MountRequests),
+		TaskScoped:    req.TaskScoped,
 	}
+	if !req.TaskScoped {
+		grant.ExpiresAt = now.Add(time.Duration(ttlMinutes) * time.Minute)
+	}
+	m.activeGrants = append(m.activeGrants, grant)
+	m.rescheduleDeescalateTimerLocked()
 
 	m.log.Info("escalation approved",
 		"id", req.ID,
 		"level", req.RequestedLevel,
 		"ttlMinutes", ttlMinutes,
-		"expiresAt", m.active.ExpiresAt.Format(time.RFC3339),
+		"taskScoped", req.TaskScoped,
+		"runId", req.RunID,
 	)
 
 	if m.auditLogger != nil {
@@ -611,13 +753,17 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 	}
 
 	if m.broadcaster != nil {
-		m.broadcaster.Broadcast("exec.approval.resolved", map[string]interface{}{
-			"id":        req.ID,
-			"approved":  true,
-			"level":     req.RequestedLevel,
-			"expiresAt": m.active.ExpiresAt.UnixMilli(),
-			"workflow":  resolvedWorkflow,
-		}, nil)
+		payload := map[string]interface{}{
+			"id":         req.ID,
+			"approved":   true,
+			"level":      req.RequestedLevel,
+			"taskScoped": req.TaskScoped,
+			"workflow":   resolvedWorkflow,
+		}
+		if !grant.ExpiresAt.IsZero() {
+			payload["expiresAt"] = grant.ExpiresAt.UnixMilli()
+		}
+		m.broadcaster.Broadcast("exec.approval.resolved", payload, nil)
 		m.broadcaster.Broadcast("approval.workflow.updated", map[string]interface{}{
 			"source":    "exec.approval.resolved",
 			"requestId": req.ID,
@@ -625,9 +771,6 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 			"ts":        time.Now().UnixMilli(),
 		}, nil)
 	}
-
-	// 启动自动降权定时器
-	m.startDeescalateTimerLocked(time.Duration(ttlMinutes) * time.Minute)
 
 	// Phase 8: 推送批准结果卡片
 	notifyEscalationResult(m.remoteNotifier, req, ApprovalResultNotification{
@@ -642,40 +785,23 @@ func (m *EscalationManager) ResolveEscalation(approve bool, ttlMinutes int) erro
 
 // ---------- 自动降权 ----------
 
-func (m *EscalationManager) startDeescalateTimerLocked(ttl time.Duration) {
-	// 清除旧定时器
-	if m.deescalateTimer != nil {
-		m.deescalateTimer.Stop()
-	}
-	m.deescalateTimer = time.AfterFunc(ttl, func() {
-		m.autoDeescalate("ttl_expired")
-	})
-}
-
 // autoDeescalate TTL 到期时自动降权（从 timer callback 调用，需加锁）。
 func (m *EscalationManager) autoDeescalate(reason string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.active == nil {
+	if len(m.activeGrants) == 0 {
 		return
 	}
 
-	m.deescalateLocked(reason)
+	m.pruneExpiredGrantsLocked(reason)
 }
 
-// deescalateLocked 执行降权操作（必须在持有 m.mu 时调用）。
-// Fix 4: 提取为共享方法，供 TaskComplete、autoDeescalate、ManualRevoke 共用。
-func (m *EscalationManager) deescalateLocked(reason string) {
-	grant := m.active
-	m.active = nil
-	effectiveLevel := m.applyDeescalationFallbackLocked(grant.Level)
-
-	if m.deescalateTimer != nil {
-		m.deescalateTimer.Stop()
-		m.deescalateTimer = nil
-	}
-
+func (m *EscalationManager) revokeGrantLocked(index int, reason string) {
+	grant := m.activeGrants[index]
+	m.activeGrants = append(m.activeGrants[:index], m.activeGrants[index+1:]...)
+	effectiveBaseLevel := m.applyDeescalationFallbackLocked(grant.Level)
+	effectiveLevel := effectiveLevelForGrants(effectiveBaseLevel, m.activeGrants)
 	m.log.Info("escalation deescalated",
 		"id", grant.ID,
 		"level", grant.Level,
@@ -707,19 +833,87 @@ func (m *EscalationManager) deescalateLocked(reason string) {
 			"reason":   reason,
 		}, nil)
 	}
+
+	m.rescheduleDeescalateTimerLocked()
+}
+
+func (m *EscalationManager) pruneExpiredGrantsLocked(reason string) {
+	now := time.Now()
+	for i := len(m.activeGrants) - 1; i >= 0; i-- {
+		if grantExpired(m.activeGrants[i], now) {
+			m.revokeGrantLocked(i, reason)
+		}
+	}
 }
 
 // TaskComplete 任务完成时立即降权（如果 runID 匹配）。
-// Fix 4: 避免 TOCTOU 竞态——在同一把锁内完成检查+降权。
+// 同时撤销匹配 runID 的 task-scoped pending/active grant。
 func (m *EscalationManager) TaskComplete(runID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.active == nil || (runID != "" && m.active.RunID != runID) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
 		return
 	}
 
-	m.deescalateLocked("task_complete")
+	if m.pending != nil && m.pending.TaskScoped && m.pending.RunID == runID {
+		req := m.pending
+		m.pending = nil
+		m.clearPersistedPending()
+		m.stopApprovalTimeoutLocked()
+
+		resolvedWorkflow := req.Workflow
+		stageType := ApprovalTypeExecEscalation
+		if req.ApprovalType == ApprovalTypeMountAccess {
+			stageType = ApprovalTypeMountAccess
+		}
+		if resolvedWorkflow.ID != "" {
+			resolvedWorkflow = resolvedWorkflow.MarkStageResolved(stageType, req.ID, "deny")
+		}
+
+		if m.auditLogger != nil {
+			m.auditLogger.Log(EscalationAuditEntry{
+				Timestamp:      time.Now(),
+				Event:          AuditEventTaskComplete,
+				RequestID:      req.ID,
+				RequestedLevel: req.RequestedLevel,
+				RunID:          req.RunID,
+				SessionID:      req.SessionID,
+			})
+		}
+
+		if m.broadcaster != nil {
+			m.broadcaster.Broadcast("exec.approval.resolved", map[string]interface{}{
+				"id":         req.ID,
+				"approved":   false,
+				"level":      m.currentEffectiveLevelLocked(),
+				"reason":     "task_complete",
+				"taskScoped": true,
+				"workflow":   resolvedWorkflow,
+			}, nil)
+			m.broadcaster.Broadcast("approval.workflow.updated", map[string]interface{}{
+				"source":    "exec.approval.resolved",
+				"requestId": req.ID,
+				"workflow":  resolvedWorkflow,
+				"ts":        time.Now().UnixMilli(),
+			}, nil)
+		}
+
+		notifyEscalationResult(m.remoteNotifier, req, ApprovalResultNotification{
+			EscalationID:   req.ID,
+			Approved:       false,
+			Reason:         "任务已结束，审批已自动关闭 / Task already completed",
+			RequestedLevel: req.RequestedLevel,
+		})
+	}
+
+	for i := len(m.activeGrants) - 1; i >= 0; i-- {
+		grant := m.activeGrants[i]
+		if grant != nil && grant.TaskScoped && grant.RunID == runID {
+			m.revokeGrantLocked(i, "task_complete")
+		}
+	}
 }
 
 // ManualRevoke 用户手动撤销活跃提权。
@@ -727,29 +921,27 @@ func (m *EscalationManager) ManualRevoke() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.active == nil {
-		return
+	for i := len(m.activeGrants) - 1; i >= 0; i-- {
+		m.revokeGrantLocked(i, "manual_revoke")
 	}
-	m.deescalateLocked("manual_revoke")
 }
 
 // ---------- 状态查询 ----------
 
 // GetStatus 返回当前提权状态快照。
-// Fix 5+18: 过期 grant 惰性清理，通过 deescalateLocked 确保广播+审计。
+// 过期 grant 采用惰性清理，复用统一 revoke 路径确保广播和审计一致。
 func (m *EscalationManager) GetStatus() EscalationStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	baseLevel := readBaseSecurityLevel()
 
-	// 惰性清理过期 grant（通过 deescalateLocked 确保广播事件 + 审计日志）
-	if m.active != nil && !time.Now().Before(m.active.ExpiresAt) {
-		m.deescalateLocked("lazy_ttl_expired")
-	}
+	// 惰性清理过期 grant，确保广播事件和审计日志不丢失。
+	m.pruneExpiredGrantsLocked("lazy_ttl_expired")
 
 	status := EscalationStatus{
-		BaseLevel: baseLevel,
+		BaseLevel:   baseLevel,
+		ActiveLevel: effectiveLevelForGrants(baseLevel, m.activeGrants),
 	}
 
 	if m.pending != nil {
@@ -757,49 +949,54 @@ func (m *EscalationManager) GetStatus() EscalationStatus {
 		status.Pending = m.pending
 	}
 
-	if m.active != nil {
+	if len(m.activeGrants) > 0 {
 		status.HasActive = true
-		status.Active = m.active
-		status.ActiveLevel = m.active.Level
-	} else {
-		status.ActiveLevel = baseLevel
+		status.Active = cloneGrant(selectPrimaryGrant(m.activeGrants))
+		status.ActiveGrants = cloneGrants(m.activeGrants)
 	}
 
 	return status
 }
 
 // GetEffectiveLevel 返回当前有效安全级别（活跃临时提权 > 持久化配置）。
-// Fix 5+18: 过期 grant 惰性清理，通过 deescalateLocked 确保广播+审计。
+// 过期 grant 采用惰性清理，复用统一 revoke 路径确保广播和审计一致。
 func (m *EscalationManager) GetEffectiveLevel() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.active != nil {
-		if time.Now().Before(m.active.ExpiresAt) {
-			return m.active.Level
-		}
-		// 过期，惰性清理（通过 deescalateLocked 确保广播事件 + 审计日志）
-		m.deescalateLocked("lazy_ttl_expired")
-	}
-
-	return readBaseSecurityLevel()
+	baseLevel := readBaseSecurityLevel()
+	m.pruneExpiredGrantsLocked("lazy_ttl_expired")
+	return effectiveLevelForGrants(baseLevel, m.activeGrants)
 }
 
 // GetActiveMountRequests 返回活跃 grant 的 MountRequests（Phase 3.4）。
 // 已过期返回 nil（惰性清理）。
 func (m *EscalationManager) GetActiveMountRequests() []MountRequest {
+	return m.GetActiveMountRequestsForRun("")
+}
+
+// GetActiveMountRequestsForRun 返回当前 run 可见的挂载请求。
+// 非 task-scoped grant 对所有 run 可见；task-scoped grant 仅对匹配 runID 可见。
+func (m *EscalationManager) GetActiveMountRequestsForRun(runID string) []MountRequest {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.active == nil {
-		return nil
+	m.pruneExpiredGrantsLocked("lazy_ttl_expired")
+
+	combined := make([]MountRequest, 0)
+	for _, grant := range m.activeGrants {
+		if grant == nil || len(grant.MountRequests) == 0 {
+			continue
+		}
+		if grant.TaskScoped && strings.TrimSpace(runID) != "" && grant.RunID != runID {
+			continue
+		}
+		if grant.TaskScoped && strings.TrimSpace(runID) == "" {
+			continue
+		}
+		combined = mergeMountRequests(combined, grant.MountRequests)
 	}
-	// 惰性清理过期 grant
-	if !time.Now().Before(m.active.ExpiresAt) {
-		m.deescalateLocked("lazy_ttl_expired")
-		return nil
-	}
-	return m.active.MountRequests
+	return combined
 }
 
 // GetPendingID 返回当前 pending 请求的 ID（用于 callback 验证）。
@@ -818,7 +1015,7 @@ func (m *EscalationManager) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pending = nil
-	m.active = nil
+	m.activeGrants = nil
 	// Phase 4.1: 清除磁盘持久化
 	m.clearPersistedPending()
 	if m.deescalateTimer != nil {
@@ -932,7 +1129,7 @@ func (m *EscalationManager) RestoreFromDisk() {
 	defer m.mu.Unlock()
 
 	// 不覆盖已有内存状态
-	if m.pending != nil || m.active != nil {
+	if m.pending != nil || len(m.activeGrants) > 0 {
 		return
 	}
 
@@ -946,6 +1143,11 @@ func (m *EscalationManager) RestoreFromDisk() {
 		TTLMinutes:     persisted.TTLMinutes,
 		MountRequests:  fromPersistedMountRequests(persisted.MountRequests),
 	}
+	m.pending.TaskScoped = shouldUseTaskScopedMountGrant(
+		m.pending.RequestedLevel,
+		m.pending.MountRequests,
+		m.pending.RunID,
+	)
 
 	// 用剩余审批时间重启定时器
 	remaining := time.Until(approvalDeadline)
@@ -971,6 +1173,7 @@ func (m *EscalationManager) RestoreFromDisk() {
 			"requestedAt":    persisted.RequestedAtMs,
 			"ttlMinutes":     persisted.TTLMinutes,
 			"mountRequests":  persisted.MountRequests,
+			"taskScoped":     m.pending.TaskScoped,
 			"restored":       true,
 		}, nil)
 	}
@@ -1008,24 +1211,13 @@ func fromPersistedMountRequests(reqs []infra.PersistedMountRequest) []MountReque
 
 // readBaseSecurityLevel 从 exec-approvals.json 读取持久化安全级别。
 func readBaseSecurityLevel() string {
-	snapshot := infra.ReadExecApprovalsSnapshot()
-	if snapshot.File != nil && snapshot.File.Defaults != nil && snapshot.File.Defaults.Security != "" {
-		return string(snapshot.File.Defaults.Security)
-	}
-	return string(infra.ExecSecurityDeny)
+	return string(infra.ResolveBaseExecSecurity(""))
 }
 
+// persistBaseSecurityLevel 持久化基础安全级别。
+// 使用 infra.PersistBaseSecurityLevel 确保 read-modify-write 受 mutex 保护。
 func persistBaseSecurityLevel(level infra.ExecSecurity) error {
-	snapshot := infra.ReadExecApprovalsSnapshot()
-	file := snapshot.File
-	if file == nil {
-		file = &infra.ExecApprovalsFile{Version: 1}
-	}
-	if file.Defaults == nil {
-		file.Defaults = &infra.ExecApprovalsDefaults{}
-	}
-	file.Defaults.Security = level
-	return infra.SaveExecApprovals(file)
+	return infra.PersistBaseSecurityLevel(level)
 }
 
 func isPermanentEscalationLevel(level string) bool {
@@ -1037,10 +1229,7 @@ func isPermanentEscalationLevel(level string) bool {
 func (m *EscalationManager) applyDeescalationFallbackLocked(grantLevel string) string {
 	snapshot := infra.ReadExecApprovalsSnapshot()
 	file := snapshot.File
-	baseLevel := infra.ExecSecurityDeny
-	if file != nil && file.Defaults != nil && file.Defaults.Security != "" {
-		baseLevel = file.Defaults.Security
-	}
+	baseLevel := infra.ResolveBaseExecSecurity("")
 	if grantLevel != string(infra.ExecSecurityFull) {
 		return string(baseLevel)
 	}
@@ -1057,14 +1246,7 @@ func (m *EscalationManager) applyDeescalationFallbackLocked(grantLevel string) s
 	}
 
 	// 需要将 base 提升到 L2，确保 L3 到期后固定回落到 sandboxed。
-	if file == nil {
-		file = &infra.ExecApprovalsFile{Version: 1}
-	}
-	if file.Defaults == nil {
-		file.Defaults = &infra.ExecApprovalsDefaults{}
-	}
-	file.Defaults.Security = infra.ExecSecuritySandboxed
-	if err := infra.SaveExecApprovals(file); err != nil {
+	if err := infra.PersistBaseSecurityLevel(infra.ExecSecuritySandboxed); err != nil {
 		m.log.Warn("failed to persist sandboxed fallback during deescalation", "error", err)
 		return string(baseLevel)
 	}

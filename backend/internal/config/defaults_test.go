@@ -23,6 +23,16 @@ func TestDefaultModelAliases_Count(t *testing.T) {
 	}
 }
 
+func TestParseModelRef_KeepsRuntimeProviderIDs(t *testing.T) {
+	ref := ParseModelRef("qwen/qwen3.5-plus", "anthropic")
+	if ref == nil {
+		t.Fatal("expected parsed model ref")
+	}
+	if ref.Provider != "qwen" || ref.Model != "qwen3.5-plus" {
+		t.Fatalf("expected qwen/qwen3.5-plus, got %s/%s", ref.Provider, ref.Model)
+	}
+}
+
 // ============================================================
 // F4b: applyMessageDefaults
 // ============================================================

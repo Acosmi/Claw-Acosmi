@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 var (
@@ -43,7 +45,7 @@ func doAutoMigrateStateDir(envOverride, homeDir string) StateDirMigrationResult 
 		}
 	}
 
-	targetDir := filepath.Join(homeDir, ".openacosmi")
+	targetDir := filepath.Join(homeDir, config.NewStateDirname)
 	legacyDirs := []string{
 		filepath.Join(homeDir, ".clawdbot"),
 		filepath.Join(homeDir, ".pi-coding"),

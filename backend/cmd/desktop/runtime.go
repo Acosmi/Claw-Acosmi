@@ -5,10 +5,15 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	agentmodels "github.com/Acosmi/ClawAcosmi/internal/agents/models"
 	"github.com/Acosmi/ClawAcosmi/internal/config"
 	"github.com/Acosmi/ClawAcosmi/internal/gateway"
+	"github.com/Acosmi/ClawAcosmi/internal/goproviders/authprofile"
+	"github.com/Acosmi/ClawAcosmi/internal/goproviders/common"
+	authstoretypes "github.com/Acosmi/ClawAcosmi/internal/goproviders/types"
 	types "github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
@@ -33,6 +38,26 @@ type desktopBootstrap struct {
 	NeedsOnboarding  bool
 	AttachedExisting bool
 	Runtime          runtimeCloser
+}
+
+var loadDesktopAuthProfileStore = func() *authstoretypes.AuthProfileStore {
+	return authprofile.LoadAuthProfileStoreForSecretsRuntime("", nil)
+}
+
+var ensureDesktopRuntimeScaffold = func() error {
+	return common.EnsureRuntimeScaffold("")
+}
+
+var syncDesktopBootstrapUpdateState = func(cfg *types.OpenAcosmiConfig) error {
+	return syncDesktopUpdateStateFromConfig(cfg)
+}
+
+var finalizeDesktopBootstrapPendingUpdate = func() error {
+	return finalizeDesktopPendingUpdate()
+}
+
+var finalizeDesktopBootstrapInstallerHandoff = func() error {
+	return finalizeDesktopInstallerHandoff()
 }
 
 func defaultDesktopGatewayOptions(controlUIDir string) gateway.GatewayServerOptions {
@@ -64,15 +89,17 @@ func prepareDesktopBootstrap(
 	}
 
 	port := resolveDesktopPort(cfg, portOverride)
+	readonlyBootstrap := desktopRequiresReadonlyBootstrap(configPath, stat)
+	opts = applyDesktopBootstrapProfile(opts, readonlyBootstrap)
 	runtime, attachedExisting, err := startOrAttachGateway(port, opts, desktopAttachProbeTimeout, desktopReadyTimeout, wait, start)
 	if err != nil {
 		return nil, err
 	}
 
-	onboarding := needsOnboarding(configPath, stat)
+	onboarding := needsOnboarding(configPath, cfg, stat)
 	bootstrap := &desktopBootstrap{
 		Port:             port,
-		URL:              buildDesktopURL(port, onboarding),
+		URL:              buildDesktopURL(port, false),
 		NeedsOnboarding:  onboarding,
 		AttachedExisting: attachedExisting,
 		Runtime:          runtime,
@@ -85,14 +112,19 @@ func prepareDesktopBootstrap(
 			return nil, fmt.Errorf("desktop control UI probe failed: %w", err)
 		}
 	}
-	if err := syncDesktopUpdateStateFromConfig(cfg); err != nil {
-		return nil, fmt.Errorf("desktop update state init failed: %w", err)
-	}
-	if err := finalizeDesktopPendingUpdate(); err != nil {
-		return nil, fmt.Errorf("desktop pending update finalize failed: %w", err)
-	}
-	if err := finalizeDesktopInstallerHandoff(); err != nil {
-		return nil, fmt.Errorf("desktop installer handoff finalize failed: %w", err)
+	if !readonlyBootstrap {
+		if err := ensureDesktopRuntimeScaffold(); err != nil {
+			return nil, fmt.Errorf("desktop runtime scaffold init failed: %w", err)
+		}
+		if err := syncDesktopBootstrapUpdateState(cfg); err != nil {
+			return nil, fmt.Errorf("desktop update state init failed: %w", err)
+		}
+		if err := finalizeDesktopBootstrapPendingUpdate(); err != nil {
+			return nil, fmt.Errorf("desktop pending update finalize failed: %w", err)
+		}
+		if err := finalizeDesktopBootstrapInstallerHandoff(); err != nil {
+			return nil, fmt.Errorf("desktop installer handoff finalize failed: %w", err)
+		}
 	}
 	return bootstrap, nil
 }
@@ -108,12 +140,152 @@ func resolveDesktopPort(cfg *types.OpenAcosmiConfig, portOverride int) int {
 	return config.ResolveGatewayPort(cfgPort)
 }
 
-func needsOnboarding(configPath string, stat statFunc) bool {
+func needsOnboarding(configPath string, cfg *types.OpenAcosmiConfig, stat statFunc) bool {
 	if configPath == "" {
 		configPath = config.ResolveConfigPath()
 	}
+	if stat == nil {
+		stat = os.Stat
+	}
+	_, err := stat(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if err != nil {
+		return true
+	}
+	return desktopConfigNeedsOnboarding(cfg, loadDesktopAuthProfileStore())
+}
+
+func desktopRequiresReadonlyBootstrap(configPath string, stat statFunc) bool {
+	if configPath == "" {
+		configPath = config.ResolveConfigPath()
+	}
+	if stat == nil {
+		stat = os.Stat
+	}
 	_, err := stat(configPath)
 	return errors.Is(err, os.ErrNotExist)
+}
+
+func applyDesktopBootstrapProfile(
+	opts gateway.GatewayServerOptions,
+	readonlyBootstrap bool,
+) gateway.GatewayServerOptions {
+	if !readonlyBootstrap || opts.BootstrapProfile != gateway.GatewayBootstrapProfileDefault {
+		return opts
+	}
+	opts.BootstrapProfile = gateway.GatewayBootstrapProfileReadonlyBootstrap
+	return opts
+}
+
+func desktopConfigNeedsOnboarding(cfg *types.OpenAcosmiConfig, authStore *authstoretypes.AuthProfileStore) bool {
+	if cfg == nil {
+		return true
+	}
+
+	primaryRef := resolveDesktopPrimaryModelRef(cfg)
+	if primaryRef == "" {
+		return true
+	}
+	ref := agentmodels.ParseModelRef(primaryRef, "")
+	if ref == nil || strings.TrimSpace(ref.Provider) == "" || strings.TrimSpace(ref.Model) == "" {
+		return true
+	}
+
+	providerCfg := resolveDesktopProviderConfig(cfg, ref.Provider)
+	if providerCfg == nil {
+		return true
+	}
+
+	if desktopProviderHasRuntimeCredentials(ref.Provider, providerCfg, authStore) {
+		return false
+	}
+	return true
+}
+
+func resolveDesktopPrimaryModelRef(cfg *types.OpenAcosmiConfig) string {
+	if cfg == nil || cfg.Agents == nil || cfg.Agents.Defaults == nil || cfg.Agents.Defaults.Model == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Agents.Defaults.Model.Primary)
+}
+
+func resolveDesktopProviderConfig(cfg *types.OpenAcosmiConfig, providerID string) *types.ModelProviderConfig {
+	if cfg == nil || cfg.Models == nil || cfg.Models.Providers == nil {
+		return nil
+	}
+	normalized := agentmodels.NormalizeProviderId(providerID)
+	if providerCfg, ok := cfg.Models.Providers[normalized]; ok && providerCfg != nil {
+		return providerCfg
+	}
+	if providerCfg, ok := cfg.Models.Providers[providerID]; ok && providerCfg != nil {
+		return providerCfg
+	}
+	return nil
+}
+
+func desktopProviderHasRuntimeCredentials(
+	providerID string,
+	providerCfg *types.ModelProviderConfig,
+	authStore *authstoretypes.AuthProfileStore,
+) bool {
+	if providerCfg == nil {
+		return false
+	}
+	if strings.TrimSpace(providerCfg.APIKey) != "" {
+		return true
+	}
+	if providerCfg.Auth == types.ModelAuthAWS {
+		return true
+	}
+	if providerAllowsCredentiallessDesktopBoot(providerID, providerCfg) {
+		return true
+	}
+	return authStoreHasProviderCredentials(providerID, authStore)
+}
+
+func authStoreHasProviderCredentials(providerID string, authStore *authstoretypes.AuthProfileStore) bool {
+	if authStore == nil {
+		return false
+	}
+	normalizedProvider := common.NormalizeProviderIdForAuth(providerID)
+	for _, profile := range authStore.Profiles {
+		rawProvider, _ := profile["provider"].(string)
+		if common.NormalizeProviderIdForAuth(rawProvider) != normalizedProvider {
+			continue
+		}
+		for _, field := range []string{"key", "token", "access", "refresh"} {
+			if value, ok := profile[field].(string); ok && strings.TrimSpace(value) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func providerAllowsCredentiallessDesktopBoot(providerID string, providerCfg *types.ModelProviderConfig) bool {
+	normalizedProvider := agentmodels.NormalizeProviderId(providerID)
+	switch normalizedProvider {
+	case "ollama", "lmstudio", "vllm":
+		return true
+	case "openai-compat":
+		return isLikelyLocalDesktopBaseURL(providerCfg.BaseURL)
+	}
+
+	return isLikelyLocalDesktopBaseURL(providerCfg.BaseURL) &&
+		strings.TrimSpace(providerCfg.APIKey) == "" &&
+		providerCfg.Auth == ""
+}
+
+func isLikelyLocalDesktopBaseURL(raw string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	if trimmed == "" {
+		return false
+	}
+	return strings.Contains(trimmed, "localhost") ||
+		strings.Contains(trimmed, "127.0.0.1") ||
+		strings.Contains(trimmed, "0.0.0.0")
 }
 
 func buildDesktopURL(port int, onboarding bool) string {
@@ -121,6 +293,13 @@ func buildDesktopURL(port int, onboarding bool) string {
 		return fmt.Sprintf("http://127.0.0.1:%d/ui/?onboarding=true", port)
 	}
 	return fmt.Sprintf("http://127.0.0.1:%d/ui/", port)
+}
+
+func resolveDesktopWindowURL(bootstrap *desktopBootstrap, forceOnboarding bool) string {
+	if bootstrap == nil {
+		return ""
+	}
+	return buildDesktopURL(bootstrap.Port, forceOnboarding)
 }
 
 func startOrAttachGateway(
@@ -132,7 +311,7 @@ func startOrAttachGateway(
 	start gatewayStartFunc,
 ) (runtimeCloser, bool, error) {
 	if wait(port, attachProbeTimeout) {
-		return nil, true, nil
+		return nil, false, fmt.Errorf("gateway port %d is already in use; desktop runtime will not attach an existing gateway", port)
 	}
 	if !hasDesktopControlUISource(opts) {
 		return nil, false, errors.New("desktop control UI assets not found; use -control-ui-dir, gateway.controlUi.root, or build with desktopembed")

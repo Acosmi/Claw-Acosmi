@@ -632,6 +632,30 @@ func (r *ExtensionRelay) handleExtensionMessage(msg []byte) {
 	case "tab_created":
 		r.logger.Info("extension tab created", "tabId", envelope.TabID)
 
+	case "cs_response":
+		// Content script response from extension — resolve pending request.
+		if ch, ok := r.extPending.LoadAndDelete(envelope.ID); ok {
+			respCh := ch.(chan json.RawMessage)
+			if envelope.Error != "" {
+				errJSON, _ := json.Marshal(map[string]string{"error": envelope.Error})
+				respCh <- errJSON
+			} else {
+				respCh <- envelope.Result
+			}
+		}
+
+	case "s3_response":
+		// S3 API response (downloads/notifications/tabGroups) — resolve pending.
+		if ch, ok := r.extPending.LoadAndDelete(envelope.ID); ok {
+			respCh := ch.(chan json.RawMessage)
+			if envelope.Error != "" {
+				errJSON, _ := json.Marshal(map[string]string{"error": envelope.Error})
+				respCh <- errJSON
+			} else {
+				respCh <- envelope.Result
+			}
+		}
+
 	case "ping":
 		// Heartbeat from extension — respond with pong to keep connection alive.
 		r.extMu.Lock()
@@ -734,6 +758,90 @@ func (r *ExtensionRelay) SendExtensionCommand(cmdType string, extra map[string]a
 	}
 
 	return conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// SendContentScriptCommand sends a content script command to the extension
+// and waits for a response. This bypasses CDP and uses the content script
+// injected into the page for DOM operations.
+func (r *ExtensionRelay) SendContentScriptCommand(action string, tabID int, extra map[string]any, timeout time.Duration) (json.RawMessage, error) {
+	r.extMu.Lock()
+	conn := r.extConn
+	r.extMu.Unlock()
+
+	if conn == nil {
+		return nil, fmt.Errorf("no Chrome extension connected")
+	}
+
+	// Generate request ID.
+	r.extMu.Lock()
+	r.extNextID++
+	reqID := r.extNextID
+	r.extMu.Unlock()
+
+	// Create response channel.
+	respCh := make(chan json.RawMessage, 1)
+	r.extPending.Store(reqID, respCh)
+	defer r.extPending.Delete(reqID)
+
+	// Build command.
+	cmd := map[string]any{
+		"type":   action, // e.g., "cs_get_text", "cs_click", "cs_fill"
+		"action": action,
+		"id":     reqID,
+		"tabId":  tabID,
+	}
+	for k, v := range extra {
+		cmd[k] = v
+	}
+
+	cmdJSON, err := json.Marshal(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("marshal content script command: %w", err)
+	}
+
+	if err := conn.WriteMessage(websocket.TextMessage, cmdJSON); err != nil {
+		return nil, fmt.Errorf("send content script command: %w", err)
+	}
+
+	// Wait for response.
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case result := <-respCh:
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(result, &errResp) == nil && errResp.Error != "" {
+			return nil, fmt.Errorf("content script: %s", errResp.Error)
+		}
+		return result, nil
+	case <-timer.C:
+		return nil, fmt.Errorf("content script command %s: timeout after %s", action, timeout)
+	}
+}
+
+// SendContentScriptOrCDP tries content script first, falls back to CDP if the
+// content script is unavailable (e.g., chrome://, about: pages).
+func (r *ExtensionRelay) SendContentScriptOrCDP(action string, tabID int, extra map[string]any, cdpMethod string, cdpParams map[string]any, timeout time.Duration) (json.RawMessage, error) {
+	// Try content script first.
+	result, err := r.SendContentScriptCommand(action, tabID, extra, timeout)
+	if err == nil {
+		return result, nil
+	}
+
+	r.logger.Debug("content script fallback to CDP",
+		"action", action, "tabId", tabID, "csErr", err, "cdpMethod", cdpMethod)
+
+	// Fall back to CDP.
+	if cdpMethod != "" {
+		return r.SendCDPToExtension(cdpMethod, cdpParams, tabID, timeout)
+	}
+
+	return nil, fmt.Errorf("content script failed and no CDP fallback: %w", err)
 }
 
 // IsExtensionConnected returns true if a Chrome extension is currently connected.

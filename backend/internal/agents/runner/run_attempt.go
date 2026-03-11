@@ -119,6 +119,7 @@ type AttemptParams struct {
 	AgentDir           string                    `json:"agentDir"`
 	Config             *types.OpenAcosmiConfig   `json:"-"`
 	Prompt             string                    `json:"prompt"`
+	SkillFilter        []string                  `json:"skillFilter,omitempty"`
 	Provider           string                    `json:"provider"`
 	ModelID            string                    `json:"modelId"`
 	Model              *ResolvedModel            `json:"model"`
@@ -136,7 +137,7 @@ type AttemptParams struct {
 	// 由 server.go 注入，内部调用 EscalationManager.GetEffectiveLevel()。
 	SecurityLevelFunc func() string
 	// MountRequestsFunc 动态获取临时挂载请求（Phase 3.4）。
-	MountRequestsFunc func() []MountRequestForSandbox
+	MountRequestsFunc func(runID string) []MountRequestForSandbox
 	// DelegationContract 委托合约约束（可选，nil = 主 agent 无合约限制）。
 	DelegationContract *DelegationContract
 	// PromptMode 提示词模式（"full"|"minimal"|"none"，空 = "full"）。

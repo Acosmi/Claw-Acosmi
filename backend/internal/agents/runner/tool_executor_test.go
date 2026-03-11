@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/llmclient"
+	"github.com/Acosmi/ClawAcosmi/internal/agents/session"
 	"github.com/Acosmi/ClawAcosmi/internal/infra"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
@@ -1028,6 +1030,8 @@ func TestExtractToolArgsSummary(t *testing.T) {
 		{"memory_search query", "memory_search", map[string]interface{}{"query": "上次会话"}, "上次会话"},
 		{"browser action", "browser", map[string]interface{}{"action": "navigate", "url": "https://x.com"}, "navigate https://x.com"},
 		{"browser no url", "browser", map[string]interface{}{"action": "screenshot"}, "screenshot"},
+		{"browser tab target", "browser", map[string]interface{}{"action": "switch_tab", "target_id": "tab-2"}, "switch_tab tab-2"},
+		{"browser ai goal", "browser", map[string]interface{}{"action": "ai_browse", "goal": "search the pricing page"}, "ai_browse search the pricing page"},
 		{"unknown tool", "custom_tool", map[string]interface{}{"foo": "bar"}, ""},
 		{"empty args", "bash", map[string]interface{}{}, ""},
 		{"nil args", "bash", nil, ""},
@@ -1051,6 +1055,93 @@ func TestExtractToolArgsSummary_Truncation(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "...") {
 		t.Errorf("expected truncated suffix '...'")
+	}
+}
+
+func TestExecuteBrowserTool_AllSharedActionsAreHandled(t *testing.T) {
+	params := ToolExecParams{
+		BrowserController:      noopBrowserController{},
+		BrowserEvaluateEnabled: true,
+	}
+
+	actionNames := func() []string {
+		r := &EmbeddedAttemptRunner{BrowserController: noopBrowserController{}}
+		for _, tool := range r.buildToolDefinitions() {
+			if tool.Name != "browser" {
+				continue
+			}
+			var schema struct {
+				Properties map[string]struct {
+					Enum []string `json:"enum"`
+				} `json:"properties"`
+			}
+			if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
+				t.Fatalf("unmarshal browser schema: %v", err)
+			}
+			return schema.Properties["action"].Enum
+		}
+		t.Fatal("browser tool definition not found")
+		return nil
+	}()
+
+	inputs := map[string]string{
+		"navigate":            `{"action":"navigate","url":"https://example.com"}`,
+		"get_content":         `{"action":"get_content"}`,
+		"observe":             `{"action":"observe"}`,
+		"annotate_som":        `{"action":"annotate_som"}`,
+		"click":               `{"action":"click","selector":"button"}`,
+		"click_ref":           `{"action":"click_ref","ref":"e1"}`,
+		"type":                `{"action":"type","selector":"input","text":"hello"}`,
+		"fill_ref":            `{"action":"fill_ref","ref":"e1","text":"hello"}`,
+		"screenshot":          `{"action":"screenshot"}`,
+		"evaluate":            `{"action":"evaluate","script":"1+1"}`,
+		"wait_for":            `{"action":"wait_for","selector":"body"}`,
+		"go_back":             `{"action":"go_back"}`,
+		"go_forward":          `{"action":"go_forward"}`,
+		"get_url":             `{"action":"get_url"}`,
+		"ai_browse":           `{"action":"ai_browse","goal":"summarize the current page"}`,
+		"start_gif_recording": `{"action":"start_gif_recording"}`,
+		"stop_gif_recording":  `{"action":"stop_gif_recording"}`,
+		"list_tabs":           `{"action":"list_tabs"}`,
+		"create_tab":          `{"action":"create_tab","url":"https://example.com"}`,
+		"close_tab":           `{"action":"close_tab","target_id":"tab-1"}`,
+		"switch_tab":          `{"action":"switch_tab","target_id":"tab-1"}`,
+	}
+
+	for _, action := range actionNames {
+		payload, ok := inputs[action]
+		if !ok {
+			t.Fatalf("missing test payload for browser action %q", action)
+		}
+		result, err := ExecuteToolCall(context.Background(), "browser", json.RawMessage(payload), params)
+		if err != nil {
+			t.Fatalf("action %q returned error: %v", action, err)
+		}
+		if strings.Contains(result, "[Unknown browser action:") {
+			t.Fatalf("action %q fell back to unknown action result: %q", action, result)
+		}
+	}
+}
+
+func TestExecuteBrowserTool_StateChangesDoNotAutoAttachScreenshots(t *testing.T) {
+	params := ToolExecParams{
+		BrowserController:      noopBrowserController{},
+		BrowserEvaluateEnabled: true,
+	}
+
+	for _, payload := range []json.RawMessage{
+		json.RawMessage(`{"action":"navigate","url":"https://example.com"}`),
+		json.RawMessage(`{"action":"click","selector":"button"}`),
+		json.RawMessage(`{"action":"click_ref","ref":"e1"}`),
+		json.RawMessage(`{"action":"ai_browse","goal":"summarize the current page"}`),
+	} {
+		result, err := ExecuteToolCall(context.Background(), "browser", payload, params)
+		if err != nil {
+			t.Fatalf("unexpected error for payload %s: %v", string(payload), err)
+		}
+		if strings.HasPrefix(result, "__MULTIMODAL__") {
+			t.Fatalf("payload %s should return text by default, got multimodal result %q", string(payload), result)
+		}
 	}
 }
 
@@ -1400,6 +1491,103 @@ func TestSendMedia_NoInput_HelpfulError(t *testing.T) {
 	if !strings.Contains(result, "file_path") {
 		t.Errorf("error should mention file_path, got %q", result)
 	}
+	if !strings.Contains(result, "latest image already attached") {
+		t.Errorf("error should mention latest chat attachment fallback, got %q", result)
+	}
+}
+
+func TestSendMedia_ReusesCurrentChatAttachment(t *testing.T) {
+	sender := &mockMediaSender{}
+	imageData := []byte("fake-png-data")
+	p := ToolExecParams{
+		SessionKey:  "feishu:oc_test123",
+		MediaSender: sender,
+		CurrentAttachments: []session.ContentBlock{
+			{
+				Type:     "image",
+				FileName: "chat-upload.png",
+				MimeType: "image/png",
+				Source: &session.MediaSource{
+					Type:      "base64",
+					MediaType: "image/png",
+					Data:      base64.StdEncoding.EncodeToString(imageData),
+				},
+			},
+		},
+	}
+
+	result, err := ExecuteToolCall(context.Background(), "send_media",
+		json.RawMessage(`{"message":"转发这张图给飞书"}`), p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sender.lastFileName != "chat-upload.png" {
+		t.Fatalf("fileName=%q, want chat-upload.png", sender.lastFileName)
+	}
+	if sender.lastMimeType != "image/png" {
+		t.Fatalf("mimeType=%q, want image/png", sender.lastMimeType)
+	}
+	if sender.lastSize != len(imageData) {
+		t.Fatalf("size=%d, want %d", sender.lastSize, len(imageData))
+	}
+	if !strings.HasPrefix(result, "__MULTIMODAL__") {
+		t.Fatalf("expected multimodal result for image attachment, got %q", result)
+	}
+}
+
+func TestSendMedia_ReusesLatestTranscriptAttachment(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionFile := filepath.Join(tmpDir, "chat.jsonl")
+	mgr := session.NewSessionManager("")
+	if _, err := mgr.EnsureSessionFile("sess-1", sessionFile); err != nil {
+		t.Fatalf("EnsureSessionFile: %v", err)
+	}
+
+	imageData := []byte("fake-jpeg-data")
+	if err := mgr.AppendMessage("sess-1", sessionFile, session.TranscriptEntry{
+		Role: "user",
+		Content: []session.ContentBlock{
+			session.TextBlock("请看这张图"),
+			{
+				Type:     "image",
+				FileName: "from-chat.jpg",
+				MimeType: "image/jpeg",
+				Source: &session.MediaSource{
+					Type:      "base64",
+					MediaType: "image/jpeg",
+					Data:      base64.StdEncoding.EncodeToString(imageData),
+				},
+			},
+		},
+		Timestamp: 123,
+	}); err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+
+	sender := &mockMediaSender{}
+	result, err := ExecuteToolCall(context.Background(), "send_media",
+		json.RawMessage(`{"message":"转发上一张图"}`),
+		ToolExecParams{
+			SessionKey:  "feishu:oc_test123",
+			SessionID:   "sess-1",
+			SessionFile: sessionFile,
+			MediaSender: sender,
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sender.lastFileName != "from-chat.jpg" {
+		t.Fatalf("fileName=%q, want from-chat.jpg", sender.lastFileName)
+	}
+	if sender.lastMimeType != "image/jpeg" {
+		t.Fatalf("mimeType=%q, want image/jpeg", sender.lastMimeType)
+	}
+	if sender.lastSize != len(imageData) {
+		t.Fatalf("size=%d, want %d", sender.lastSize, len(imageData))
+	}
+	if !strings.HasPrefix(result, "__MULTIMODAL__") {
+		t.Fatalf("expected multimodal result for transcript attachment, got %q", result)
+	}
 }
 
 func TestSendMedia_BadFilePath_HelpfulError(t *testing.T) {
@@ -1595,6 +1783,38 @@ func TestSendMedia_PathGrantAllowsOutsideWorkspace(t *testing.T) {
 	}
 	if IsPermissionDeniedOutput(result) {
 		t.Fatalf("expected approved path to bypass permission denied, got %q", result)
+	}
+	if sender.lastFileName != "desktop-plan.md" {
+		t.Fatalf("fileName=%q, want desktop-plan.md", sender.lastFileName)
+	}
+	if !strings.Contains(result, `"status":"sent"`) {
+		t.Fatalf("expected success json, got %q", result)
+	}
+}
+
+func TestSendMedia_FullSecurityAllowsOutsideWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	outsideDir := t.TempDir()
+	testFile := filepath.Join(outsideDir, "desktop-plan.md")
+	if err := os.WriteFile(testFile, []byte("# outside\n"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	sender := &mockMediaSender{}
+	p := ToolExecParams{
+		SessionKey:    "feishu:oc_test123",
+		MediaSender:   sender,
+		WorkspaceDir:  workspace,
+		SecurityLevel: "full",
+	}
+
+	result, err := ExecuteToolCall(context.Background(), "send_media",
+		json.RawMessage(fmt.Sprintf(`{"file_path":%q}`, testFile)), p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if IsPermissionDeniedOutput(result) {
+		t.Fatalf("expected full security to bypass workspace restriction, got %q", result)
 	}
 	if sender.lastFileName != "desktop-plan.md" {
 		t.Fatalf("fileName=%q, want desktop-plan.md", sender.lastFileName)
@@ -1865,6 +2085,28 @@ func TestArgusTool_NilBridge_NoPanic(t *testing.T) {
 	}
 	if !strings.Contains(result, "not available") {
 		t.Errorf("should report Argus not available, got %q", result)
+	}
+}
+
+func TestArgusTool_ApprovalDenied_StopsRetrySignal(t *testing.T) {
+	mgr := newTestCoderConfirmationManager(t, "deny", nil)
+	p := ToolExecParams{
+		SessionKey:        "web:test",
+		ArgusApprovalMode: "medium_and_above",
+		CoderConfirmation: mgr,
+	}
+	result, err := executeArgusTool(context.Background(), "argus_click", json.RawMessage(`{"x":10,"y":20}`), p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !IsApprovalDeniedOutput(result) {
+		t.Fatalf("expected approval denied output, got %q", result)
+	}
+	if !IsBlockingDeniedOutput(result) {
+		t.Fatalf("expected blocking denied output, got %q", result)
+	}
+	if !strings.Contains(result, "Do NOT retry the same action automatically") {
+		t.Fatalf("expected hard-stop guidance, got %q", result)
 	}
 }
 

@@ -76,7 +76,7 @@ func TestHandleFeishuEscalationAction_ApproveWithMatchingCardID(t *testing.T) {
 	}
 }
 
-func TestHandleFeishuTypedApprovalAction_MountAccessApprove(t *testing.T) {
+func TestHandleFeishuTypedApprovalAction_MountAccessApproveTaskScoped(t *testing.T) {
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
@@ -86,7 +86,7 @@ func TestHandleFeishuTypedApprovalAction_MountAccessApprove(t *testing.T) {
 	mgr.SetMaxAllowedLevel("full")
 	defer mgr.Close()
 
-	if err := mgr.RequestEscalation("esc_mount", "allowlist", "need mount", "", "", "", "", 30, MountRequest{
+	if err := mgr.RequestEscalation("esc_mount", "sandboxed", "need mount", "run-1", "", "", "", 30, MountRequest{
 		HostPath:  "/Users/test/Desktop",
 		MountMode: "ro",
 	}); err != nil {
@@ -94,7 +94,7 @@ func TestHandleFeishuTypedApprovalAction_MountAccessApprove(t *testing.T) {
 	}
 
 	state := &GatewayState{escalationMgr: mgr}
-	resp, err := handleFeishuTypedApprovalAction(state, "esc_mount", ApprovalTypeMountAccess, "approve", map[string]interface{}{"ttl": float64(30)})
+	resp, err := handleFeishuTypedApprovalAction(state, "esc_mount", ApprovalTypeMountAccess, "approve", map[string]interface{}{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,6 +108,50 @@ func TestHandleFeishuTypedApprovalAction_MountAccessApprove(t *testing.T) {
 	}
 	if len(status.Active.MountRequests) != 1 || status.Active.MountRequests[0].HostPath != "/Users/test/Desktop" {
 		t.Fatalf("expected approved mount request to survive, got %+v", status.Active)
+	}
+	if !status.Active.TaskScoped {
+		t.Fatalf("expected typed mount approval to create task-scoped grant, got %+v", status.Active)
+	}
+	if !status.Active.ExpiresAt.IsZero() {
+		t.Fatalf("expected task-scoped typed mount approval to have no expiry, got %+v", status.Active)
+	}
+}
+
+func TestHandleFeishuEscalationAction_TaskScopedMountIgnoresTTLOverride(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	if err := mgr.RequestEscalation("esc_mount", "sandboxed", "need mount", "run-1", "", "", "", 30, MountRequest{
+		HostPath:  "/Users/test/Desktop",
+		MountMode: "ro",
+	}); err != nil {
+		t.Fatalf("request escalation failed: %v", err)
+	}
+
+	state := &GatewayState{escalationMgr: mgr}
+	resp, err := handleFeishuEscalationAction(state, "esc_mount", "approve", map[string]interface{}{"ttl": float64(30)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Type != "success" {
+		t.Fatalf("expected success toast, got %+v", resp)
+	}
+
+	status := mgr.GetStatus()
+	if !status.HasActive || status.Active == nil {
+		t.Fatalf("expected active grant after mount approval")
+	}
+	if !status.Active.TaskScoped {
+		t.Fatalf("expected task-scoped grant, got %+v", status.Active)
+	}
+	if !status.Active.ExpiresAt.IsZero() {
+		t.Fatalf("expected task-scoped grant to ignore ttl override, got %+v", status.Active)
 	}
 }
 

@@ -155,39 +155,75 @@ func serveBrowserExtensionDownload(w http.ResponseWriter, r *http.Request, cfg B
 
 // resolveExtensionDir 查找 browser-extension/ 目录。
 func resolveExtensionDir(configured string) string {
-	if configured != "" {
-		if info, err := os.Stat(configured); err == nil && info.IsDir() {
-			return configured
-		}
+	exe := ""
+	if resolved, err := os.Executable(); err == nil {
+		exe = resolved
 	}
-	// 从可执行文件向上查找
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
+	cwd := ""
+	if resolved, err := os.Getwd(); err == nil {
+		cwd = resolved
 	}
-	// 尝试几个常见相对路径
-	candidates := []string{
-		filepath.Join(filepath.Dir(exe), "..", "browser-extension"),
-		filepath.Join(filepath.Dir(exe), "..", "..", "browser-extension"),
-		filepath.Join(filepath.Dir(exe), "browser-extension"),
-	}
-	// 也尝试工作目录
-	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(wd, "browser-extension"),
-			filepath.Join(wd, "..", "browser-extension"),
-		)
-	}
-	for _, c := range candidates {
-		abs, _ := filepath.Abs(c)
-		if info, err := os.Stat(abs); err == nil && info.IsDir() {
-			// 验证 manifest.json 存在
-			if _, err := os.Stat(filepath.Join(abs, "manifest.json")); err == nil {
-				return abs
-			}
+	return resolveExtensionDirFromPaths(configured, exe, cwd)
+}
+
+func resolveExtensionDirFromPaths(configured, execPath, cwd string) string {
+	for _, candidate := range extensionDirCandidates(configured, execPath, cwd) {
+		if extensionDirExists(candidate) {
+			return candidate
 		}
 	}
 	return ""
+}
+
+func extensionDirExists(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(dir, "manifest.json"))
+	return err == nil
+}
+
+func extensionDirCandidates(configured, execPath, cwd string) []string {
+	seen := make(map[string]struct{})
+	var candidates []string
+
+	appendCandidate := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
+			return
+		}
+		if _, ok := seen[abs]; ok {
+			return
+		}
+		seen[abs] = struct{}{}
+		candidates = append(candidates, abs)
+	}
+
+	appendCandidate(configured)
+
+	if execPath != "" {
+		execDir := filepath.Dir(execPath)
+		appendCandidate(filepath.Join(execDir, "..", "Resources", "browser-extension"))
+		appendCandidate(filepath.Join(execDir, "..", "browser-extension"))
+		appendCandidate(filepath.Join(execDir, "..", "..", "browser-extension"))
+		appendCandidate(filepath.Join(execDir, "browser-extension"))
+	}
+
+	if cwd != "" {
+		appendCandidate(filepath.Join(cwd, "browser-extension"))
+		appendCandidate(filepath.Join(cwd, "..", "browser-extension"))
+	}
+
+	return candidates
 }
 
 // ---------- 引导页 HTML ----------

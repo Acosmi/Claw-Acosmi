@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // 对应 TS src/infra/dotenv.ts — .env 文件加载
@@ -20,15 +22,7 @@ func LoadDotEnv(quiet bool) {
 	loadDotEnvFile(".env", quiet)
 
 	// 2. 加载全局 fallback: ~/.openacosmi/.env（或 CRABCLAW_STATE_DIR / OPENACOSMI_STATE_DIR 下的 .env）
-	globalDir := envValueCompat("CRABCLAW_STATE_DIR", "OPENACOSMI_STATE_DIR")
-	if globalDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return
-		}
-		globalDir = filepath.Join(home, ".openacosmi")
-	}
-	globalEnvPath := filepath.Join(globalDir, ".env")
+	globalEnvPath := filepath.Join(config.ResolveStateDir(), ".env")
 	loadDotEnvFile(globalEnvPath, quiet)
 }
 

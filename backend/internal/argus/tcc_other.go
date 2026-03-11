@@ -9,6 +9,7 @@ package argus
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -29,15 +30,41 @@ type TCCStatus struct {
 	Accessibility           PermissionState `json:"accessibility"`
 	ScreenRecordingDaysLeft int             `json:"screen_recording_days_left,omitempty"`
 	ScreenRecordingExpiring bool            `json:"screen_recording_expiring,omitempty"`
+	PermissionSubject       string          `json:"permission_subject,omitempty"`
+	PermissionPath          string          `json:"permission_path,omitempty"`
+	DetectionMode           string          `json:"detection_mode,omitempty"`
 }
 
 // CheckTCCPermissions 非 macOS 平台总是返回 granted。
 func CheckTCCPermissions() TCCStatus {
+	return CheckTCCPermissionsForBinary("")
+}
+
+// CheckTCCPermissionsForBinary 非 macOS 平台总是返回 granted。
+func CheckTCCPermissionsForBinary(binaryPath string) TCCStatus {
+	subject, path := detectPermissionSubject(binaryPath)
 	return TCCStatus{
 		ScreenRecording:         PermGranted,
 		Accessibility:           PermGranted,
 		ScreenRecordingDaysLeft: -1,
+		PermissionSubject:       subject,
+		PermissionPath:          path,
+		DetectionMode:           "not_applicable",
 	}
+}
+
+func detectPermissionSubject(binaryPath string) (string, string) {
+	execPath, err := os.Executable()
+	if err != nil {
+		if strings.TrimSpace(binaryPath) != "" {
+			return "helper_process", binaryPath
+		}
+		return "main_app", ""
+	}
+	if strings.TrimSpace(binaryPath) == "" || binaryPath == execPath {
+		return "main_app", execPath
+	}
+	return "helper_process", binaryPath
 }
 
 // HasRequiredPermissions 检查是否具备所有必需权限。

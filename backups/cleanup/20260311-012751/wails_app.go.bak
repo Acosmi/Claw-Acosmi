@@ -1,0 +1,150 @@
+//go:build desktopwails
+
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"sync"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/icons"
+)
+
+const (
+	desktopWindowName        = "main"
+	desktopWindowTitle       = "Crab Claw by Acosmi.ai"
+	desktopWindowMinWidth    = 1080
+	desktopWindowMinHeight   = 720
+	desktopWindowWidth       = 1360
+	desktopWindowHeight      = 860
+	desktopSystemTrayTooltip = "Crab Claw by Acosmi.ai"
+)
+
+type desktopWailsShell struct {
+	bootstrap *desktopBootstrap
+	app       *application.App
+	window    application.Window
+
+	mu       sync.Mutex
+	quitting bool
+}
+
+func runDesktopWailsApp(bootstrap *desktopBootstrap) error {
+	shell := &desktopWailsShell{bootstrap: bootstrap}
+	shell.app = application.New(application.Options{
+		Name:        desktopWindowTitle,
+		Description: "Crab Claw by Acosmi.ai desktop shell",
+		Assets:      application.AlphaAssets,
+		Windows: application.WindowsOptions{
+			DisableQuitOnLastWindowClosed: true,
+		},
+		Linux: application.LinuxOptions{
+			DisableQuitOnLastWindowClosed: true,
+		},
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: false,
+		},
+		OnShutdown: shell.onShutdown,
+	})
+
+	shell.window = shell.app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:      desktopWindowName,
+		Title:     desktopWindowTitle,
+		Width:     desktopWindowWidth,
+		Height:    desktopWindowHeight,
+		MinWidth:  desktopWindowMinWidth,
+		MinHeight: desktopWindowMinHeight,
+		URL:       bootstrap.URL,
+		Mac: application.MacWindow{
+			TitleBar:                application.MacTitleBarHiddenInsetUnified,
+			InvisibleTitleBarHeight: 50,
+		},
+	})
+	shell.window.Center()
+	shell.window.RegisterHook(events.Common.WindowClosing, shell.handleWindowClosing)
+	shell.app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, shell.handleApplicationReopen)
+
+	shell.configureSystemTray()
+
+	return shell.app.Run()
+}
+
+func (s *desktopWailsShell) onShutdown() {
+	if s.bootstrap == nil || s.bootstrap.Runtime == nil {
+		return
+	}
+	_ = s.bootstrap.Runtime.Close("desktop wails shutdown")
+}
+
+func (s *desktopWailsShell) handleWindowClosing(event *application.WindowEvent) {
+	s.mu.Lock()
+	quitting := s.quitting
+	s.mu.Unlock()
+	if quitting || s.window == nil {
+		return
+	}
+	s.window.Hide()
+	event.Cancel()
+}
+
+func (s *desktopWailsShell) handleApplicationReopen(event *application.ApplicationEvent) {
+	if s.window == nil {
+		return
+	}
+	if event.Context() != nil && event.Context().HasVisibleWindows() {
+		return
+	}
+	s.showMainWindow(false)
+}
+
+func (s *desktopWailsShell) configureSystemTray() {
+	tray := s.app.SystemTray.New()
+	tray.SetTooltip(desktopSystemTrayTooltip)
+
+	if runtime.GOOS == "darwin" {
+		tray.SetTemplateIcon(icons.SystrayMacTemplate)
+	}
+
+	menu := s.app.NewMenu()
+	menu.Add("显示主界面").OnClick(func(*application.Context) {
+		s.showMainWindow(false)
+	})
+	menu.Add("重新配置向导").OnClick(func(*application.Context) {
+		s.showMainWindow(true)
+	})
+	menu.AddSeparator()
+	menu.Add("退出 Crab Claw by Acosmi.ai").OnClick(func(*application.Context) {
+		s.mu.Lock()
+		s.quitting = true
+		s.mu.Unlock()
+		s.app.Quit()
+	})
+	tray.SetMenu(menu)
+	tray.OnClick(func() {
+		s.showMainWindow(false)
+	})
+}
+
+func (s *desktopWailsShell) showMainWindow(forceOnboarding bool) {
+	if s.window == nil || s.bootstrap == nil {
+		return
+	}
+	targetURL := s.bootstrap.URL
+	if forceOnboarding {
+		targetURL = buildDesktopURL(s.bootstrap.Port, true)
+	} else if s.bootstrap.NeedsOnboarding {
+		targetURL = buildDesktopURL(s.bootstrap.Port, true)
+	} else {
+		targetURL = buildDesktopURL(s.bootstrap.Port, false)
+	}
+	s.window.SetURL(targetURL).Show().Focus()
+}
+
+func (s *desktopWailsShell) String() string {
+	if s.bootstrap == nil {
+		return "desktopWailsShell<nil>"
+	}
+	return fmt.Sprintf("desktopWailsShell<url=%s attached=%t>", s.bootstrap.URL, s.bootstrap.AttachedExisting)
+}

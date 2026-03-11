@@ -110,7 +110,8 @@ func TestNormalizeProviderID(t *testing.T) {
 	}{
 		{"zhipu", "zai"},
 		{"doubao", "volcengine"},
-		{"qwen", "qwen-portal"},
+		{"qwen", "qwen"},
+		{"minimax", "minimax"},
 		{"anthropic", "anthropic"},
 		{"  OpenAI  ", "openai"},
 	}
@@ -119,6 +120,28 @@ func TestNormalizeProviderID(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("NormalizeProviderID(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
+	}
+}
+
+func TestResolveAuthProviderID(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		authMode string
+		want     string
+	}{
+		{name: "qwen api key", provider: "qwen", authMode: "apiKey", want: "qwen"},
+		{name: "qwen device", provider: "qwen", authMode: "deviceCode", want: "qwen-portal"},
+		{name: "minimax api key", provider: "minimax", authMode: "apiKey", want: "minimax"},
+		{name: "minimax device", provider: "minimax", authMode: "deviceCode", want: "minimax-portal"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResolveAuthProviderID(tt.provider, tt.authMode); got != tt.want {
+				t.Fatalf("ResolveAuthProviderID(%q, %q) = %q, want %q", tt.provider, tt.authMode, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -188,6 +211,62 @@ func TestApplyProviderByID_CustomBaseURL(t *testing.T) {
 	provCfg := cfg.Models.Providers["openai"]
 	if provCfg.BaseURL != "https://my-proxy.example.com/v1" {
 		t.Errorf("custom BaseURL not applied: got %s", provCfg.BaseURL)
+	}
+}
+
+func TestApplyProviderByID_QwenUsesRuntimeProviderConfig(t *testing.T) {
+	cfg := &pkgtypes.OpenAcosmiConfig{}
+	ApplyProviderByID("qwen", cfg, &ApplyOpts{APIKey: "qwen-key", SetDefaultModel: true})
+
+	provCfg := cfg.Models.Providers["qwen"]
+	if provCfg == nil {
+		t.Fatal("qwen provider not found")
+	}
+	if _, ok := cfg.Models.Providers["qwen-portal"]; ok {
+		t.Fatal("qwen-portal provider should not be materialized for runtime config")
+	}
+	if provCfg.BaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
+		t.Fatalf("unexpected qwen BaseURL: %s", provCfg.BaseURL)
+	}
+	if provCfg.APIKey != "qwen-key" {
+		t.Fatalf("unexpected qwen API key: %s", provCfg.APIKey)
+	}
+	if len(provCfg.Models) == 0 {
+		t.Fatal("expected qwen models to be populated")
+	}
+	if cfg.Agents == nil || cfg.Agents.Defaults == nil || cfg.Agents.Defaults.Model == nil {
+		t.Fatal("agents.defaults.model not set")
+	}
+	if cfg.Agents.Defaults.Model.Primary != "qwen/qwen3.5-plus" {
+		t.Fatalf("primary model = %q, want %q", cfg.Agents.Defaults.Model.Primary, "qwen/qwen3.5-plus")
+	}
+}
+
+func TestApplyProviderByID_MinimaxUsesHostedProviderConfig(t *testing.T) {
+	cfg := &pkgtypes.OpenAcosmiConfig{}
+	ApplyProviderByID("minimax", cfg, &ApplyOpts{APIKey: "minimax-key", SetDefaultModel: true})
+
+	provCfg := cfg.Models.Providers["minimax"]
+	if provCfg == nil {
+		t.Fatal("minimax provider not found")
+	}
+	if provCfg.API != "openai-completions" {
+		t.Fatalf("unexpected minimax API: %s", provCfg.API)
+	}
+	if provCfg.BaseURL != "https://api.minimax.io/v1" {
+		t.Fatalf("unexpected minimax BaseURL: %s", provCfg.BaseURL)
+	}
+	if provCfg.APIKey != "minimax-key" {
+		t.Fatalf("unexpected minimax API key: %s", provCfg.APIKey)
+	}
+	if len(provCfg.Models) == 0 {
+		t.Fatal("expected minimax models to be populated")
+	}
+	if cfg.Agents == nil || cfg.Agents.Defaults == nil || cfg.Agents.Defaults.Model == nil {
+		t.Fatal("agents.defaults.model not set")
+	}
+	if cfg.Agents.Defaults.Model.Primary != "minimax/MiniMax-M2.5" {
+		t.Fatalf("primary model = %q, want %q", cfg.Agents.Defaults.Model.Primary, "minimax/MiniMax-M2.5")
 	}
 }
 

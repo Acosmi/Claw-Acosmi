@@ -20,3 +20,8 @@ func EnsureCodeSigned(binaryPath string) error {
 func IsValidlySigned(path string) bool {
 	return false
 }
+
+// CodeSignIdentifier 非 macOS 平台无 codesign 标识符。
+func CodeSignIdentifier(path string) string {
+	return ""
+}

@@ -259,6 +259,9 @@ func (l *ConfigLoader) ReadConfigFileSnapshot() (*types.ConfigFileSnapshot, erro
 			Issues: []types.ConfigValidationIssue{{Message: fmt.Sprintf("config unmarshal failed: %v", err)}},
 		}, nil
 	}
+	for _, change := range repairRuntimeProviderConfigs(&cfg) {
+		warnings = append(warnings, types.ConfigValidationIssue{Message: change})
+	}
 
 	// 验证
 	issues := ValidateOpenAcosmiConfig(&cfg)
@@ -513,6 +516,9 @@ func (l *ConfigLoader) applyConfigPipeline(data []byte) (*types.OpenAcosmiConfig
 	var cfg types.OpenAcosmiConfig
 	if err := json.Unmarshal(processedJSON, &cfg); err != nil {
 		return nil, fmt.Errorf("config unmarshal failed: %w", err)
+	}
+	for _, change := range repairRuntimeProviderConfigs(&cfg) {
+		l.logger.Info("config runtime repair applied", "change", change)
 	}
 
 	// 验证（仅记录警告，不阻断加载）

@@ -155,18 +155,19 @@ func TestResolveAgentWorkspaceDir_NonDefault(t *testing.T) {
 }
 
 func TestResolveDefaultAgentWorkspaceDir_Profile(t *testing.T) {
+	t.Setenv("OPENACOSMI_HOME", t.TempDir())
 	t.Setenv("OPENACOSMI_PROFILE", "staging")
 	dir := resolveDefaultAgentWorkspaceDir()
 	if dir == "" {
 		t.Fatal("resolveDefaultAgentWorkspaceDir returned empty")
 	}
-	// 应包含 workspace-staging
-	if !contains(dir, "workspace-staging") {
-		t.Errorf("dir = %q, want to contain workspace-staging", dir)
+	if !contains(dir, ".openacosmi-staging/workspace") {
+		t.Errorf("dir = %q, want to contain .openacosmi-staging/workspace", dir)
 	}
 }
 
 func TestResolveDefaultAgentWorkspaceDir_Default(t *testing.T) {
+	t.Setenv("OPENACOSMI_HOME", t.TempDir())
 	t.Setenv("OPENACOSMI_PROFILE", "")
 	dir := resolveDefaultAgentWorkspaceDir()
 	if dir == "" {

@@ -5,6 +5,7 @@ import {
   createChatReadonlyRunState,
   loadPersistedChatReadonlyRun,
   loadPersistedChatReadonlyRunHistory,
+  persistChatReadonlyRun,
   startChatReadonlyRun,
   type ChatUxMode,
 } from "./chat/readonly-run-state.ts";
@@ -59,6 +60,7 @@ export function applyChatSessionSwitchState(
   const currentKey = host.sessionKey;
   let nextSettings = host.settings;
   if (currentKey && currentKey !== sessionKey) {
+    persistChatReadonlyRun(host.chatReadonlyRun, currentKey, host.chatReadonlyRunHistory);
     const curPrefixMatch = currentKey.match(/^([a-z]+):/);
     const curPrefix =
       curPrefixMatch && curPrefixMatch[1] !== "global" && curPrefixMatch[1] !== "unknown"
@@ -109,14 +111,38 @@ export function applyChatSessionSwitchState(
   startChatReadonlyRun(host, host.chatRunId, pending.ts, sessionKey);
 }
 
+export function isMacosWailsShell(
+  installKind: string | null | undefined,
+  runtime: {
+    platform?: string | null;
+    protocol?: string | null;
+    hostname?: string | null;
+  } = {
+    platform: typeof navigator === "undefined" ? null : navigator.platform,
+    protocol: typeof window === "undefined" ? null : window.location.protocol,
+    hostname: typeof window === "undefined" ? null : window.location.hostname,
+  },
+): boolean {
+  if (installKind === "macos-wails") {
+    return true;
+  }
+
+  const platform = (runtime.platform ?? "").toLowerCase();
+  const protocol = (runtime.protocol ?? "").toLowerCase();
+  const hostname = (runtime.hostname ?? "").toLowerCase();
+
+  return platform.includes("mac") && (protocol === "wails:" || hostname === "wails.localhost");
+}
+
 export function renderTab(state: AppViewState, tab: Tab, badge?: number) {
   const href = pathForTab(tab, state.basePath);
   const iconName = iconForTab(tab);
   const iconClass = isAccentIcon(iconName) ? "nav-item__icon nav-item__icon--accent" : "nav-item__icon";
+  const isActive = state.tab === tab || (tab === "automation" && state.tab === "media");
   return html`
     <a
       href=${href}
-      class="nav-item ${state.tab === tab ? "active" : ""}"
+      class="nav-item ${isActive ? "active" : ""}"
       @click=${(event: MouseEvent) => {
       if (
         event.defaultPrevented ||
@@ -129,6 +155,9 @@ export function renderTab(state: AppViewState, tab: Tab, badge?: number) {
         return;
       }
       event.preventDefault();
+      if (tab === "automation") {
+        state.automationPanel = "hub";
+      }
       state.setTab(tab);
       }}
       title=${titleForTab(tab)}
@@ -151,7 +180,7 @@ export function renderChatControls(state: AppViewState) {
   );
   const disableThinkingToggle = state.onboarding;
   const showThinking = state.onboarding ? false : state.settings.chatShowThinking;
-  const chatUxMode = state.chatUxMode ?? state.settings.chatUxMode ?? "classic";
+  const chatUxMode = state.chatUxMode ?? state.settings.chatUxMode ?? "codex-readonly";
   // Refresh icon
   const refreshIcon = html`
     <svg
@@ -245,27 +274,37 @@ export function renderChatControls(state: AppViewState) {
 
   const totalUnread = Object.values(app.channelUnreadCounts || {}).reduce((a, b) => a + b, 0);
 
+  const jumpToCrossChannelSession = () => {
+    const targetSession = app.crossChannelNotificationSessionKey;
+    if (!app.crossChannelNotificationActive || !targetSession) {
+      return;
+    }
+
+    app.clearCrossChannelNotification?.();
+
+    const prefixMatch = targetSession.match(/^([a-z]+):/);
+    const channelKey = (prefixMatch && prefixMatch[1] !== "global" && prefixMatch[1] !== "unknown")
+      ? prefixMatch[1]
+      : "web";
+    if (app.channelUnreadCounts && app.channelUnreadCounts[channelKey]) {
+      const counts = { ...app.channelUnreadCounts };
+      delete counts[channelKey];
+      app.channelUnreadCounts = counts;
+    }
+
+    if (state.sessionKey !== targetSession) {
+      // 预填充逻辑已移入 applySessionSwitch（从 _pendingChannelMsgs 缓存统一消费）
+      applySessionSwitch(targetSession);
+    }
+  };
+
   const toggleChannelDropdown = (e: Event) => {
     e.preventDefault();
     e.stopPropagation();
 
     // Red dot click-to-jump interception
     if (app.crossChannelNotificationActive && app.crossChannelNotificationSessionKey) {
-      const targetSession = app.crossChannelNotificationSessionKey;
-      app.clearCrossChannelNotification?.();
-
-      const prefixMatch = targetSession.match(/^([a-z]+):/);
-      const channelKey = (prefixMatch && prefixMatch[1] !== "global" && prefixMatch[1] !== "unknown") ? prefixMatch[1] : "web";
-      if (app.channelUnreadCounts && app.channelUnreadCounts[channelKey]) {
-        const counts = { ...app.channelUnreadCounts };
-        delete counts[channelKey];
-        app.channelUnreadCounts = counts;
-      }
-
-      if (state.sessionKey !== targetSession) {
-        // 预填充逻辑已移入 applySessionSwitch（从 _pendingChannelMsgs 缓存统一消费）
-        applySessionSwitch(targetSession);
-      }
+      jumpToCrossChannelSession();
       return; // Do not open the dropdown
     }
 
@@ -544,28 +583,66 @@ export function renderChatControls(state: AppViewState) {
         overflow: hidden;
       }
       .cross-channel-badge {
-        display: flex;
+        position: absolute;
+        top: calc(100% + 10px);
+        left: 0;
+        display: inline-flex;
         align-items: center;
-        background: var(--error-color, #ef4444);
-        border-radius: 12px;
+        gap: 6px;
+        min-height: 34px;
+        max-width: min(320px, calc(100vw - 120px));
+        padding: 0 12px;
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 14px;
         color: white;
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 600;
-        max-width: 0;
         opacity: 0;
-        padding: 0;
-        margin-left: 0;
+        visibility: hidden;
         overflow: hidden;
+        text-align: left;
+        box-shadow:
+          0 12px 28px rgba(220, 38, 38, 0.28),
+          0 0 0 1px rgba(255, 255, 255, 0.12) inset;
+        transform: translateY(-8px) scale(0.98);
+        transform-origin: top left;
         pointer-events: none;
-        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        z-index: 100020;
         white-space: nowrap;
+        -webkit-app-region: no-drag;
+        transition:
+          opacity 0.18s ease,
+          transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+          visibility 0.18s ease;
+      }
+      .cross-channel-badge::before {
+        content: "";
+        position: absolute;
+        top: -6px;
+        left: 24px;
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        background: #ef4444;
+        transform: rotate(45deg);
+        box-shadow: -1px -1px 0 rgba(255, 255, 255, 0.12);
+      }
+      .cross-channel-badge__text {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
       }
       .cross-channel-badge.show {
-        max-width: 150px;
         opacity: 1;
-        padding: 2px 8px;
-        margin-left: 4px;
-        box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+        visibility: visible;
+        transform: translateY(0) scale(1);
+        pointer-events: auto;
+      }
+      .chat-channel-switcher {
+        position: relative;
       }
       .mac-dropdown {
         position: absolute;
@@ -641,7 +718,7 @@ export function renderChatControls(state: AppViewState) {
     <div class="chat-controls">
       <div class="split-capsule ${(state.chatLoading || state.chatRunId || state.chatSending || state.chatStream !== null) ? 'is-thinking' : ''}">
         <!-- Channel Selector -->
-        <div style="position: relative;">
+        <div class="chat-channel-switcher">
           <button class="split-capsule-btn capsule-left" @click=${toggleChannelDropdown} title="切换频道">
             <span class="switch-tag">切换</span>
             <span class="switch-current">
@@ -650,10 +727,21 @@ export function renderChatControls(state: AppViewState) {
       ? html`<span class="switch-unread-dot"></span>`
       : nothing}
             </span>
-            <div class="cross-channel-badge ${app.crossChannelNotificationActive ? 'show' : ''}">
-              <span class="statusDot pulse" style="background: white; flex-shrink: 0; margin-right: 4px; width: 6px; height: 6px;"></span>
-              <span>${app.crossChannelNotificationText}</span>
-            </div>
+          </button>
+          <button
+            class="cross-channel-badge ${app.crossChannelNotificationActive ? 'show' : ''}"
+            @click=${(e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      jumpToCrossChannelSession();
+    }}
+            title=${app.crossChannelNotificationText || "切换到有新消息的频道"}
+            aria-hidden=${app.crossChannelNotificationActive ? "false" : "true"}
+            tabindex=${app.crossChannelNotificationActive ? "0" : "-1"}
+            type="button"
+          >
+            <span class="statusDot pulse" style="background: white; flex-shrink: 0; width: 6px; height: 6px;"></span>
+            <span class="cross-channel-badge__text">${app.crossChannelNotificationText}</span>
           </button>
 
           ${app.isChannelDropdownOpen ? html`

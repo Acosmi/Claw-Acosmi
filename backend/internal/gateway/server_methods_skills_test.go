@@ -3,8 +3,10 @@ package gateway
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	agentSkills "github.com/Acosmi/ClawAcosmi/internal/agents/skills"
 	"github.com/Acosmi/ClawAcosmi/internal/argus"
 	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
@@ -183,5 +185,249 @@ func TestHandleSkillsStatus_UsesNormalizedSources(t *testing.T) {
 	}
 	if sources["managed-skill"] != skillStatusSourceManaged {
 		t.Fatalf("managed-skill source = %q", sources["managed-skill"])
+	}
+
+	rawBindings, ok := report["toolBindings"].([]skillToolBindingEntry)
+	if !ok {
+		t.Fatalf("toolBindings type = %T", report["toolBindings"])
+	}
+	if rawBindings == nil {
+		t.Fatal("toolBindings should be present")
+	}
+}
+
+func TestSkillsStatusReportsRuntimeToolBindings(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	writeSkill := func(root, name, content string) {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeSkill(filepath.Join(workspaceDir, ".agent", "skills"), "active-send", `
+---
+description: active send
+tools: send_media
+---
+# active-send
+`)
+	writeSkill(filepath.Join(workspaceDir, ".agent", "skills"), "manual-bash", `
+---
+description: manual bash
+tools: bash
+disable-model-invocation: true
+---
+# manual-bash
+`)
+	writeSkill(filepath.Join(workspaceDir, ".agent", "skills"), "disabled-bash", `
+---
+description: disabled bash
+tools: bash
+---
+# disabled-bash
+`)
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configJSON := `{"agents":{"defaults":{"workspace":"` + workspaceDir + `"}},"skills":{"entries":{"disabled-bash":{"enabled":false}}}}`
+	if err := os.WriteFile(configPath, []byte(configJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loader := config.NewConfigLoader(config.WithConfigPath(configPath))
+
+	registry := NewMethodRegistry()
+	registry.RegisterAll(SkillsHandlers())
+
+	var gotPayload interface{}
+	HandleGatewayRequest(registry, &RequestFrame{Method: "skills.status", Params: map[string]interface{}{}}, nil, &GatewayMethodContext{
+		ConfigLoader: loader,
+	}, func(ok bool, payload interface{}, err *ErrorShape) {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("skills.status should succeed")
+		}
+		gotPayload = payload
+	})
+
+	report, ok := gotPayload.(map[string]interface{})
+	if !ok {
+		t.Fatalf("payload type = %T", gotPayload)
+	}
+	rawBindings, ok := report["toolBindings"].([]skillToolBindingEntry)
+	if !ok {
+		t.Fatalf("toolBindings type = %T", report["toolBindings"])
+	}
+	var sendMediaBinding *skillToolBindingEntry
+	for i := range rawBindings {
+		if rawBindings[i].ToolName == "send_media" {
+			sendMediaBinding = &rawBindings[i]
+			break
+		}
+	}
+	if sendMediaBinding == nil {
+		t.Fatal("send_media binding not found")
+	}
+	if !containsSkillName(sendMediaBinding.Skills, "active-send") {
+		t.Fatalf("send_media binding skills = %v, want to contain active-send", sendMediaBinding.Skills)
+	}
+	for _, binding := range rawBindings {
+		if containsSkillName(binding.Skills, "manual-bash") {
+			t.Fatalf("manual-only skill leaked into runtime bindings: %+v", binding)
+		}
+		if containsSkillName(binding.Skills, "disabled-bash") {
+			t.Fatalf("disabled skill leaked into runtime bindings: %+v", binding)
+		}
+	}
+}
+
+func TestSkillsStatus_AppliesAgentSkillFilterToBindings(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	writeSkill := func(root, name, content string) {
+		t.Helper()
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeSkill(filepath.Join(workspaceDir, ".agent", "skills"), "browser-ops", `
+---
+description: browser guidance
+tools: browser
+---
+# browser-ops
+`)
+	writeSkill(filepath.Join(workspaceDir, ".agent", "skills"), "bash-ops", `
+---
+description: bash guidance
+tools: bash
+---
+# bash-ops
+`)
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	configJSON := `{
+  "agents": {
+    "defaults": {"workspace":"` + workspaceDir + `"},
+    "list": [
+      {"id":"browser-agent","workspace":"` + workspaceDir + `","skills":["browser-ops"]}
+    ]
+  }
+}`
+	if err := os.WriteFile(configPath, []byte(configJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loader := config.NewConfigLoader(config.WithConfigPath(configPath))
+
+	registry := NewMethodRegistry()
+	registry.RegisterAll(SkillsHandlers())
+
+	var gotPayload interface{}
+	HandleGatewayRequest(registry, &RequestFrame{
+		Method: "skills.status",
+		Params: map[string]interface{}{"agentId": "browser-agent"},
+	}, nil, &GatewayMethodContext{
+		ConfigLoader: loader,
+	}, func(ok bool, payload interface{}, err *ErrorShape) {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("skills.status should succeed")
+		}
+		gotPayload = payload
+	})
+
+	report, ok := gotPayload.(map[string]interface{})
+	if !ok {
+		t.Fatalf("payload type = %T", gotPayload)
+	}
+	rawBindings, ok := report["toolBindings"].([]skillToolBindingEntry)
+	if !ok {
+		t.Fatalf("toolBindings type = %T", report["toolBindings"])
+	}
+
+	var browserBinding *skillToolBindingEntry
+	for i := range rawBindings {
+		switch rawBindings[i].ToolName {
+		case "browser":
+			browserBinding = &rawBindings[i]
+		case "bash":
+			t.Fatalf("bash binding should be filtered out, got %+v", rawBindings[i])
+		}
+	}
+	if browserBinding == nil {
+		t.Fatal("browser binding not found")
+	}
+	if !containsSkillName(browserBinding.Skills, "browser-ops") {
+		t.Fatalf("browser binding skills = %v, want to contain browser-ops", browserBinding.Skills)
+	}
+}
+
+func containsSkillName(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestShouldExposeSkillStatusEntry_HidesBundledManualOnlySkills(t *testing.T) {
+	t.Parallel()
+
+	bundledDir := filepath.Join(t.TempDir(), "bundled")
+
+	tests := []struct {
+		name   string
+		entry  agentSkills.SkillEntry
+		wantOK bool
+	}{
+		{
+			name: "bundled manual-only skill hidden",
+			entry: agentSkills.SkillEntry{
+				Skill:                  agentSkills.Skill{Dir: filepath.Join(bundledDir, "claude", "code-audit")},
+				DisableModelInvocation: true,
+			},
+			wantOK: false,
+		},
+		{
+			name: "workspace manual-only skill kept",
+			entry: agentSkills.SkillEntry{
+				Skill:                  agentSkills.Skill{Dir: filepath.Join(t.TempDir(), "workspace", "skill-creator")},
+				DisableModelInvocation: true,
+			},
+			wantOK: true,
+		},
+		{
+			name: "bundled normal skill kept",
+			entry: agentSkills.SkillEntry{
+				Skill:                  agentSkills.Skill{Dir: filepath.Join(bundledDir, "tools", "runtime", "bash")},
+				DisableModelInvocation: false,
+			},
+			wantOK: true,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := shouldExposeSkillStatusEntry(tc.entry, bundledDir); got != tc.wantOK {
+				t.Fatalf("shouldExposeSkillStatusEntry() = %v, want %v", got, tc.wantOK)
+			}
+		})
 	}
 }

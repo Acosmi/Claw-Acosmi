@@ -14,7 +14,7 @@ export function renderGoogleChatCard(params: {
   return html`
     ${accountCountLabel}
 
-    <div class="status-list" style="margin-top: 8px;">
+    <div class="status-list">
       <div>
         <span class="label">${t("channels.configured")}</span>
         <span>${googleChat ? (googleChat.configured ? t("channels.yes") : t("channels.no")) : "n/a"}</span>
@@ -47,21 +47,21 @@ export function renderGoogleChatCard(params: {
     </div>
 
     ${googleChat?.lastError
-      ? html`<div class="callout danger" style="margin-top: 12px;">
+      ? html`<div class="callout danger">
           ${googleChat.lastError}
         </div>`
       : nothing
     }
 
     ${googleChat?.probe
-      ? html`<div class="callout" style="margin-top: 12px;">
+      ? html`<div class="callout">
           Probe ${googleChat.probe.ok ? "ok" : "failed"} ·
           ${googleChat.probe.status ?? ""} ${googleChat.probe.error ?? ""}
         </div>`
       : nothing
     }
 
-    <div class="row" style="margin-top: 12px;">
+    <div class="row channel-card__action-row">
       <button class="btn" @click=${() => props.onRefresh(true)}>
         Probe
       </button>

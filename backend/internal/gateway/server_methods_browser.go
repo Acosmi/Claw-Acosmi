@@ -385,11 +385,7 @@ func persistBrowserProxyFiles(files []*browserProxyFile, ctx *MethodHandlerConte
 
 // resolveMediaDir 返回媒体文件存储目录。
 func resolveMediaDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".openacosmi", "media")
+	return filepath.Join(config.ResolveStateDir(), "media")
 }
 
 // mimeToExt 从 MIME 类型推断文件扩展名。

@@ -37,11 +37,45 @@ import (
 // ChatHandlers 返回 chat.* 方法处理器映射。
 func ChatHandlers() map[string]GatewayMethodHandler {
 	return map[string]GatewayMethodHandler{
-		"chat.history": handleChatHistory,
-		"chat.abort":   handleChatAbort,
-		"chat.send":    handleChatSend,
-		"chat.inject":  handleChatInject,
+		"chat.history":     handleChatHistory,
+		"chat.abort":       handleChatAbort,
+		"chat.send":        handleChatSend,
+		"chat.inject":      handleChatInject,
+		"chat.active_runs": handleChatActiveRuns,
 	}
+}
+
+// ---------- chat.active_runs ----------
+// F4: 查询指定 session 是否有活跃的聊天运行。
+// 供前端 WS 重连时判断是否应保留 chatRunId（避免误清正在执行的运行）。
+
+func handleChatActiveRuns(ctx *MethodHandlerContext) {
+	sessionKey, _ := ctx.Params["sessionKey"].(string)
+	if sessionKey == "" {
+		sessionKey, _ = ctx.Params["sessionId"].(string)
+	}
+
+	chatState := ctx.Context.ChatState
+	if chatState == nil || chatState.Registry == nil {
+		ctx.Respond(true, map[string]interface{}{
+			"hasActiveRun": false,
+		}, nil)
+		return
+	}
+
+	entry := chatState.Registry.Peek(sessionKey)
+	if entry != nil {
+		ctx.Respond(true, map[string]interface{}{
+			"hasActiveRun": true,
+			"runId":        entry.ClientRunID,
+			"sessionKey":   entry.SessionKey,
+		}, nil)
+		return
+	}
+
+	ctx.Respond(true, map[string]interface{}{
+		"hasActiveRun": false,
+	}, nil)
 }
 
 // ---------- chat.history ----------
@@ -153,8 +187,14 @@ func handleChatAbort(ctx *MethodHandlerContext) {
 	if sessionKey != "" && chatState.Registry != nil {
 		entry := chatState.Registry.Shift(sessionKey)
 		if entry != nil {
+			if runId == "" {
+				runId = entry.ClientRunID
+			}
 			slog.Info("chat.abort: aborted run", "sessionKey", sessionKey, "runId", runId)
 		}
+	}
+	if runId != "" && ctx.Context.EscalationMgr != nil {
+		ctx.Context.EscalationMgr.TaskComplete(runId)
 	}
 
 	// 广播 abort 事件
@@ -291,14 +331,15 @@ func handleChatSend(ctx *MethodHandlerContext) {
 				Async:      true,
 			}, &BroadcastOptions{DropIfSlow: true})
 		}
-		// 持久化 task session + TaskMeta（看板持久化）
-		if store := ctx.Context.SessionStore; store != nil {
+		// 持久化 task 到独立 TaskStore（P1 域隔离）
+		if ts := ctx.Context.TaskStore; ts != nil {
 			now := time.Now().UnixMilli()
-			store.Save(&SessionEntry{
-				SessionKey: fmt.Sprintf("task:%s", runId),
-				SessionId:  runId,
+			ts.Save(&TaskEntry{
+				TaskID:     runId,
+				SessionKey: sessionKey,
 				Label:      truncateStr(text, 60),
-				Channel:    "task",
+				Status:     "queued",
+				Async:      true,
 				CreatedAt:  now,
 				UpdatedAt:  now,
 				TaskMeta: &sessiontypes.TaskMeta{
@@ -344,6 +385,9 @@ func handleChatSend(ctx *MethodHandlerContext) {
 		defer func() {
 			// 清理运行条目
 			chatState.Registry.Remove(sessionKey, runId, sessionKey)
+			if ctx.Context.EscalationMgr != nil {
+				ctx.Context.EscalationMgr.TaskComplete(runId)
+			}
 		}()
 		// Phase 2: async=true 时释放并发槽位
 		if asyncMode {
@@ -358,18 +402,15 @@ func handleChatSend(ctx *MethodHandlerContext) {
 				Ts:         time.Now().UnixMilli(),
 			}, &BroadcastOptions{DropIfSlow: true})
 		}
-		// 更新 TaskMeta.Status = "started"（看板持久化）
-		if store := ctx.Context.SessionStore; store != nil {
-			taskKey := fmt.Sprintf("task:%s", runId)
-			if entry := store.LoadSessionEntry(taskKey); entry != nil {
-				if entry.TaskMeta == nil {
-					entry.TaskMeta = &sessiontypes.TaskMeta{}
+		// 更新 TaskStore status = "started"（P1 域隔离）
+		if ts := ctx.Context.TaskStore; ts != nil {
+			ts.UpdateStatus(runId, "started", func(e *TaskEntry) {
+				if e.TaskMeta == nil {
+					e.TaskMeta = &sessiontypes.TaskMeta{}
 				}
-				entry.TaskMeta.Status = "started"
-				entry.TaskMeta.StartedAt = time.Now().UnixMilli()
-				entry.UpdatedAt = time.Now().UnixMilli()
-				store.Save(entry)
-			}
+				e.TaskMeta.Status = "started"
+				e.TaskMeta.StartedAt = time.Now().UnixMilli()
+			})
 		}
 
 		// 订阅全局事件总线 → 广播 agent 工具事件到 WebSocket
@@ -390,15 +431,18 @@ func handleChatSend(ctx *MethodHandlerContext) {
 			if store != nil {
 				entry := store.LoadSessionEntry(sessionKey)
 				if entry == nil {
-					// 首次对话 — 自动创建 session
+					// P2 身份收敛: 前端应通过 sessions.create API 创建 session。
+					// 过渡期保留 auto-create 兼容，但记录 warning 以便追踪遗漏。
+					slog.Warn("chat.send: auto-creating session for unregistered key (should use sessions.create)",
+						"sessionKey", sessionKey)
 					newId := fmt.Sprintf("session_%d", time.Now().UnixNano())
 					entry = &SessionEntry{
 						SessionKey: sessionKey,
 						SessionId:  newId,
 						Label:      sessionKey,
+						CreatedAt:  time.Now().UnixMilli(),
 					}
 					store.Save(entry)
-					slog.Info("chat.send: auto-created session", "sessionKey", sessionKey, "sessionId", newId)
 				}
 				resolvedSessionId = entry.SessionId
 			}
@@ -407,10 +451,6 @@ func handleChatSend(ctx *MethodHandlerContext) {
 			resolvedSessionId = runId // 最后兜底
 		}
 
-		// 用户消息 transcript 由 attempt_runner.persistToTranscript 写入（正常路径 + defer 失败路径）。
-		// 但如果管线在 RunAttempt 之前就失败（指令解析错误等），defer 不会执行。
-		// 下方 result.Error 分支用 ensureUserTranscriptOnError 做兜底，确保用户消息不丢失。
-
 		// 处理附件：音频→STT 转录，文档→DocConv 转换
 		enhancedText, attachmentBlocks := processAttachmentsForChat(pipelineCtx, text, attachments, ctx.Context.ConfigLoader)
 
@@ -418,6 +458,23 @@ func handleChatSend(ctx *MethodHandlerContext) {
 		effectiveText := enhancedText
 		if effectiveText == "" && len(attachmentBlocks) > 0 {
 			effectiveText = "[用户发送了附件]"
+		}
+
+		// F1: 立即写入用户消息到 transcript，确保 chat.history 在 Agent 执行期间就能返回用户问话。
+		// 使用 effectiveText（经 STT/DocConv 增强后的文本），与 persistToTranscript 的 params.Prompt 一致，
+		// 保证 dedup 文本匹配（attempt_runner.go:2237-2248 读 transcript 尾部比对）。
+		// ensureUserTranscriptOnError (L872) 也有同样的 dedup，三者兼容。
+		if resolvedSessionId != "" && storePath != "" && strings.TrimSpace(effectiveText) != "" {
+			result := AppendUserTranscriptMessage(AppendTranscriptParams{
+				Message:         effectiveText,
+				SessionID:       resolvedSessionId,
+				StorePath:       storePath,
+				CreateIfMissing: true,
+			})
+			if result != nil && !result.OK {
+				slog.Warn("chat.send: early transcript write failed (non-blocking)",
+					"error", result.Error, "sessionId", resolvedSessionId)
+			}
 		}
 
 		// 构建 MsgContext
@@ -438,9 +495,8 @@ func handleChatSend(ctx *MethodHandlerContext) {
 			Attachments:        attachmentBlocks,
 		}
 
-		// 任务频道：懒创建 task:<runID> session，仅在有工具调用时才创建
-		taskSessionKey := fmt.Sprintf("task:%s", runId)
-		taskSessionCreated := false // 单 goroutine 内闭包访问，无需 sync
+		// 任务频道：懒创建 task 条目，仅在有工具调用时才创建（P1 域隔离：写入 TaskStore）
+		taskCreated := false // 单 goroutine 内闭包访问，无需 sync
 		// 注意: onToolResult 是历史死代码（autoreply pipeline 从未调用），
 		// 已被下方 onToolEvent 替代。保留以维持 DispatchInboundParams 接口兼容。
 		var onToolResult func(payload autoreply.ReplyPayload)
@@ -449,41 +505,35 @@ func handleChatSend(ctx *MethodHandlerContext) {
 		var onToolEvent any
 		if broadcaster != nil {
 			onToolEvent = func(event runner.ToolEvent) {
-				// 首次工具调用 → 懒创建任务 session（非 async 任务在 queued 时未创建）
-				if !taskSessionCreated {
-					taskSessionCreated = true
-					store := ctx.Context.SessionStore
-					if store != nil {
-						// M-01 修复: 先检查 session 是否已存在（async 任务在 queued 时已创建）
-						existing := store.LoadSessionEntry(taskSessionKey)
-						if existing != nil {
-							// session 已存在（async 路径），仅更新 TaskMeta
-							if existing.TaskMeta == nil {
-								existing.TaskMeta = &sessiontypes.TaskMeta{}
-							}
-							if existing.TaskMeta.Status == "queued" {
-								existing.TaskMeta.Status = "started"
-								existing.TaskMeta.StartedAt = time.Now().UnixMilli()
-							}
-							existing.UpdatedAt = time.Now().UnixMilli()
-							store.Save(existing)
-						} else {
-							// session 不存在（sync 路径），创建新的
-							taskLabel := truncateStr(text, 60)
+				// 首次工具调用 → 懒创建任务条目（非 async 任务在 queued 时未创建）
+				if !taskCreated {
+					taskCreated = true
+					if ts := ctx.Context.TaskStore; ts != nil {
+						ts.SaveOrCreate(runId, func() *TaskEntry {
 							now := time.Now().UnixMilli()
-							store.Save(&SessionEntry{
-								SessionKey: taskSessionKey,
-								SessionId:  runId,
-								Label:      taskLabel,
-								Channel:    "task",
+							return &TaskEntry{
+								TaskID:     runId,
+								SessionKey: sessionKey,
+								Label:      truncateStr(text, 60),
+								Status:     "started",
 								CreatedAt:  now,
 								UpdatedAt:  now,
 								TaskMeta: &sessiontypes.TaskMeta{
 									Status:    "started",
 									StartedAt: now,
 								},
-							})
-						}
+							}
+						}, func(e *TaskEntry) {
+							// 已存在（async 路径），仅更新状态
+							if e.TaskMeta == nil {
+								e.TaskMeta = &sessiontypes.TaskMeta{}
+							}
+							if e.TaskMeta.Status == "queued" {
+								e.TaskMeta.Status = "started"
+								e.TaskMeta.StartedAt = time.Now().UnixMilli()
+							}
+							e.UpdatedAt = time.Now().UnixMilli()
+						})
 					}
 				}
 				// 广播结构化工具事件
@@ -514,25 +564,23 @@ func handleChatSend(ctx *MethodHandlerContext) {
 					Duration:   event.Duration,
 					Ts:         now,
 				}, &BroadcastOptions{DropIfSlow: true})
-				// 持久化最近一个工具步骤，供 tasks.list 在刷新后稳定读取。
-				if store := ctx.Context.SessionStore; store != nil {
-					if entry := store.LoadSessionEntry(taskSessionKey); entry != nil {
-						if entry.TaskMeta == nil {
-							entry.TaskMeta = &sessiontypes.TaskMeta{}
+				// 持久化最近一个工具步骤到 TaskStore
+				if ts := ctx.Context.TaskStore; ts != nil {
+					ts.UpdateStatus(runId, "progress", func(e *TaskEntry) {
+						if e.TaskMeta == nil {
+							e.TaskMeta = &sessiontypes.TaskMeta{}
 						}
-						entry.TaskMeta.Status = "progress"
-						entry.TaskMeta.ToolName = event.ToolName
-						entry.TaskMeta.ProgressPhase = event.Phase
-						entry.TaskMeta.ProgressText = progressText
-						entry.TaskMeta.ProgressIsError = event.IsError
-						entry.TaskMeta.ProgressDuration = event.Duration
-						entry.TaskMeta.ProgressAt = now
-						if entry.TaskMeta.StartedAt == 0 {
-							entry.TaskMeta.StartedAt = now
+						e.TaskMeta.Status = "progress"
+						e.TaskMeta.ToolName = event.ToolName
+						e.TaskMeta.ProgressPhase = event.Phase
+						e.TaskMeta.ProgressText = progressText
+						e.TaskMeta.ProgressIsError = event.IsError
+						e.TaskMeta.ProgressDuration = event.Duration
+						e.TaskMeta.ProgressAt = now
+						if e.TaskMeta.StartedAt == 0 {
+							e.TaskMeta.StartedAt = now
 						}
-						entry.UpdatedAt = now
-						store.Save(entry)
-					}
+					})
 				}
 			}
 		}
@@ -569,29 +617,34 @@ func handleChatSend(ctx *MethodHandlerContext) {
 					Ts:         time.Now().UnixMilli(),
 				}, &BroadcastOptions{DropIfSlow: true})
 			}
-			// 更新 TaskMeta.Status = "failed"（看板持久化）
-			if store := ctx.Context.SessionStore; store != nil {
-				taskKey := fmt.Sprintf("task:%s", runId)
+			// 更新 TaskStore status = "failed"（P1 域隔离）
+			if ts := ctx.Context.TaskStore; ts != nil {
 				now := time.Now().UnixMilli()
-				entry := store.LoadSessionEntry(taskKey)
-				if entry == nil {
-					// D-01 兜底：sync 任务无工具调用时 session 未创建
-					entry = &SessionEntry{
-						SessionKey: taskKey,
-						SessionId:  runId,
+				errMsg := truncateForLog(result.Error.Error(), 200)
+				ts.SaveOrCreate(runId, func() *TaskEntry {
+					return &TaskEntry{
+						TaskID:     runId,
+						SessionKey: sessionKey,
 						Label:      truncateStr(text, 60),
-						Channel:    "task",
+						Status:     "failed",
 						CreatedAt:  now,
+						UpdatedAt:  now,
+						TaskMeta: &sessiontypes.TaskMeta{
+							Status:      "failed",
+							Error:       errMsg,
+							CompletedAt: now,
+						},
 					}
-				}
-				if entry.TaskMeta == nil {
-					entry.TaskMeta = &sessiontypes.TaskMeta{}
-				}
-				entry.TaskMeta.Status = "failed"
-				entry.TaskMeta.Error = truncateForLog(result.Error.Error(), 200)
-				entry.TaskMeta.CompletedAt = now
-				entry.UpdatedAt = now
-				store.Save(entry)
+				}, func(e *TaskEntry) {
+					e.Status = "failed"
+					e.UpdatedAt = now
+					if e.TaskMeta == nil {
+						e.TaskMeta = &sessiontypes.TaskMeta{}
+					}
+					e.TaskMeta.Status = "failed"
+					e.TaskMeta.Error = errMsg
+					e.TaskMeta.CompletedAt = now
+				})
 			}
 			// Phase 2: async=true 时注入错误通知到 webchat
 			if asyncMode && broadcaster != nil {
@@ -620,51 +673,57 @@ func handleChatSend(ctx *MethodHandlerContext) {
 		combinedReply := CombineReplyPayloads(result.Replies)
 		mediaItems := ExtractMediaListFromReplies(result.Replies)
 
-		// AI 回复 transcript 由 attempt_runner.persistToTranscript 写入，此处仅构造广播消息
-		var message map[string]interface{}
-		if combinedReply != "" {
-			now := time.Now().UnixMilli()
-			message = map[string]interface{}{
-				"role": "assistant",
-				"content": []interface{}{
-					map[string]interface{}{"type": "text", "text": combinedReply},
-				},
-				"timestamp":  now,
-				"stopReason": "stop",
-				"usage":      map[string]interface{}{"input": 0, "output": 0, "totalTokens": 0},
-			}
-		} else if len(mediaItems) > 0 {
-			// 纯媒体（无文本）：构建仅含图片的消息
-			message = map[string]interface{}{
-				"role":       "assistant",
-				"content":    []interface{}{},
-				"timestamp":  time.Now().UnixMilli(),
-				"stopReason": "stop",
-				"usage":      map[string]interface{}{"input": 0, "output": 0, "totalTokens": 0},
-			}
-		}
-
-		// 将媒体数据注入 message.content（前端 extractImages 自动识别）
-		if message != nil && len(mediaItems) > 0 {
-			if content, ok := message["content"].([]interface{}); ok {
-				for _, item := range mediaItems {
-					if item.Base64Data == "" {
-						continue
-					}
-					mime := item.MimeType
-					if mime == "" {
-						mime = "image/png"
-					}
-					content = append(content, map[string]interface{}{
-						"type": "image",
-						"source": map[string]interface{}{
-							"type":       "base64",
-							"data":       item.Base64Data,
-							"media_type": mime,
-						},
-					})
+		// AI 回复 transcript 由 attempt_runner.persistToTranscript 写入，此处优先回读 canonical assistant 消息，
+		// 保证 final/chat.history 使用同一条 transcript 锚点，避免 workflow 回绑错位。
+		message := loadLatestSessionAssistantMessageMatching(
+			ctx.Context.SessionStore,
+			sessionKey,
+			ctx.Context.StorePath,
+			combinedReply,
+			mediaItems,
+		)
+		if message == nil {
+			if combinedReply != "" {
+				now := time.Now().UnixMilli()
+				// P5 Usage 收敛: fallback 消息不写虚假 usage 零值
+				message = map[string]interface{}{
+					"role": "assistant",
+					"content": []interface{}{
+						map[string]interface{}{"type": "text", "text": combinedReply},
+					},
+					"timestamp":  now,
+					"stopReason": "stop",
 				}
-				message["content"] = content
+			} else if len(mediaItems) > 0 {
+				// P5 Usage 收敛: fallback 消息不写虚假 usage 零值
+				message = map[string]interface{}{
+					"role":       "assistant",
+					"content":    []interface{}{},
+					"timestamp":  time.Now().UnixMilli(),
+					"stopReason": "stop",
+				}
+			}
+			if message != nil && len(mediaItems) > 0 {
+				if content, ok := message["content"].([]interface{}); ok {
+					for _, item := range mediaItems {
+						if item.Base64Data == "" {
+							continue
+						}
+						mime := item.MimeType
+						if mime == "" {
+							mime = "image/png"
+						}
+						content = append(content, map[string]interface{}{
+							"type": "image",
+							"source": map[string]interface{}{
+								"type":       "base64",
+								"data":       item.Base64Data,
+								"media_type": mime,
+							},
+						})
+					}
+					message["content"] = content
+				}
 			}
 		}
 
@@ -678,29 +737,36 @@ func handleChatSend(ctx *MethodHandlerContext) {
 				Ts:         time.Now().UnixMilli(),
 			}, &BroadcastOptions{DropIfSlow: true})
 		}
-		// 更新 TaskMeta.Status = "completed"（看板持久化）
-		if store := ctx.Context.SessionStore; store != nil {
-			taskKey := fmt.Sprintf("task:%s", runId)
+		// 更新 TaskStore status = "completed"（P1 域隔离）
+		if ts := ctx.Context.TaskStore; ts != nil {
 			now := time.Now().UnixMilli()
-			entry := store.LoadSessionEntry(taskKey)
-			if entry == nil {
-				// D-01 兜底：sync 任务无工具调用时 session 未创建
-				entry = &SessionEntry{
-					SessionKey: taskKey,
-					SessionId:  runId,
+			summary := truncateForLog(combinedReply, 200)
+			ts.SaveOrCreate(runId, func() *TaskEntry {
+				return &TaskEntry{
+					TaskID:     runId,
+					SessionKey: sessionKey,
 					Label:      truncateStr(text, 60),
-					Channel:    "task",
+					Status:     "completed",
+					Summary:    summary,
 					CreatedAt:  now,
+					UpdatedAt:  now,
+					TaskMeta: &sessiontypes.TaskMeta{
+						Status:      "completed",
+						Summary:     summary,
+						CompletedAt: now,
+					},
 				}
-			}
-			if entry.TaskMeta == nil {
-				entry.TaskMeta = &sessiontypes.TaskMeta{}
-			}
-			entry.TaskMeta.Status = "completed"
-			entry.TaskMeta.Summary = truncateForLog(combinedReply, 200)
-			entry.TaskMeta.CompletedAt = now
-			entry.UpdatedAt = now
-			store.Save(entry)
+			}, func(e *TaskEntry) {
+				e.Status = "completed"
+				e.Summary = summary
+				e.UpdatedAt = now
+				if e.TaskMeta == nil {
+					e.TaskMeta = &sessiontypes.TaskMeta{}
+				}
+				e.TaskMeta.Status = "completed"
+				e.TaskMeta.Summary = summary
+				e.TaskMeta.CompletedAt = now
+			})
 		}
 
 		// Phase 2: async=true 时注入 webchat 通知（跨 session 通知用户异步任务已完成）
@@ -865,8 +931,12 @@ func ensureUserTranscriptOnError(sessionId, storePath, text string, attachments 
 	if len(existing) > 0 {
 		last := existing[len(existing)-1]
 		if role, _ := last["role"].(string); role == "user" {
-			// 已有 user 消息在末尾，RunAttempt 的 defer 已经处理，跳过
-			return
+			// 仅当尾部 user 消息文本与当前消息一致时才跳过，
+			// 避免前一轮对话的 user 消息导致当前消息被错误跳过
+			lastText := extractTranscriptMessageText(last)
+			if lastText == text {
+				return
+			}
 		}
 	}
 
@@ -889,6 +959,26 @@ func ensureUserTranscriptOnError(sessionId, storePath, text string, attachments 
 	if err := mgr.AppendMessage(sessionId, sessionFile, entry); err != nil {
 		slog.Warn("ensureUserTranscriptOnError: append failed", "error", err)
 	}
+}
+
+// extractTranscriptMessageText 从 transcript 消息条目中提取纯文本。
+// 支持两种格式: 顶层 "text" 字段，或 content 数组中的 text block。
+func extractTranscriptMessageText(msg map[string]interface{}) string {
+	if t, ok := msg["text"].(string); ok && t != "" {
+		return t
+	}
+	if content, ok := msg["content"].([]interface{}); ok {
+		for _, block := range content {
+			if m, ok := block.(map[string]interface{}); ok {
+				if m["type"] == "text" {
+					if t, ok := m["text"].(string); ok {
+						return t
+					}
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func truncateStr(s string, maxLen int) string {

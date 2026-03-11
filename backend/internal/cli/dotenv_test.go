@@ -57,6 +57,29 @@ func TestLoadDotEnv_CrabClawStateDirFallback(t *testing.T) {
 	}
 }
 
+func TestLoadDotEnv_ProfileAwareFallback(t *testing.T) {
+	tmpHome := t.TempDir()
+	stateDir := filepath.Join(tmpHome, ".openacosmi-staging")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, ".env"), []byte("TEST_DOTENV_PROFILE=from_profile\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OPENACOSMI_HOME", tmpHome)
+	t.Setenv("OPENACOSMI_PROFILE", "staging")
+	t.Setenv("CRABCLAW_STATE_DIR", "")
+	t.Setenv("OPENACOSMI_STATE_DIR", "")
+	os.Unsetenv("TEST_DOTENV_PROFILE")
+
+	LoadDotEnv(true)
+
+	if got := os.Getenv("TEST_DOTENV_PROFILE"); got != "from_profile" {
+		t.Fatalf("TEST_DOTENV_PROFILE = %q, want %q", got, "from_profile")
+	}
+}
+
 // TestLoadDotEnv_CwdPriority 验证 CWD .env 优先于全局 .env。
 func TestLoadDotEnv_CwdPriority(t *testing.T) {
 	// 创建临时目录

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/helpers"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/models"
+	"github.com/Acosmi/ClawAcosmi/internal/agents/scope"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/workspace"
 )
 
@@ -151,6 +152,7 @@ func RunEmbeddedPiAgent(ctx context.Context, params RunEmbeddedPiAgentParams, de
 			AgentDir:                      agentDir,
 			Config:                        params.Config,
 			Prompt:                        prompt,
+			SkillFilter:                   resolveRunSkillFilter(params),
 			Provider:                      provider,
 			ModelID:                       modelID,
 			Model:                         model,
@@ -324,6 +326,20 @@ func RunEmbeddedPiAgent(ctx context.Context, params RunEmbeddedPiAgentParams, de
 			MessagingToolSentTargets: attempt.MessagingSentTargets,
 		}, nil
 	}
+}
+
+func resolveRunSkillFilter(params RunEmbeddedPiAgentParams) []string {
+	if len(params.SkillFilter) > 0 {
+		return append([]string(nil), params.SkillFilter...)
+	}
+	if params.Config == nil {
+		return nil
+	}
+	agentID := strings.TrimSpace(params.AgentID)
+	if agentID == "" {
+		return nil
+	}
+	return scope.ResolveAgentSkillsFilter(params.Config, agentID)
 }
 
 // --- 内部辅助 ---

@@ -152,3 +152,18 @@ func TestResolveConfiguredModelRef_DefaultUnchanged(t *testing.T) {
 		t.Errorf("expected anthropic/claude-opus-4-6, got %s/%s", ref.Provider, ref.Model)
 	}
 }
+
+func TestResolveConfiguredModelRef_QwenRuntimeProviderUnchanged(t *testing.T) {
+	cfg := &types.OpenAcosmiConfig{
+		Agents: &types.AgentsConfig{
+			Defaults: &types.AgentDefaultsConfig{
+				Model: &types.AgentModelListConfig{Primary: "qwen/qwen3.5-plus"},
+			},
+		},
+	}
+
+	ref := ResolveConfiguredModelRef(cfg, DefaultProvider, DefaultModel)
+	if ref.Provider != "qwen" || ref.Model != "qwen3.5-plus" {
+		t.Errorf("expected qwen/qwen3.5-plus, got %s/%s", ref.Provider, ref.Model)
+	}
+}

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { initLocale } from "./i18n.ts";
 import {
+  automationPanelFromPath,
   getTabGroups,
   iconForTab,
   inferBasePathFromPathname,
   normalizeBasePath,
   normalizePath,
+  pathForAutomationPanel,
   pathForTab,
   subtitleForTab,
   tabFromPath,
@@ -30,6 +32,7 @@ describe("iconForTab", () => {
 
   it("returns stable icons for known tabs", () => {
     expect(iconForTab("agents")).toBe("agentSwarm");
+    expect(iconForTab("automation")).toBe("automationHub");
     expect(iconForTab("chat")).toBe("chatSpark");
     expect(iconForTab("overview")).toBe("wizardDashboard");
     expect(iconForTab("channels")).toBe("channelBridge");
@@ -61,6 +64,7 @@ describe("titleForTab", () => {
   it("returns expected titles", () => {
     expect(titleForTab("chat")).toBe("Start Chat");
     expect(titleForTab("agents")).toBe("Workspace (Agent Swarm)");
+    expect(titleForTab("automation")).toBe("Automation");
     expect(titleForTab("overview")).toBe("Dashboard (Wizard)");
     expect(titleForTab("cron")).toBe("Cron Jobs");
   });
@@ -120,6 +124,7 @@ describe("normalizePath", () => {
 describe("pathForTab", () => {
   it("returns correct path without base", () => {
     expect(pathForTab("chat")).toBe("/chat");
+    expect(pathForTab("automation")).toBe("/automation");
     expect(pathForTab("overview")).toBe("/overview");
   });
 
@@ -129,9 +134,19 @@ describe("pathForTab", () => {
   });
 });
 
+describe("pathForAutomationPanel", () => {
+  it("returns direct routes for automation detail pages", () => {
+    expect(pathForAutomationPanel("hub")).toBe("/automation");
+    expect(pathForAutomationPanel("email")).toBe("/automation/email");
+    expect(pathForAutomationPanel("email", "/ui")).toBe("/ui/automation/email");
+  });
+});
+
 describe("tabFromPath", () => {
   it("returns tab for valid path", () => {
     expect(tabFromPath("/chat")).toBe("chat");
+    expect(tabFromPath("/automation")).toBe("automation");
+    expect(tabFromPath("/automation/email")).toBe("automation");
     expect(tabFromPath("/overview")).toBe("overview");
     expect(tabFromPath("/sessions")).toBe("memory");
   });
@@ -142,6 +157,7 @@ describe("tabFromPath", () => {
 
   it("handles base paths", () => {
     expect(tabFromPath("/ui/chat", "/ui")).toBe("chat");
+    expect(tabFromPath("/ui/automation/email", "/ui")).toBe("automation");
     expect(tabFromPath("/apps/openacosmi/sessions", "/apps/openacosmi")).toBe("memory");
   });
 
@@ -178,6 +194,18 @@ describe("inferBasePathFromPathname", () => {
   it("handles index.html suffix", () => {
     expect(inferBasePathFromPathname("/index.html")).toBe("");
     expect(inferBasePathFromPathname("/ui/index.html")).toBe("/ui");
+  });
+
+  it("infers base path for automation subroutes", () => {
+    expect(inferBasePathFromPathname("/ui/automation/email")).toBe("/ui");
+  });
+});
+
+describe("automationPanelFromPath", () => {
+  it("extracts automation detail panels from the pathname", () => {
+    expect(automationPanelFromPath("/automation")).toBe("hub");
+    expect(automationPanelFromPath("/automation/email")).toBe("email");
+    expect(automationPanelFromPath("/ui/automation/email", "/ui")).toBe("email");
   });
 });
 

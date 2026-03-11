@@ -1,0 +1,1274 @@
+import { html, nothing } from "lit";
+import { t } from "../i18n.ts";
+import { ref } from "lit/directives/ref.js";
+import { repeat } from "lit/directives/repeat.js";
+import type { SessionsListResult } from "../types.ts";
+import type { ChatItem, MessageGroup } from "../types/chat-types.ts";
+import type { AttachmentCategory, ChatAttachment, ChatQueueItem } from "../ui-types.ts";
+import type { ChatReadonlyRunState, ChatUxMode } from "../chat/readonly-run-state.ts";
+import {
+  renderMessageGroup,
+  renderReadingIndicatorGroup,
+  renderStreamingGroup,
+  renderProcessingCard,
+} from "../chat/grouped-render.ts";
+import { renderCodexReadonlySurface } from "../chat/codex-readonly-surface.ts";
+import {
+  isReadonlyRunTerminal,
+  isReadonlyRunVisible,
+  normalizeReadonlyRunAnchorText,
+} from "../chat/readonly-run-state.ts";
+import { extractText } from "../chat/message-extract.ts";
+import { normalizeMessage, normalizeRoleForGrouping } from "../chat/message-normalizer.ts";
+import { initCodeBlockCopyListeners } from "../chat/code-block-actions.ts";
+import { icons } from "../icons.ts";
+import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
+import { renderPermissionPopup, type PermissionPopupCallbacks } from "./permission-popup.ts";
+import "../components/resizable-divider.ts";
+
+export type CompactionIndicatorStatus = {
+  active: boolean;
+  startedAt: number | null;
+  completedAt: number | null;
+};
+
+export type ChatProps = {
+  sessionKey: string;
+  onSessionKeyChange: (next: string) => void;
+  thinkingLevel: string | null;
+  showThinking: boolean;
+  loading: boolean;
+  sending: boolean;
+  canAbort?: boolean;
+  compactionStatus?: CompactionIndicatorStatus | null;
+  messages: unknown[];
+  toolMessages: unknown[];
+  uxMode?: ChatUxMode;
+  readonlyRun?: ChatReadonlyRunState | null;
+  readonlyRunHistory?: ChatReadonlyRunState[];
+  stream: string | null;
+  streamStartedAt: number | null;
+  assistantAvatarUrl?: string | null;
+  draft: string;
+  queue: ChatQueueItem[];
+  connected: boolean;
+  canSend: boolean;
+  disabledReason: string | null;
+  error: string | null;
+  sessions: SessionsListResult | null;
+  // Focus mode
+  focusMode: boolean;
+  // Sidebar state
+  sidebarOpen?: boolean;
+  sidebarContent?: string | null;
+  sidebarError?: string | null;
+  splitRatio?: number;
+  assistantName: string;
+  assistantAvatar: string | null;
+  // Image attachments
+  attachments?: ChatAttachment[];
+  onAttachmentsChange?: (attachments: ChatAttachment[]) => void;
+  onAttachmentRejected?: (message: string) => void;
+  // Voice recording
+  voiceRecording?: boolean;
+  voiceRecordingDuration?: number;
+  onVoiceStart?: () => void;
+  onVoiceStop?: () => void;
+  voiceSupported?: boolean;
+  // Scroll control
+  showNewMessages?: boolean;
+  onScrollToBottom?: () => void;
+  // Event handlers
+  onRefresh: () => void;
+  onToggleFocusMode: () => void;
+  onDraftChange: (next: string) => void;
+  onSend: () => void;
+  onAbort?: () => void;
+  onQueueRemove: (id: string) => void;
+  onNewSession: () => void;
+  onOpenSidebar?: (content: string) => void;
+  onCloseSidebar?: () => void;
+  onSplitRatioChange?: (ratio: number) => void;
+  onChatScroll?: (event: Event) => void;
+  // Permission popup
+  permissionPopupCallbacks?: PermissionPopupCallbacks;
+  requestUpdate?: () => void;
+  onDismissError?: () => void;
+  // Browser extension banner
+  browserExtBannerDismissed?: boolean;
+  onDismissBrowserExtBanner?: () => void;
+  // Model selector in composer
+  models?: Array<{ id: string; name: string; provider: string; source: string }>;
+  currentModel?: string | null;
+  onModelChange?: (model: string) => void;
+  onOpenModelConfig?: () => void;
+};
+
+const _codeBlockInitialized = new WeakSet<HTMLElement>();
+const COMPACTION_TOAST_DURATION_MS = 5000;
+const BUILTIN_PROMO_DURATION_MS = 5000;
+const BUILTIN_PROMO_USED_KEY = "openacosmi.chat.builtinPromo.used";
+const BUILTIN_PROMO_COLLAPSED_KEY = "openacosmi.chat.builtinPromo.collapsed";
+let _builtinPromoTimer: number | null = null;
+
+// Browser extension error detection pattern (matches P1-T1 improved error message)
+const _BROWSER_EXT_ERROR_RE = /Browser tool is not (available|configured)/i;
+
+/** Scan chat messages for browser tool "not available" errors. */
+function hasBrowserExtError(messages: unknown[]): boolean {
+  for (const msg of messages) {
+    const m = msg as Record<string, unknown>;
+    const content = m?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      const b = block as Record<string, unknown>;
+      if (typeof b?.text === "string" && _BROWSER_EXT_ERROR_RE.test(b.text)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Close model menu on click outside
+let _menuCloseInstalled = false;
+function setModelMenuOpen(selectbox: HTMLElement | null, open: boolean) {
+  if (!selectbox) return;
+  if (open) {
+    selectbox.setAttribute("data-open", "true");
+  } else {
+    selectbox.removeAttribute("data-open");
+  }
+  const trigger = selectbox.querySelector(".chat-compose__model-select") as HTMLButtonElement | null;
+  trigger?.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function closeModelMenus(except: HTMLElement | null = null) {
+  const openMenus = document.querySelectorAll(".chat-compose__model-selectbox[data-open='true']");
+  for (const node of openMenus) {
+    if (except && node === except) {
+      continue;
+    }
+    setModelMenuOpen(node as HTMLElement, false);
+  }
+}
+
+function installMenuCloseListener() {
+  if (_menuCloseInstalled) return;
+  _menuCloseInstalled = true;
+  document.addEventListener("click", (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) {
+      closeModelMenus();
+      return;
+    }
+    if (!target.closest(".chat-compose__model-shell")) {
+      closeModelMenus();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeModelMenus();
+    }
+  });
+}
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function adjustTextareaHeight(el: HTMLTextAreaElement) {
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
+
+function renderCompactionIndicator(status: CompactionIndicatorStatus | null | undefined) {
+  if (!status) {
+    return nothing;
+  }
+
+  // Show "compacting..." while active
+  if (status.active) {
+    return html`
+      <div class="compaction-indicator compaction-indicator--active" role="status" aria-live="polite">
+        ${icons.loader} ${t("chat.compacting")}
+      </div>
+    `;
+  }
+
+  // Show "compaction complete" briefly after completion
+  if (status.completedAt) {
+    const elapsed = Date.now() - status.completedAt;
+    if (elapsed < COMPACTION_TOAST_DURATION_MS) {
+      return html`
+        <div class="compaction-indicator compaction-indicator--complete" role="status" aria-live="polite">
+          ${icons.check} ${t("chat.compacted")}
+        </div>
+      `;
+    }
+  }
+
+  return nothing;
+}
+
+function generateAttachmentId(): string {
+  return `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Infer attachment category from mimeType. Defaults to "image" for backward compat. */
+export function inferCategory(mimeType: string): AttachmentCategory {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  return "document";
+}
+
+/** Format bytes to human-readable string */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const MAX_ATTACHMENT_SIZE_IMAGE = 10 * 1024 * 1024;
+const MAX_ATTACHMENT_SIZE_AUDIO = 25 * 1024 * 1024;
+const MAX_ATTACHMENT_SIZE_FILE = 30 * 1024 * 1024;
+
+function maxAttachmentSizeForCategory(category: AttachmentCategory): number {
+  switch (category) {
+    case "image":
+      return MAX_ATTACHMENT_SIZE_IMAGE;
+    case "audio":
+      return MAX_ATTACHMENT_SIZE_AUDIO;
+    default:
+      return MAX_ATTACHMENT_SIZE_FILE;
+  }
+}
+
+/** Read a File into a ChatAttachment and append it to the list */
+function addFileAsAttachment(file: File, props: ChatProps) {
+  const mimeType = file.type || "application/octet-stream";
+  const category = inferCategory(mimeType);
+  const maxSize = maxAttachmentSizeForCategory(category);
+  if (file.size > maxSize) {
+    props.onAttachmentRejected?.(
+      t("chat.attachmentTooLarge", {
+        name: file.name || t("chat.attachmentUnnamed"),
+        size: formatFileSize(file.size),
+        max: formatFileSize(maxSize),
+      }),
+    );
+    return;
+  }
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    const dataUrl = reader.result as string;
+    const newAttachment: ChatAttachment = {
+      id: generateAttachmentId(),
+      dataUrl,
+      mimeType,
+      category,
+      fileName: file.name,
+      fileSize: file.size,
+    };
+    const current = props.attachments ?? [];
+    props.onAttachmentsChange?.([...current, newAttachment]);
+  });
+  reader.readAsDataURL(file);
+}
+
+function handlePaste(e: ClipboardEvent, props: ChatProps) {
+  const items = e.clipboardData?.items;
+  if (!items || !props.onAttachmentsChange) {
+    return;
+  }
+
+  const fileItems: DataTransferItem[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind === "file") {
+      fileItems.push(item);
+    }
+  }
+
+  if (fileItems.length === 0) {
+    return;
+  }
+
+  e.preventDefault();
+
+  for (const item of fileItems) {
+    const file = item.getAsFile();
+    if (!file) {
+      continue;
+    }
+    addFileAsAttachment(file, props);
+  }
+}
+
+function handleFileDrop(e: DragEvent, props: ChatProps) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (!props.onAttachmentsChange) return;
+  const files = e.dataTransfer?.files;
+  if (!files) return;
+  for (let i = 0; i < files.length; i++) {
+    addFileAsAttachment(files[i], props);
+  }
+}
+
+function handleFileSelect(e: Event, props: ChatProps) {
+  const input = e.target as HTMLInputElement;
+  if (!input.files || !props.onAttachmentsChange) return;
+  for (let i = 0; i < input.files.length; i++) {
+    addFileAsAttachment(input.files[i], props);
+  }
+  input.value = ""; // reset so same file can be selected again
+}
+
+function renderSingleAttachmentPreview(att: ChatAttachment) {
+  const category = att.category ?? inferCategory(att.mimeType);
+  if (category === "image") {
+    return html`
+      <img
+        src=${att.dataUrl}
+        alt="${att.fileName ?? t("chat.attachmentPreview")}"
+        class="chat-attachment__img"
+      />
+    `;
+  }
+  if (category === "audio") {
+    return html`
+      <div class="chat-attachment__meta">
+        <span class="chat-attachment__icon" aria-hidden="true">🎤</span>
+        <span class="chat-attachment__name">${att.fileName ?? "audio"}</span>
+        ${att.fileSize ? html`<span class="chat-attachment__size">${formatFileSize(att.fileSize)}</span>` : nothing}
+      </div>
+    `;
+  }
+  // document / video / other
+  return html`
+    <div class="chat-attachment__meta">
+      <span class="chat-attachment__icon" aria-hidden="true">${icons.fileText}</span>
+      <span class="chat-attachment__name">${att.fileName ?? "file"}</span>
+      ${att.fileSize ? html`<span class="chat-attachment__size">${formatFileSize(att.fileSize)}</span>` : nothing}
+    </div>
+  `;
+}
+
+function renderAttachmentPreview(props: ChatProps) {
+  const attachments = props.attachments ?? [];
+  if (attachments.length === 0) {
+    return nothing;
+  }
+
+  return html`
+    <div class="chat-attachments">
+      ${attachments.map(
+    (att) => {
+      const category = att.category ?? inferCategory(att.mimeType);
+      return html`
+          <div class="chat-attachment chat-attachment--${category}">
+            ${renderSingleAttachmentPreview(att)}
+            <button
+              class="chat-attachment__remove"
+              type="button"
+              aria-label="${t("chat.removeAttachment")}"
+              @click=${() => {
+          const next = (props.attachments ?? []).filter((a) => a.id !== att.id);
+          props.onAttachmentsChange?.(next);
+        }}
+            >
+              ${icons.x}
+            </button>
+          </div>
+        `;
+    },
+  )}
+    </div>
+  `;
+}
+
+function readBuiltinPromoFlag(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeBuiltinPromoFlag(key: string, value: boolean) {
+  try {
+    if (value) {
+      window.localStorage.setItem(key, "1");
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore localStorage failures in test/private contexts.
+  }
+}
+
+function resolveBuiltinPromoState(props: ChatProps, activeSource: "builtin" | "custom") {
+  if (activeSource === "builtin") {
+    writeBuiltinPromoFlag(BUILTIN_PROMO_USED_KEY, true);
+    writeBuiltinPromoFlag(BUILTIN_PROMO_COLLAPSED_KEY, false);
+    if (_builtinPromoTimer !== null) {
+      window.clearTimeout(_builtinPromoTimer);
+      _builtinPromoTimer = null;
+    }
+    return { visible: false, dot: false };
+  }
+
+  if (readBuiltinPromoFlag(BUILTIN_PROMO_USED_KEY)) {
+    return { visible: false, dot: false };
+  }
+
+  if (!readBuiltinPromoFlag(BUILTIN_PROMO_COLLAPSED_KEY)) {
+    if (_builtinPromoTimer === null) {
+      _builtinPromoTimer = window.setTimeout(() => {
+        writeBuiltinPromoFlag(BUILTIN_PROMO_COLLAPSED_KEY, true);
+        _builtinPromoTimer = null;
+        props.requestUpdate?.();
+      }, BUILTIN_PROMO_DURATION_MS);
+    }
+    return { visible: true, dot: false };
+  }
+
+  return { visible: false, dot: true };
+}
+
+const MODEL_PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  deepseek: "DeepSeek",
+  github: "GitHub",
+  "github-copilot": "GitHub Copilot",
+  google: "Google",
+  huggingface: "Hugging Face",
+  litellm: "LiteLLM",
+  minimax: "MiniMax",
+  mistral: "Mistral",
+  moonshot: "Moonshot",
+  ollama: "Ollama",
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+  qianfan: "Qianfan",
+  qwen: "Qwen",
+  together: "Together",
+  volcengine: "Volcengine",
+  xai: "xAI",
+  zai: "Z.AI",
+};
+
+function formatProviderLabel(provider: string): string {
+  const trimmed = provider.trim();
+  if (!trimmed) {
+    return t("chat.modelCustomGroup");
+  }
+  return MODEL_PROVIDER_LABELS[trimmed] ?? trimmed;
+}
+
+function formatModelValueLabel(model: { name: string; id: string; provider: string }): string {
+  const base = model.name || model.id;
+  const provider = formatProviderLabel(model.provider);
+  return model.provider ? `${provider} · ${base}` : base;
+}
+
+function renderModelSelector(props: ChatProps) {
+  const baseModels = props.models ?? [];
+  const currentKey = props.currentModel?.trim() ?? "";
+  const models = [...baseModels];
+  if (currentKey && !models.some((model) => {
+    const key = model.provider ? `${model.provider}/${model.id}` : model.id;
+    return key === currentKey || model.id === currentKey;
+  })) {
+    const slash = currentKey.indexOf("/");
+    models.push({
+      id: slash >= 0 ? currentKey.slice(slash + 1) : currentKey,
+      name: slash >= 0 ? currentKey.slice(slash + 1) : currentKey,
+      provider: slash >= 0 ? currentKey.slice(0, slash) : "",
+      source: "custom",
+    });
+  }
+  const current = models.find((model) => {
+    const value = model.provider ? `${model.provider}/${model.id}` : model.id;
+    return props.currentModel === value || props.currentModel === model.id;
+  });
+  const builtinModels = models.filter((model) => model.source === "builtin");
+  const customModels = models.filter((model) => model.source === "custom");
+  const activeSource = current?.source === "builtin"
+    ? "builtin"
+    : customModels.length > 0
+      ? "custom"
+      : builtinModels.length > 0
+        ? "builtin"
+        : "custom";
+  const builtinPromo = resolveBuiltinPromoState(props, activeSource);
+  const visibleModels = activeSource === "builtin" ? builtinModels : customModels;
+  const providerGroups = new Map<string, typeof visibleModels>();
+  for (const model of visibleModels) {
+    const key = model.provider || "__default__";
+    const existing = providerGroups.get(key);
+    if (existing) {
+      existing.push(model);
+      continue;
+    }
+    providerGroups.set(key, [model]);
+  }
+  const displayModel = current ?? visibleModels[0] ?? null;
+  const currentLabel = displayModel ? formatModelValueLabel(displayModel) : activeSource === "builtin"
+    ? t("chat.modelBuiltinPlaceholder")
+    : t("chat.modelCustomEmpty");
+  const renderOptions = (items: typeof visibleModels) => items.map((m) => {
+    const value = m.provider ? `${m.provider}/${m.id}` : m.id;
+    const selected = props.currentModel === value || props.currentModel === m.id;
+    const label = m.name || m.id;
+    return html`
+      <button
+        class="chat-compose__model-option ${selected ? "chat-compose__model-option--active" : ""}"
+        type="button"
+        role="option"
+        aria-selected=${selected ? "true" : "false"}
+        @click=${() => {
+      props.onModelChange?.(value);
+      closeModelMenus();
+    }}
+      >
+        <span class="chat-compose__model-option-label">${label}</span>
+        ${selected ? html`<span class="chat-compose__model-option-check">${icons.check}</span>` : nothing}
+      </button>
+    `;
+  });
+
+  return html`
+    <div class="chat-compose__model-shell">
+      <div class="chat-compose__model-groups" aria-hidden="true">
+        <span class="chat-compose__model-chip-wrap">
+          <span class="chat-compose__model-chip ${activeSource === "builtin" ? "chat-compose__model-chip--active" : ""} ${builtinModels.length === 0 ? "chat-compose__model-chip--placeholder" : ""}">
+            ${t("chat.modelBuiltin")}
+          </span>
+          ${builtinPromo.visible
+    ? html`<span class="chat-compose__model-popover">${t("chat.modelBuiltinPromo")}</span>`
+    : nothing}
+          ${builtinPromo.dot
+    ? html`<span class="chat-compose__model-dot" aria-label="${t("chat.modelBuiltinPromoDot")}"></span>`
+    : nothing}
+        </span>
+        <span class="chat-compose__model-chip ${activeSource === "custom" ? "chat-compose__model-chip--active" : ""}">
+          ${t("chat.modelCustom")}
+        </span>
+      </div>
+      <div class="chat-compose__model-selectbox">
+        <button
+          class="chat-compose__model-select"
+          type="button"
+          title="${t("chat.selectModel")}"
+          aria-label="${t("chat.selectModel")}"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          @click=${(event: Event) => {
+      const selectbox = (event.currentTarget as HTMLElement | null)?.closest(".chat-compose__model-selectbox") as HTMLElement | null;
+      const nextOpen = selectbox?.getAttribute("data-open") !== "true";
+      closeModelMenus(selectbox);
+      setModelMenuOpen(selectbox, nextOpen);
+    }}
+        >
+          <span class="chat-compose__model-select-value">${currentLabel}</span>
+          <span class="chat-compose__model-select-caret" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </span>
+        </button>
+        <div class="chat-compose__model-menu" role="listbox" aria-label="${t("chat.selectModel")}">
+          ${visibleModels.length > 0
+    ? Array.from(providerGroups.entries()).map(([provider, items]) => html`
+                <div class="chat-compose__model-group">
+                  <div class="chat-compose__model-group-label">${formatProviderLabel(provider)}</div>
+                  <div class="chat-compose__model-group-options">
+                    ${renderOptions(items)}
+                  </div>
+                </div>
+              `)
+    : html`
+                <div class="chat-compose__model-empty" aria-live="polite">
+                  ${props.connected
+        ? activeSource === "builtin"
+          ? t("chat.modelBuiltinPlaceholder")
+          : t("chat.modelCustomEmpty")
+        : t("chat.modelUnavailable")}
+                </div>
+              `}
+          ${props.onOpenModelConfig
+    ? html`
+              <div class="chat-compose__model-footer">
+                <button
+                  class="chat-compose__model-add"
+                  type="button"
+                  ?disabled=${!props.connected}
+                  @click=${() => {
+      props.onOpenModelConfig?.();
+      closeModelMenus();
+    }}
+                >
+                  ${t("chat.modelAddCustom")}
+                </button>
+              </div>
+            `
+    : nothing}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+export function renderChat(props: ChatProps) {
+  installMenuCloseListener();
+  const canCompose = props.connected;
+  const isBusy = props.sending || props.stream !== null;
+  const canAbort = Boolean(props.canAbort && props.onAbort);
+  const activeSession = props.sessions?.sessions?.find((row) => row.key === props.sessionKey);
+  const reasoningLevel = activeSession?.reasoningLevel ?? "off";
+  const showReasoning = props.showThinking && reasoningLevel !== "off";
+  const assistantIdentity = {
+    name: props.assistantName,
+    avatar: props.assistantAvatar ?? props.assistantAvatarUrl ?? null,
+  };
+
+  const hasAttachments = (props.attachments?.length ?? 0) > 0;
+  const composePlaceholder = props.connected
+    ? hasAttachments
+      ? t("chat.placeholderImages")
+      : t("chat.placeholderDefault")
+    : t("chat.placeholderDisconnected");
+  const canSubmit = props.connected && (props.draft.trim().length > 0 || hasAttachments);
+  const primaryActionIsAbort = isBusy && canAbort;
+  const primaryActionDisabled = primaryActionIsAbort ? false : !canSubmit;
+  const primaryActionLabel = primaryActionIsAbort ? t("chat.stop") : t("chat.send");
+
+  const splitRatio = props.splitRatio ?? 0.6;
+  const sidebarOpen = Boolean(props.sidebarOpen && props.onCloseSidebar);
+  const thread = html`
+    ${(() => {
+    const chatItems = buildChatItems(props);
+    const { groupedRuns, looseRuns } = resolveReadonlyRunBindings(chatItems, props);
+    return html`
+    <div
+      class="chat-thread"
+      role="log"
+      aria-live="polite"
+      @scroll=${props.onChatScroll}
+      ${ref((el) => {
+    if (el && !_codeBlockInitialized.has(el as HTMLElement)) {
+      _codeBlockInitialized.add(el as HTMLElement);
+      initCodeBlockCopyListeners(el as HTMLElement);
+    }
+  })}
+    >
+      ${props.loading
+      ? html`
+              <div class="muted">${t("chat.loadingChat")}</div>
+            `
+      : nothing
+    }
+      ${repeat(
+      chatItems,
+      (item) => item.key,
+      (item) => {
+        if (item.kind === "divider") {
+          return html`
+              <div class="chat-divider" role="separator" data-ts=${String(item.timestamp)}>
+                <span class="chat-divider__line"></span>
+                <span class="chat-divider__label">${item.label}</span>
+                <span class="chat-divider__line"></span>
+              </div>
+            `;
+        }
+
+        if (item.kind === "reading-indicator") {
+          return renderProcessingCard(
+            null,
+            props.streamStartedAt ?? Date.now(),
+            props.onOpenSidebar,
+            assistantIdentity,
+          );
+        }
+
+        if (item.kind === "stream") {
+          return renderProcessingCard(
+            item.text,
+            item.startedAt,
+            props.onOpenSidebar,
+            assistantIdentity,
+          );
+        }
+
+        if (item.kind === "group") {
+          return renderMessageGroup(item, {
+            onOpenSidebar: props.onOpenSidebar,
+            showReasoning,
+            assistantName: props.assistantName,
+            assistantAvatar: assistantIdentity.avatar,
+            workflowRun: groupedRuns.get(item.key) ?? null,
+          });
+        }
+
+        if (item.kind === "readonly-run") {
+          return renderCodexReadonlySurface(item.run);
+        }
+
+        return nothing;
+      },
+    )}
+      ${looseRuns.map((run) => renderCodexReadonlySurface(run))}
+    </div>
+    `;
+  })()}
+  `;
+
+  return html`
+    <section class="card chat">
+      ${props.disabledReason ? html`<div class="callout">${props.disabledReason}</div>` : nothing}
+      ${props.error && props.error !== props.disabledReason ? html`<div class="callout danger">${props.error}</div>` : nothing}
+
+      ${!props.browserExtBannerDismissed && hasBrowserExtError(props.messages)
+      ? html`
+            <div class="browser-ext-banner">
+              <span>
+                ${t("chat.browserExtBanner")}
+                <a href="http://127.0.0.1:26222/browser-extension/" target="_blank">${t("chat.browserExtGuideLink")}</a>
+              </span>
+              <button
+                class="browser-ext-banner__close"
+                type="button"
+                @click=${() => props.onDismissBrowserExtBanner?.()}
+                aria-label="Dismiss"
+              >&times;</button>
+            </div>
+          `
+      : nothing
+    }
+
+      ${props.focusMode
+      ? html`
+            <button
+              class="chat-focus-exit"
+              type="button"
+              @click=${props.onToggleFocusMode}
+              aria-label="${t("chat.exitFocusMode")}"
+              title="${t("chat.exitFocusMode")}"
+            >
+              ${icons.x}
+            </button>
+          `
+      : nothing
+    }
+
+      <div
+        class="chat-split-container ${sidebarOpen ? "chat-split-container--open" : ""}"
+      >
+        <div
+          class="chat-main"
+          style="flex: ${sidebarOpen ? `0 0 ${splitRatio * 100}%` : "1 1 100%"}"
+        >
+          ${thread}
+        </div>
+
+        ${sidebarOpen
+      ? html`
+              <resizable-divider
+                .splitRatio=${splitRatio}
+                @resize=${(e: CustomEvent) => props.onSplitRatioChange?.(e.detail.splitRatio)}
+              ></resizable-divider>
+              <div class="chat-sidebar">
+                ${renderMarkdownSidebar({
+        content: props.sidebarContent ?? null,
+        error: props.sidebarError ?? null,
+        onClose: props.onCloseSidebar!,
+        onViewRawText: () => {
+          if (!props.sidebarContent || !props.onOpenSidebar) {
+            return;
+          }
+          props.onOpenSidebar(`\`\`\`\n${props.sidebarContent}\n\`\`\``);
+        },
+      })}
+              </div>
+            `
+      : nothing
+    }
+      </div>
+
+      ${props.queue.length
+      ? html`
+            <div class="chat-queue" role="status" aria-live="polite">
+              <div class="chat-queue__title">${t("chat.queued", { n: props.queue.length })}</div>
+              <div class="chat-queue__list">
+                ${props.queue.map(
+        (item) => html`
+                    <div class="chat-queue__item">
+                      <div class="chat-queue__text">
+                        ${item.text ||
+          (item.attachments?.length ? t("chat.image", { n: item.attachments.length }) : "")
+          }
+                      </div>
+                      <button
+                        class="btn chat-queue__remove"
+                        type="button"
+                        aria-label="${t("chat.removeQueued")}"
+                        @click=${() => props.onQueueRemove(item.id)}
+                      >
+                        ${icons.x}
+                      </button>
+                    </div>
+                  `,
+      )}
+              </div>
+            </div>
+          `
+      : nothing
+    }
+
+      ${renderCompactionIndicator(props.compactionStatus)}
+
+      ${props.showNewMessages
+      ? html`
+            <button
+              class="btn chat-new-messages"
+              type="button"
+              @click=${props.onScrollToBottom}
+            >
+              ${t("chat.newMessages")} ${icons.arrowDown}
+            </button>
+          `
+      : nothing
+    }
+
+      <div
+        class="chat-compose chat-compose--gemini"
+        @dragover=${(e: DragEvent) => { e.preventDefault(); e.currentTarget && (e.currentTarget as HTMLElement).classList.add("chat-compose--dragover"); }}
+        @dragleave=${(e: DragEvent) => { (e.currentTarget as HTMLElement)?.classList.remove("chat-compose--dragover"); }}
+        @drop=${(e: DragEvent) => { (e.currentTarget as HTMLElement)?.classList.remove("chat-compose--dragover"); handleFileDrop(e, props); }}
+      >
+        <div class="chat-compose__pill">
+          <div class="chat-compose__top">
+            ${renderAttachmentPreview(props)}
+            <textarea
+              class="chat-compose__textarea"
+              ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
+              .value=${props.draft}
+              ?disabled=${!props.connected}
+              @keydown=${(e: KeyboardEvent) => {
+      if (e.key !== "Enter") {
+        return;
+      }
+      if (e.isComposing || e.keyCode === 229) {
+        return;
+      }
+      if (e.shiftKey) {
+        return;
+      }
+      if (!props.connected) {
+        return;
+      }
+      e.preventDefault();
+      if (canCompose) {
+        props.onSend();
+      }
+    }}
+              @input=${(e: Event) => {
+      const target = e.target as HTMLTextAreaElement;
+      adjustTextareaHeight(target);
+      props.onDraftChange(target.value);
+    }}
+              @paste=${(e: ClipboardEvent) => handlePaste(e, props)}
+              placeholder=${composePlaceholder}
+              rows="1"
+            ></textarea>
+          </div>
+
+          <div class="chat-compose__bottom-row">
+            <div class="chat-compose__left">
+              <button
+                class="chat-compose__action-btn chat-compose__attach-btn"
+                type="button"
+                title="${t("chat.attach")}"
+                aria-label="${t("chat.attach")}"
+                ?disabled=${!props.connected}
+                @click=${() => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.multiple = true;
+      input.accept = "image/*,audio/*,.pdf,.doc,.docx,.txt,.md,.csv,.xlsx,.xls,.pptx,.ppt,.json,.xml,.zip";
+      input.addEventListener("change", (ev) => handleFileSelect(ev, props));
+      input.click();
+    }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+              </button>
+              ${renderModelSelector(props)}
+            </div>
+
+            <div class="chat-compose__right">
+              ${props.voiceRecording
+      ? html`<span class="chat-compose__voice-indicator">
+                    <span class="voice-timer">${formatDuration(props.voiceRecordingDuration ?? 0)}</span>
+                  </span>`
+      : nothing}
+              ${props.voiceSupported && !props.voiceRecording
+      ? html`<button
+                    class="chat-compose__action-btn ${props.voiceRecording ? "chat-compose__voice--active" : ""}"
+                    type="button"
+                    title="${t("voice.record")}"
+                    aria-label="${t("voice.record")}"
+                    ?disabled=${!props.connected}
+                    @click=${() => props.onVoiceStart?.()}
+                  >
+                    ${icons.mic}
+                  </button>`
+      : nothing}
+              <button
+                class="chat-compose__new-session"
+                type="button"
+                title="${t("chat.newSession")}"
+                aria-label="${t("chat.newSession")}"
+                ?disabled=${!props.connected}
+                @click=${(e: Event) => {
+      const btn = e.currentTarget as HTMLElement | null;
+      if (!btn) {
+        props.onNewSession();
+        return;
+      }
+
+      const confirmClass = "chat-compose__new-session--confirm";
+      const existingTip = btn.querySelector(".chat-compose__new-tooltip");
+      if (btn.classList.contains(confirmClass)) {
+        btn.classList.remove(confirmClass);
+        if (existingTip) existingTip.remove();
+        props.onNewSession();
+        return;
+      }
+
+      if (existingTip) existingTip.remove();
+      btn.classList.add(confirmClass);
+      const tip = document.createElement("div");
+      tip.className = "chat-compose__new-tooltip";
+      tip.textContent = t("chat.newSessionConfirm");
+      btn.appendChild(tip);
+      window.setTimeout(() => {
+        if (!btn.isConnected) return;
+        btn.classList.remove(confirmClass);
+        tip.remove();
+      }, 3000);
+    }}
+              >
+                ${icons.penLine}
+              </button>
+              <button
+                class="chat-compose__send ${primaryActionIsAbort ? "chat-compose__send--abort" : canSubmit ? "chat-compose__send--ready" : ""}"
+                type="button"
+                title="${primaryActionLabel}"
+                aria-label="${primaryActionLabel}"
+                ?disabled=${primaryActionDisabled}
+                @click=${() => {
+      if (primaryActionIsAbort) {
+        props.onAbort?.();
+        return;
+      }
+      props.onSend();
+    }}
+              >
+                ${primaryActionIsAbort
+      ? icons.stop
+      : html`
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M8 13.5V2.5M8 2.5L3 7.5M8 2.5L13 7.5"/>
+                    </svg>
+                  `}
+              </button>
+            </div>
+          </div>
+        </div>
+        <p class="chat-compose__safety-hint">${t("chat.safetyHint")}</p>
+      </div>
+      ${props.permissionPopupCallbacks && props.requestUpdate
+      ? renderPermissionPopup(props.permissionPopupCallbacks, props.requestUpdate)
+      : nothing}
+    </section>
+  `;
+}
+
+const CHAT_HISTORY_RENDER_LIMIT = 200;
+
+function groupMessages(items: ChatItem[]): Array<ChatItem | MessageGroup> {
+  const result: Array<ChatItem | MessageGroup> = [];
+  let currentGroup: MessageGroup | null = null;
+
+  for (const item of items) {
+    if (item.kind !== "message") {
+      if (currentGroup) {
+        result.push(currentGroup);
+        currentGroup = null;
+      }
+      result.push(item);
+      continue;
+    }
+
+    const normalized = normalizeMessage(item.message);
+    const role = normalizeRoleForGrouping(normalized.role);
+    const timestamp = normalized.timestamp || Date.now();
+
+    if (!currentGroup || currentGroup.role !== role) {
+      if (currentGroup) {
+        result.push(currentGroup);
+      }
+      currentGroup = {
+        kind: "group",
+        key: `group:${role}:${item.key}`,
+        role,
+        messages: [{ message: item.message, key: item.key }],
+        timestamp,
+        isStreaming: false,
+      };
+    } else {
+      currentGroup.messages.push({ message: item.message, key: item.key });
+    }
+  }
+
+  if (currentGroup) {
+    result.push(currentGroup);
+  }
+  return result;
+}
+
+export function shouldRenderReadonlyRunSurface(
+  props: Pick<ChatProps, "uxMode" | "readonlyRun" | "sessionKey">,
+): boolean {
+  return (
+    (props.uxMode ?? "codex-readonly") === "codex-readonly" &&
+    isReadonlyRunVisible(props.readonlyRun ?? null, props.sessionKey)
+  );
+}
+
+export function buildChatItems(props: ChatProps): Array<ChatItem | MessageGroup> {
+  const items: ChatItem[] = [];
+  const history = Array.isArray(props.messages) ? props.messages : [];
+  const tools = Array.isArray(props.toolMessages) ? props.toolMessages : [];
+  const readonlyRun =
+    shouldRenderReadonlyRunSurface(props) && !isReadonlyRunTerminal(props.readonlyRun ?? null)
+      ? props.readonlyRun ?? null
+      : null;
+  const historyStart = Math.max(0, history.length - CHAT_HISTORY_RENDER_LIMIT);
+  if (historyStart > 0) {
+    items.push({
+      kind: "message",
+      key: "chat:history:notice",
+      message: {
+        role: "system",
+        content: t("chat.showingLast", { limit: CHAT_HISTORY_RENDER_LIMIT, hidden: historyStart }),
+        timestamp: Date.now(),
+      },
+    });
+  }
+  for (let i = historyStart; i < history.length; i++) {
+    const msg = history[i];
+    const normalized = normalizeMessage(msg);
+    const raw = msg as Record<string, unknown>;
+    const marker = raw.__openacosmi as Record<string, unknown> | undefined;
+    if (marker && marker.kind === "compaction") {
+      items.push({
+        kind: "divider",
+        key:
+          typeof marker.id === "string"
+            ? `divider:compaction:${marker.id}`
+            : `divider:compaction:${normalized.timestamp}:${i}`,
+        label: t("chat.compaction"),
+        timestamp: normalized.timestamp ?? Date.now(),
+      });
+      continue;
+    }
+
+    if (!props.showThinking && normalized.role.toLowerCase() === "toolresult") {
+      continue;
+    }
+
+    items.push({
+      kind: "message",
+      key: messageKey(msg, i),
+      message: msg,
+    });
+  }
+  if (props.showThinking && (props.uxMode ?? "codex-readonly") !== "codex-readonly") {
+    for (let i = 0; i < tools.length; i++) {
+      items.push({
+        kind: "message",
+        key: messageKey(tools[i], i + history.length),
+        message: tools[i],
+      });
+    }
+  }
+
+  if (props.stream !== null && (props.uxMode ?? "codex-readonly") !== "codex-readonly") {
+    const key = `stream:${props.sessionKey}:${props.streamStartedAt ?? "live"}`;
+    if (props.stream.trim().length > 0) {
+      items.push({
+        kind: "stream",
+        key,
+        text: props.stream,
+        startedAt: props.streamStartedAt ?? Date.now(),
+      });
+    } else {
+      items.push({ kind: "reading-indicator", key });
+    }
+  }
+
+  if (readonlyRun) {
+    items.push(buildReadonlyRunItem(readonlyRun));
+  }
+
+  return groupMessages(items);
+}
+
+function buildReadonlyRunItem(run: ChatProps["readonlyRun"]): Extract<ChatItem, { kind: "readonly-run" }> {
+  const startedAt = run?.startedAt ?? "na";
+  const marker = run?.completedAt ?? run?.updatedAt ?? startedAt;
+  return {
+    kind: "readonly-run",
+    key: `readonly:${run?.sessionKey ?? "session"}:${startedAt}:${marker}:${run?.phase ?? "idle"}`,
+    run: run!,
+  };
+}
+
+function readonlyRunRenderIdentity(run: ChatReadonlyRunState): string {
+  if (run.finalMessageId?.trim()) {
+    return `msg:${run.finalMessageId.trim()}`;
+  }
+  if (typeof run.finalMessageTimestamp === "number") {
+    return `ts:${run.finalMessageTimestamp}`;
+  }
+  if (run.finalMessageText) {
+    return `text:${run.finalMessageText}`;
+  }
+  return `fallback:${run.sessionKey}:${run.startedAt ?? "na"}:${run.completedAt ?? run.updatedAt ?? "na"}:${run.phase}`;
+}
+
+function dedupeReadonlyRuns(runs: ChatReadonlyRunState[], sessionKey: string): ChatReadonlyRunState[] {
+  const byId = new Map<string, ChatReadonlyRunState>();
+  for (const run of runs) {
+    if (!isReadonlyRunVisible(run, sessionKey) || !isReadonlyRunTerminal(run)) {
+      continue;
+    }
+    byId.set(readonlyRunRenderIdentity(run), run);
+  }
+  return [...byId.values()];
+}
+
+function resolveTerminalReadonlyRuns(props: ChatProps): ChatReadonlyRunState[] {
+  if ((props.uxMode ?? "codex-readonly") !== "codex-readonly") {
+    return [];
+  }
+  const current = props.readonlyRun;
+  return dedupeReadonlyRuns([
+    ...(Array.isArray(props.readonlyRunHistory) ? props.readonlyRunHistory : []),
+    current && isReadonlyRunVisible(current, props.sessionKey) && isReadonlyRunTerminal(current)
+      ? current
+      : null,
+  ].filter((run): run is ChatReadonlyRunState => Boolean(run)), props.sessionKey);
+}
+
+function compareReadonlyRunRecency(left: ChatReadonlyRunState, right: ChatReadonlyRunState): number {
+  const leftTs = left.finalMessageTimestamp ?? left.completedAt ?? left.updatedAt ?? left.startedAt ?? 0;
+  const rightTs = right.finalMessageTimestamp ?? right.completedAt ?? right.updatedAt ?? right.startedAt ?? 0;
+  return leftTs - rightTs;
+}
+
+function resolveReadonlyRunBindings(
+  items: Array<ChatItem | MessageGroup>,
+  props: ChatProps,
+): { groupedRuns: Map<string, ChatReadonlyRunState>; looseRuns: ChatReadonlyRunState[] } {
+  const groupedRuns = new Map<string, ChatReadonlyRunState>();
+  const looseRuns: ChatReadonlyRunState[] = [];
+
+  for (const run of resolveTerminalReadonlyRuns(props)) {
+    const groupKey = resolveReadonlyRunTargetGroupKey(items, run);
+    if (!groupKey) {
+      looseRuns.push(run);
+      continue;
+    }
+    const existing = groupedRuns.get(groupKey);
+    if (!existing || compareReadonlyRunRecency(existing, run) <= 0) {
+      groupedRuns.set(groupKey, run);
+      continue;
+    }
+    looseRuns.push(run);
+  }
+
+  return { groupedRuns, looseRuns };
+}
+
+function resolveReadonlyRunTargetGroupKey(
+  items: Array<ChatItem | MessageGroup>,
+  run: ChatProps["readonlyRun"] | null,
+): string | null {
+  if (!run || !isReadonlyRunTerminal(run)) {
+    return null;
+  }
+
+  const exactId = run.finalMessageId?.trim() || "";
+  const exactTimestamp = run.finalMessageTimestamp ?? null;
+  const exactText = normalizeReadonlyRunAnchorText(run.finalMessageText);
+
+  for (const item of items) {
+    if (item.kind !== "group") {
+      continue;
+    }
+    if (normalizeRoleForGrouping(item.role) !== "assistant") {
+      continue;
+    }
+    for (const entry of item.messages) {
+      const msg = entry.message as Record<string, unknown>;
+      const id = typeof msg.id === "string"
+        ? msg.id
+        : typeof msg.messageId === "string"
+          ? msg.messageId
+          : "";
+      const timestamp = typeof msg.timestamp === "number" ? msg.timestamp : null;
+      const text = normalizeReadonlyRunAnchorText(extractText(entry.message));
+      if (
+        (exactId && id === exactId) ||
+        (exactTimestamp !== null && timestamp === exactTimestamp) ||
+        (exactText !== null && text === exactText)
+      ) {
+        return item.key;
+      }
+    }
+  }
+
+  return null;
+}
+
+function messageKey(message: unknown, index: number): string {
+  const m = message as Record<string, unknown>;
+  const toolCallId = typeof m.toolCallId === "string" ? m.toolCallId : "";
+  if (toolCallId) {
+    return `tool:${toolCallId}`;
+  }
+  const id = typeof m.id === "string" ? m.id : "";
+  if (id) {
+    return `msg:${id}`;
+  }
+  const messageId = typeof m.messageId === "string" ? m.messageId : "";
+  if (messageId) {
+    return `msg:${messageId}`;
+  }
+  const timestamp = typeof m.timestamp === "number" ? m.timestamp : null;
+  const role = typeof m.role === "string" ? m.role : "unknown";
+  if (timestamp != null) {
+    return `msg:${role}:${timestamp}:${index}`;
+  }
+  return `msg:${role}:${index}`;
+}

@@ -1,12 +1,12 @@
 package gateway
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,7 +46,9 @@ type SessionStore struct {
 	// 磁盘持久化（storePath 为空时退化为纯内存模式）
 	storePath string // 存储根路径（如 ~/.openacosmi/store）
 	filePath  string // sessions.json 完整路径
-	lockPath  string // sessions.lock 完整路径
+
+	// P3 SQLite 后端（非 nil 时所有 CRUD 走 SQLite 路径）
+	db *sql.DB
 
 	// TTL 缓存 (对齐 TS SESSION_STORE_CACHE — 45s)
 	loadedAt int64 // 上次从磁盘加载的时间 (UnixMilli)
@@ -63,7 +65,6 @@ func NewSessionStore(storePath string) *SessionStore {
 	}
 	if storePath != "" {
 		s.filePath = filepath.Join(storePath, "sessions.json")
-		s.lockPath = filepath.Join(storePath, "sessions.lock")
 		s.loadFromDisk()
 	}
 	return s
@@ -139,52 +140,7 @@ func (s *SessionStore) saveToDisk() {
 	}
 }
 
-// lockFile 获取文件锁。
-// TS 对照: store.ts withSessionStoreLock() — 基于文件的建议锁 + 30s 过期驱逐
-func (s *SessionStore) lockFile() bool {
-	if s.lockPath == "" {
-		return true
-	}
-
-	// 检查是否有过期锁
-	if info, err := os.Stat(s.lockPath); err == nil {
-		lockAge := time.Since(info.ModTime())
-		if lockAge > 30*time.Second {
-			slog.Warn("session_store: evicting stale lock", "age", lockAge, "path", s.lockPath)
-			os.Remove(s.lockPath)
-		} else {
-			// 锁仍有效，获取失败
-			return false
-		}
-	}
-
-	// 创建锁文件（含 PID + 时间戳）
-	lockContent := fmt.Sprintf("%d:%d", os.Getpid(), time.Now().UnixMilli())
-	if err := os.WriteFile(s.lockPath, []byte(lockContent), 0o600); err != nil {
-		slog.Warn("session_store: failed to create lock", "error", err)
-		return false
-	}
-	return true
-}
-
-// unlockFile 释放文件锁。
-func (s *SessionStore) unlockFile() {
-	if s.lockPath == "" {
-		return
-	}
-
-	// 验证锁持有者 — 只移除自己创建的锁
-	data, err := os.ReadFile(s.lockPath)
-	if err != nil {
-		return
-	}
-	parts := strings.SplitN(string(data), ":", 2)
-	if len(parts) >= 1 {
-		if pid, err := strconv.Atoi(parts[0]); err == nil && pid == os.Getpid() {
-			os.Remove(s.lockPath)
-		}
-	}
-}
+// P3: lockFile/unlockFile/lockPath 已删除 — 零调用方，SQLite WAL 模式天然支持并发。
 
 // normalizeSessionStore 加载后迁移遗留字段。
 // TS 对照: store.ts normalizeSessionStore() — provider→channel, room→groupChannel
@@ -210,7 +166,11 @@ func (s *SessionStore) Save(entry *SessionEntry) {
 	}
 	s.mu.Lock()
 	s.sessions[entry.SessionKey] = entry
-	s.saveToDisk()
+	if s.db != nil {
+		s.sqliteSaveSession(entry)
+	} else {
+		s.saveToDisk()
+	}
 	s.mu.Unlock()
 }
 
@@ -252,7 +212,11 @@ func (s *SessionStore) List() []*SessionEntry {
 func (s *SessionStore) Delete(sessionKey string) {
 	s.mu.Lock()
 	delete(s.sessions, sessionKey)
-	s.saveToDisk()
+	if s.db != nil {
+		s.sqliteDeleteSession(sessionKey)
+	} else {
+		s.saveToDisk()
+	}
 	s.mu.Unlock()
 }
 
@@ -269,7 +233,11 @@ func (s *SessionStore) Reset() {
 	s.sessions = make(map[string]*SessionEntry)
 	s.loadedAt = 0
 	s.mtimeMs = 0
-	s.saveToDisk()
+	if s.db != nil {
+		s.sqliteReset()
+	} else {
+		s.saveToDisk()
+	}
 	s.mu.Unlock()
 }
 
@@ -304,7 +272,11 @@ func (s *SessionStore) isCacheStale() bool {
 
 // reloadIfStale 如果缓存过期则从磁盘重新加载。
 // 调用方必须持有写锁。
+// P3: SQLite 模式下跳过 — SQLite 事务天然保证一致性，无需 TTL 检测。
 func (s *SessionStore) reloadIfStale() {
+	if s.db != nil {
+		return // SQLite 模式: 内存缓存由 write-through 维护，无 stale 概念
+	}
 	if !s.isCacheStale() {
 		return
 	}
@@ -432,7 +404,11 @@ func (s *SessionStore) UpdateLastRoute(sessionKey string, params UpdateLastRoute
 	entry.LastThreadId = normalized.LastThreadId
 
 	s.sessions[sessionKey] = entry
-	s.saveToDisk()
+	if s.db != nil {
+		s.sqliteSaveSession(entry)
+	} else {
+		s.saveToDisk()
+	}
 }
 
 // ---------- RecordSessionMeta (对齐 TS store.ts recordSessionMetaFromInbound) ----------
@@ -485,7 +461,11 @@ func (s *SessionStore) RecordSessionMeta(sessionKey string, meta InboundMeta) {
 	}
 
 	s.sessions[sessionKey] = entry
-	s.saveToDisk()
+	if s.db != nil {
+		s.sqliteSaveSession(entry)
+	} else {
+		s.saveToDisk()
+	}
 }
 
 // ParseSessionEntry 从 JSON payload 解析会话条目。

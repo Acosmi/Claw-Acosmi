@@ -2204,9 +2204,14 @@ export type SessionLogRole = SessionLogEntry["role"];
 
 // ~4 chars per token is a rough approximation
 const CHARS_PER_TOKEN = 4;
+type UsageToolUsage = NonNullable<NonNullable<UsageSessionEntry["usage"]>["toolUsage"]>;
 
 function charsToTokens(chars: number): number {
   return Math.round(chars / CHARS_PER_TOKEN);
+}
+
+function getToolUsageTools(toolUsage: UsageToolUsage | null | undefined) {
+  return Array.isArray(toolUsage?.tools) ? toolUsage.tools : [];
 }
 
 function formatTokens(n: number): string {
@@ -2611,7 +2616,7 @@ const buildAggregatesFromSessions = (
     }
 
     if (usage.toolUsage) {
-      for (const tool of usage.toolUsage.tools) {
+      for (const tool of getToolUsageTools(usage.toolUsage)) {
         toolMap.set(tool.name, (toolMap.get(tool.name) ?? 0) + tool.count);
       }
     }
@@ -3907,12 +3912,11 @@ function renderSessionSummary(session: UsageSessionEntry) {
     badges.push(`model:${session.model}`);
   }
 
-  const toolItems =
-    usage.toolUsage?.tools.slice(0, 6).map((tool) => ({
+  const toolItems = getToolUsageTools(usage.toolUsage).slice(0, 6).map((tool) => ({
       label: tool.name,
       value: `${tool.count}`,
       sub: "calls",
-    })) ?? [];
+    }));
   const modelItems =
     usage.modelUsage?.slice(0, 6).map((entry) => ({
       label: entry.model ?? "unknown",
@@ -4447,8 +4451,9 @@ function renderSessionLogsCompact(
 
   const normalizedQuery = filters.query.trim().toLowerCase();
   const entries = logs.map((log) => {
-    const toolInfo = parseToolSummary(log.content);
-    const cleanContent = toolInfo.cleanContent || log.content;
+    const content = typeof log.content === "string" ? log.content : "";
+    const toolInfo = parseToolSummary(content);
+    const cleanContent = toolInfo.cleanContent || content;
     return { log, toolInfo, cleanContent };
   });
   const toolOptions = Array.from(

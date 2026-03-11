@@ -77,12 +77,16 @@ const SOURCE_ICONS: Record<string, string> = {
   weibo: "🔴",
   baidu: "🔵",
   zhihu: "🟢",
+  bocha: "🟠",
+  custom_openai: "🧠",
 };
 
 const SOURCE_LABELS: Record<string, string> = {
   weibo: "微博热搜",
   baidu: "百度热搜",
   zhihu: "知乎热榜",
+  bocha: "Bocha API 热点",
+  custom_openai: "自定义 OpenAI 兼容",
 };
 
 type MediaTone = "ok" | "warn" | "danger" | "info" | "muted";
@@ -203,7 +207,9 @@ export function renderConfigPanel(state: AppViewState): TemplateResult {
                       `
                     : nothing}
                   <div class="media-dashboard-mini-card__note">
-                    ${health ? (isOk ? `返回 ${health.count} 条热点` : "连接失败，建议先检查 token / 请求配额") : "点击“全部检测”查看连通性"}
+                    ${health
+                      ? (isOk ? `返回 ${health.count} 条热点` : "连接失败，建议检查 API Key、配额或站点连通性")
+                      : "点击“全部检测”查看连通性"}
                   </div>
                 </section>
               `;
@@ -546,6 +552,7 @@ function formatRelativeTime(ts: number): string {
 
 export function renderTrendingPanel(state: AppViewState): TemplateResult {
   const topics = state.mediaTrendingTopics || [];
+  const errors = state.mediaTrendingErrors || [];
   const sources = state.mediaTrendingSources || [];
   const loading = state.mediaTrendingLoading || false;
   const selectedSource = state.mediaTrendingSelectedSource || "";
@@ -587,6 +594,19 @@ export function renderTrendingPanel(state: AppViewState): TemplateResult {
           </button>
         </div>
         </div>
+        ${errors.length > 0
+          ? html`
+              <div class="media-dashboard-mini-card is-danger" style="margin:12px 0;">
+                <div class="media-dashboard-mini-card__head">
+                  <strong>抓取异常</strong>
+                  ${renderStatusChip(`${errors.length} 个源失败`, "danger", true)}
+                </div>
+                <div class="media-dashboard-mini-card__note">
+                  ${errors.map((item) => `${SOURCE_LABELS[item.source] || item.source}: ${item.error}`).join(" | ")}
+                </div>
+              </div>
+            `
+          : nothing}
         <div class="media-dashboard-list media-dashboard-list--scroll">
         ${topics.length === 0
           ? html`<div class="media-dashboard-empty">${t("media.trending.empty")}</div>`

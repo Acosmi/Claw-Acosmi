@@ -12,7 +12,7 @@
 #   make clean          # 清理构建产物
 
 .PHONY: gateway cli build-all build-cpp test test-multimedia report-multimedia lint clean fmt vet help \
-        gateway-dev gateway-run test-rust install-cli build-go-cli-deprecated gateway-ffi \
+        gateway-dev gateway-run test-rust install-cli gateway-ffi \
         gen-frontend native-host install-native-host
 
 # 版本信息
@@ -104,14 +104,6 @@ install-native-host: native-host ## 安装 Native Messaging Host 到 Chrome
 # --- 完整构建 ---
 build-all: gateway cli native-host ## 编译 Gateway + Rust CLI + Native Host
 	@echo "✅ 全部编译完成"
-
-# --- Go CLI (已弃用) ---
-build-go-cli-deprecated: fmt vet ## [已弃用] 编译 Go CLI
-	@echo "⚠️  Go CLI (openacosmi) 已弃用，请使用 Rust CLI（主命令 crabclaw）"
-	@echo "   运行 'make cli' 编译 Rust CLI"
-	@echo "   运行 'make gateway' 编译 Go Gateway"
-	go build $(LDFLAGS) -o build/openacosmi-go ./cmd/openacosmi
-	@echo "✅ 编译完成: build/openacosmi-go (已弃用)"
 
 # --- 测试 ---
 test: ## 运行全部 Go 测试

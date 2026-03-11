@@ -30,6 +30,7 @@ func handleRemoteApprovalConfigGet(ctx *MethodHandlerContext) {
 		ctx.Respond(true, map[string]interface{}{
 			"enabled":   false,
 			"providers": []string{},
+			"hash":      "",
 		}, nil)
 		return
 	}
@@ -42,6 +43,7 @@ func handleRemoteApprovalConfigGet(ctx *MethodHandlerContext) {
 		"dingtalk":         cfg.DingTalk,
 		"wecom":            cfg.WeCom,
 		"enabledProviders": notifier.EnabledProviderNames(),
+		"hash":             hashJSONValue(notifier.GetConfig()),
 	}, nil)
 }
 
@@ -54,7 +56,22 @@ func handleRemoteApprovalConfigSet(ctx *MethodHandlerContext) {
 		return
 	}
 
-	var cfg RemoteApprovalConfig
+	current := notifier.GetConfig()
+	baseHashChecked := false
+	if baseHash := resolveBaseHash(ctx.Params); baseHash != "" {
+		baseHashChecked = true
+		expectedHash := hashJSONValue(current)
+		if expectedHash != "" && baseHash != expectedHash {
+			ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest,
+				"remote approval config changed since last load; re-run security.remoteApproval.config.get and retry").WithDetails(map[string]interface{}{
+				"expectedHash": expectedHash,
+				"baseHash":     baseHash,
+			}))
+			return
+		}
+	}
+
+	cfg := cloneRemoteApprovalConfig(current)
 
 	if v, ok := ctx.Params["enabled"].(bool); ok {
 		cfg.Enabled = v
@@ -63,15 +80,23 @@ func handleRemoteApprovalConfigSet(ctx *MethodHandlerContext) {
 		cfg.CallbackURL = strings.TrimSpace(v)
 	}
 
-	// 解析各平台配置
 	if feishuRaw, ok := ctx.Params["feishu"].(map[string]interface{}); ok {
-		cfg.Feishu = parseFeishuConfig(feishuRaw)
+		if cfg.Feishu == nil {
+			cfg.Feishu = &FeishuProviderConfig{}
+		}
+		applyFeishuConfigPatch(cfg.Feishu, feishuRaw)
 	}
 	if dingtalkRaw, ok := ctx.Params["dingtalk"].(map[string]interface{}); ok {
-		cfg.DingTalk = parseDingTalkConfig(dingtalkRaw)
+		if cfg.DingTalk == nil {
+			cfg.DingTalk = &DingTalkProviderConfig{}
+		}
+		applyDingTalkConfigPatch(cfg.DingTalk, dingtalkRaw)
 	}
 	if wecomRaw, ok := ctx.Params["wecom"].(map[string]interface{}); ok {
-		cfg.WeCom = parseWeComConfig(wecomRaw)
+		if cfg.WeCom == nil {
+			cfg.WeCom = &WeComProviderConfig{}
+		}
+		applyWeComConfigPatch(cfg.WeCom, wecomRaw)
 	}
 
 	if err := notifier.UpdateConfig(cfg); err != nil {
@@ -79,9 +104,22 @@ func handleRemoteApprovalConfigSet(ctx *MethodHandlerContext) {
 		return
 	}
 
+	sanitized := notifier.GetConfigSanitized()
 	ctx.Respond(true, map[string]interface{}{
+		"ok":               true,
 		"status":           "saved",
 		"enabledProviders": notifier.EnabledProviderNames(),
+		"config":           sanitized,
+		"hash":             hashJSONValue(notifier.GetConfig()),
+		"validation":       configValidationSuccess(),
+		"verification": map[string]interface{}{
+			"action":            "security.remoteApproval.config.set",
+			"configWritten":     true,
+			"runtimeEffect":     "providers_reloaded",
+			"providersReloaded": true,
+			"baseHashChecked":   baseHashChecked,
+			"legacyUnsafeWrite": !baseHashChecked,
+		},
 	}, nil)
 }
 
@@ -238,4 +276,99 @@ func parseWeComConfig(raw map[string]interface{}) *WeComProviderConfig {
 		cfg.ToParty = v
 	}
 	return cfg
+}
+
+func cloneRemoteApprovalConfig(cfg RemoteApprovalConfig) RemoteApprovalConfig {
+	cloned := cfg
+	if cfg.Feishu != nil {
+		copy := *cfg.Feishu
+		cloned.Feishu = &copy
+	}
+	if cfg.DingTalk != nil {
+		copy := *cfg.DingTalk
+		cloned.DingTalk = &copy
+	}
+	if cfg.WeCom != nil {
+		copy := *cfg.WeCom
+		cloned.WeCom = &copy
+	}
+	return cloned
+}
+
+func applyFeishuConfigPatch(cfg *FeishuProviderConfig, raw map[string]interface{}) {
+	if cfg == nil || raw == nil {
+		return
+	}
+	if v, ok := raw["enabled"].(bool); ok {
+		cfg.Enabled = v
+	}
+	if v, ok := raw["appId"].(string); ok {
+		cfg.AppID = strings.TrimSpace(v)
+	}
+	if v, ok := raw["appSecret"].(string); ok {
+		cfg.AppSecret = strings.TrimSpace(v)
+	}
+	if v, ok := raw["chatId"].(string); ok {
+		cfg.ChatID = strings.TrimSpace(v)
+	}
+	if v, ok := raw["userId"].(string); ok {
+		cfg.UserID = strings.TrimSpace(v)
+	}
+	if v, ok := raw["approvalChatId"].(string); ok {
+		cfg.ApprovalChatID = strings.TrimSpace(v)
+	}
+	if v, ok := raw["lastKnownChatId"].(string); ok {
+		cfg.LastKnownChatID = strings.TrimSpace(v)
+	}
+	if v, ok := raw["lastKnownUserId"].(string); ok {
+		cfg.LastKnownUserID = strings.TrimSpace(v)
+	}
+}
+
+func applyDingTalkConfigPatch(cfg *DingTalkProviderConfig, raw map[string]interface{}) {
+	if cfg == nil || raw == nil {
+		return
+	}
+	if v, ok := raw["enabled"].(bool); ok {
+		cfg.Enabled = v
+	}
+	if v, ok := raw["appKey"].(string); ok {
+		cfg.AppKey = strings.TrimSpace(v)
+	}
+	if v, ok := raw["appSecret"].(string); ok {
+		cfg.AppSecret = strings.TrimSpace(v)
+	}
+	if v, ok := raw["robotCode"].(string); ok {
+		cfg.RobotCode = strings.TrimSpace(v)
+	}
+	if v, ok := raw["webhookUrl"].(string); ok {
+		cfg.WebhookURL = strings.TrimSpace(v)
+	}
+	if v, ok := raw["webhookSecret"].(string); ok {
+		cfg.WebhookSecret = strings.TrimSpace(v)
+	}
+}
+
+func applyWeComConfigPatch(cfg *WeComProviderConfig, raw map[string]interface{}) {
+	if cfg == nil || raw == nil {
+		return
+	}
+	if v, ok := raw["enabled"].(bool); ok {
+		cfg.Enabled = v
+	}
+	if v, ok := raw["corpId"].(string); ok {
+		cfg.CorpID = strings.TrimSpace(v)
+	}
+	if v, ok := raw["agentId"].(float64); ok {
+		cfg.AgentID = int(v)
+	}
+	if v, ok := raw["secret"].(string); ok {
+		cfg.Secret = strings.TrimSpace(v)
+	}
+	if v, ok := raw["toUser"].(string); ok {
+		cfg.ToUser = strings.TrimSpace(v)
+	}
+	if v, ok := raw["toParty"].(string); ok {
+		cfg.ToParty = strings.TrimSpace(v)
+	}
 }

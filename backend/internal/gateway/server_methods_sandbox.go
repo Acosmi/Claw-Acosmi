@@ -37,16 +37,12 @@ func handleSandboxConfigGet(ctx *MethodHandlerContext) {
 func handleSandboxStatus(ctx *MethodHandlerContext) {
 	dockerAvailable := sandbox.IsDockerAvailable()
 
-	// 获取安全级别
-	secLevel := "deny"
-	if ctx.Context.Config != nil && ctx.Context.Config.Tools != nil && ctx.Context.Config.Tools.Exec != nil {
-		secLevel = ctx.Context.Config.Tools.Exec.Security
-	}
+	secLevel := resolveBaseSecurityLevelWithConfig(ctx.Context.Config)
 
 	ctx.Respond(true, map[string]interface{}{
 		"dockerAvailable": dockerAvailable,
 		"securityLevel":   secLevel,
-		"sandboxEnabled":  secLevel == "sandbox" || secLevel == "allowlist",
+		"sandboxEnabled":  secLevel == "sandboxed" || secLevel == "allowlist",
 	}, nil)
 }
 

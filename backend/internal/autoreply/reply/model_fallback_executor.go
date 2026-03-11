@@ -28,10 +28,10 @@ type ModelFallbackExecutor struct {
 	AgentDir                      string
 	OnPermissionDenied            func(tool, detail string) // 权限拒绝→WebSocket广播
 	OnPermissionDeniedWithContext func(notice runner.PermissionDeniedNotice)
-	WaitForApproval               func(ctx context.Context) bool         // 等待提权审批
-	SecurityLevelFunc             func() string                          // 动态安全级别
-	MountRequestsFunc             func() []runner.MountRequestForSandbox // 动态临时挂载请求（Phase 3.4）
-	OnToolEvent                   func(event runner.ToolEvent)           // 结构化工具事件→频道广播
+	WaitForApproval               func(ctx context.Context) bool                     // 等待提权审批
+	SecurityLevelFunc             func() string                                      // 动态安全级别
+	MountRequestsFunc             func(runID string) []runner.MountRequestForSandbox // 动态临时挂载请求（Phase 3.4）
+	OnToolEvent                   func(event runner.ToolEvent)                       // 结构化工具事件→频道广播
 }
 
 // RunTurn 执行一次 agent 回合（含模型失败切换）。
@@ -105,6 +105,7 @@ func (e *ModelFallbackExecutor) RunTurn(ctx context.Context, params AgentTurnPar
 				ExtraSystemPrompt:             params.ExtraSystemPrompt,
 				Provider:                      fbProvider,
 				Model:                         fbModel,
+				SkillFilter:                   append([]string(nil), run.SkillFilter...),
 				AuthProfileID:                 resolveAuthProfileID(run, fbProvider),
 				AuthProfileIDSource:           resolveAuthProfileIDSource(run, fbProvider),
 				ThinkLevel:                    string(run.ThinkLevel),

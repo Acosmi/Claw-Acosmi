@@ -144,7 +144,14 @@ func SafeFetchURL(rawURL string, policy *SsrfPolicy) (*http.Response, error) {
 	// 步骤 3: DNS 解析后检查
 	if !allowPrivate && !isExplicitAllowed {
 		addrs, err := net.DefaultResolver.LookupHost(context.Background(), hostname)
-		if err == nil {
+		if err != nil {
+			// 仅当输入是直接 IP 时放行（ParseIP 不为 nil），否则阻止
+			if net.ParseIP(hostname) == nil {
+				return nil, &SsrfBlockedError{
+					Message: fmt.Sprintf("ssrf: DNS 解析失败且非直接 IP: %s: %v", hostname, err),
+				}
+			}
+		} else {
 			for _, addr := range addrs {
 				if IsPrivateIP(addr) {
 					return nil, &SsrfBlockedError{
@@ -153,29 +160,12 @@ func SafeFetchURL(rawURL string, policy *SsrfPolicy) (*http.Response, error) {
 				}
 			}
 		}
-		// DNS 解析失败不阻止（可能是直接 IP）
 	}
 
-	// 步骤 4: 发送请求
-	client := &http.Client{
-		Timeout: defaultSafeFetchTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("ssrf: 重定向次数过多")
-			}
-			// 重定向目标也要检查
-			redirectHost := req.URL.Hostname()
-			if !allowPrivate && !isExplicitAllowed {
-				if IsBlockedHostname(redirectHost) {
-					return &SsrfBlockedError{Message: fmt.Sprintf("ssrf: 重定向到阻止主机: %s", redirectHost)}
-				}
-				if IsPrivateIP(redirectHost) {
-					return &SsrfBlockedError{Message: "ssrf: 重定向到私有 IP"}
-				}
-			}
-			return nil
-		},
-	}
+	// 步骤 4: 使用策略感知的 DNS-pinning 客户端发送请求
+	// 统一防止重定向时的 DNS rebinding 攻击，重定向次数限制为 3 次。
+	// 当 AllowPrivateNetwork 或 AllowedHostnames 放行时，跳过 DialContext/CheckRedirect 中的私有 IP 检查。
+	client := createPinnedHTTPClientWithPolicy(defaultSafeFetchTimeout, allowPrivate, policyAllowedHostnames(policy))
 
 	resp, err := client.Get(rawURL) //nolint:gosec // URL 已通过 SSRF 检查
 	if err != nil {
@@ -237,6 +227,73 @@ func CreatePinnedHTTPClient(timeout time.Duration) *http.Client {
 			return nil
 		},
 	}
+}
+
+// createPinnedHTTPClientWithPolicy 创建策略感知的 DNS-pinning HTTP 客户端。
+// 当 allowPrivate 或 allowedHostnames 匹配时，跳过 DialContext/CheckRedirect 中的私有 IP 检查。
+func createPinnedHTTPClientWithPolicy(timeout time.Duration, allowPrivate bool, allowedHostnames []string) *http.Client {
+	dialer := &net.Dialer{Timeout: timeout}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, fmt.Errorf("ssrf: invalid address %s: %w", addr, err)
+			}
+			skipIPCheck := allowPrivate || isHostnameAllowed(host, allowedHostnames)
+			ips, err := net.DefaultResolver.LookupHost(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("ssrf: DNS lookup failed for %s: %w", host, err)
+			}
+			if len(ips) == 0 {
+				return nil, fmt.Errorf("ssrf: no addresses resolved for %s", host)
+			}
+			if !skipIPCheck {
+				for _, ip := range ips {
+					if IsPrivateIP(ip) {
+						return nil, fmt.Errorf("ssrf: blocked private IP %s for host %s", ip, host)
+					}
+				}
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
+		},
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("ssrf: too many redirects")
+			}
+			host := req.URL.Hostname()
+			skipCheck := allowPrivate || isHostnameAllowed(host, allowedHostnames)
+			if !skipCheck {
+				if IsBlockedHostname(host) {
+					return fmt.Errorf("ssrf: redirect blocked to hostname %s", host)
+				}
+				if IsPrivateIP(host) {
+					return fmt.Errorf("ssrf: redirect blocked to private IP %s", host)
+				}
+				ips, err := net.DefaultResolver.LookupHost(req.Context(), host)
+				if err != nil {
+					return fmt.Errorf("ssrf: redirect DNS lookup failed for %s: %w", host, err)
+				}
+				for _, ip := range ips {
+					if IsPrivateIP(ip) {
+						return fmt.Errorf("ssrf: redirect blocked to private IP %s", ip)
+					}
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// policyAllowedHostnames 从策略中提取白名单主机名列表。
+func policyAllowedHostnames(policy *SsrfPolicy) []string {
+	if policy == nil {
+		return nil
+	}
+	return policy.AllowedHostnames
 }
 
 // ---------- 内部函数 ----------

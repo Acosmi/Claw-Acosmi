@@ -34,6 +34,7 @@ type TranscriptEntry struct {
 	Provider   string                 `json:"provider,omitempty"`
 	Model      string                 `json:"model,omitempty"`
 	Usage      map[string]interface{} `json:"usage,omitempty"`
+	ToolCalls  map[string]int         `json:"toolCalls,omitempty"`
 	StopReason string                 `json:"stopReason,omitempty"`
 	Timestamp  int64                  `json:"timestamp"`
 }

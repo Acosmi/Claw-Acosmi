@@ -67,6 +67,50 @@ func TestBuildAgentSystemPrompt_Minimal(t *testing.T) {
 	}
 }
 
+func TestBuildAgentSystemPrompt_SpecializedConfigToolTriggersSelfUpdateSection(t *testing.T) {
+	result := BuildAgentSystemPrompt(BuildParams{
+		Mode:      PromptModeFull,
+		ToolNames: []string{"browser_config"},
+		RuntimeInfo: &RuntimeInfo{
+			Model: "claude-3.5",
+		},
+	})
+
+	if !strings.Contains(result, "## Crab Claw（蟹爪） Self-Update") {
+		t.Fatal("expected self-update section when specialized config tools are available")
+	}
+	if !strings.Contains(result, "browser_config") {
+		t.Fatal("self-update section should mention specialized config tools")
+	}
+}
+
+func TestBuildAgentSystemPrompt_ColdStartWithoutLookupSkillAvoidsInternalDirectivePrompt(t *testing.T) {
+	result := BuildAgentSystemPrompt(BuildParams{
+		Mode:         PromptModeFull,
+		SessionState: SessionColdStart,
+		ToolNames:    nil,
+	})
+
+	if strings.Contains(result, "使用 `lookup_skill` 查找 `acosmi-intro`") {
+		t.Fatal("cold start prompt should not require lookup_skill when the tool is unavailable")
+	}
+	if !strings.Contains(result, "禁止输出任何内部工具/技能查找指令") {
+		t.Fatal("cold start prompt should explicitly forbid leaking internal directives without lookup_skill")
+	}
+}
+
+func TestBuildAgentSystemPrompt_ColdStartWithLookupSkillKeepsSkillGuidance(t *testing.T) {
+	result := BuildAgentSystemPrompt(BuildParams{
+		Mode:         PromptModeFull,
+		SessionState: SessionColdStart,
+		ToolNames:    []string{"lookup_skill"},
+	})
+
+	if !strings.Contains(result, "使用 `lookup_skill` 查找 `acosmi-intro`") {
+		t.Fatal("cold start prompt should keep lookup_skill guidance when the tool is available")
+	}
+}
+
 func TestBuildAgentSystemPrompt_None(t *testing.T) {
 	result := BuildAgentSystemPrompt(BuildParams{
 		Mode: PromptModeNone,

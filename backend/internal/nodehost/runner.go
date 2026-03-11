@@ -203,7 +203,10 @@ func (s *NodeHostService) handleExecApprovalsSet(frame *NodeInvokeRequest) {
 	}
 
 	incoming.Socket = &infra.ExecApprovalsSocket{Path: socketPath, Token: token}
-	if err := infra.SaveExecApprovals(&incoming); err != nil {
+	unlock := infra.AcquireExecApprovalsLock()
+	err = infra.SaveExecApprovals(&incoming)
+	unlock()
+	if err != nil {
 		s.sendInvokeResult(frame, false, "", &InvokeErrorShape{Code: "INTERNAL", Message: err.Error()})
 		return
 	}

@@ -114,7 +114,7 @@ func TestEscalationRequest_SameLevelSandboxedWithMountAllowed(t *testing.T) {
 		"esc_mount_001",
 		"sandboxed",
 		"Need temporary mount",
-		"",
+		"run-1",
 		"",
 		"",
 		"",
@@ -134,6 +134,12 @@ func TestEscalationRequest_SameLevelSandboxedWithMountAllowed(t *testing.T) {
 	}
 	if status.Pending.MountRequests[0].MountMode != "rw" {
 		t.Fatalf("expected rw mount mode, got %q", status.Pending.MountRequests[0].MountMode)
+	}
+	if !status.Pending.TaskScoped {
+		t.Fatal("expected task-scoped mount request")
+	}
+	if status.Pending.TTLMinutes != 0 {
+		t.Fatalf("expected task-scoped mount ttl=0, got %d", status.Pending.TTLMinutes)
 	}
 }
 
@@ -180,7 +186,7 @@ func TestEscalationRequest_ActiveSandboxedAllowsMountExtension(t *testing.T) {
 		"esc_active_002",
 		"sandboxed",
 		"extend mount",
-		"",
+		"run-2",
 		"",
 		"",
 		"",
@@ -200,9 +206,18 @@ func TestEscalationRequest_ActiveSandboxedAllowsMountExtension(t *testing.T) {
 	if got := len(status.Pending.MountRequests); got != 1 {
 		t.Fatalf("expected 1 pending mount request, got %d", got)
 	}
+	if !status.Pending.TaskScoped {
+		t.Fatal("expected task-scoped pending mount request")
+	}
+	if status.Pending.RunID != "run-2" {
+		t.Fatalf("expected pending runID run-2, got %q", status.Pending.RunID)
+	}
+	if status.Pending.TTLMinutes != 0 {
+		t.Fatalf("expected task-scoped mount ttl=0, got %d", status.Pending.TTLMinutes)
+	}
 }
 
-func TestEscalationRequest_ActiveAllowlistAllowsMountExtension(t *testing.T) {
+func TestEscalationRequest_ActiveAllowlistRejectsMountExtension(t *testing.T) {
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
@@ -224,29 +239,28 @@ func TestEscalationRequest_ActiveAllowlistAllowsMountExtension(t *testing.T) {
 		"esc_allow_active_002",
 		"allowlist",
 		"extend allowlist path",
-		"",
+		"run-2",
 		"",
 		"",
 		"",
 		30,
 		MountRequest{HostPath: secondMount, MountMode: "ro"},
-	); err != nil {
-		t.Fatalf("mount extension request should be allowed with active allowlist grant: %v", err)
+	); err == nil {
+		t.Fatal("expected allowlist mount extension to be rejected")
+	} else if !strings.Contains(err.Error(), "mount access requires sandboxed level") {
+		t.Fatalf("expected sandboxed-only mount error, got %v", err)
 	}
 
 	status := mgr.GetStatus()
 	if !status.HasActive {
 		t.Fatal("expected existing active grant to remain")
 	}
-	if !status.HasPending || status.Pending == nil {
-		t.Fatal("expected pending extension request")
-	}
-	if got := len(status.Pending.MountRequests); got != 1 {
-		t.Fatalf("expected 1 pending mount request, got %d", got)
+	if status.HasPending {
+		t.Fatal("expected no pending request after invalid allowlist mount attempt")
 	}
 }
 
-func TestEscalationResolve_MergesMountRequestsOnSameLevel(t *testing.T) {
+func TestEscalationResolve_TaskScopedMountCreatesSeparateGrant(t *testing.T) {
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
@@ -256,31 +270,29 @@ func TestEscalationResolve_MergesMountRequestsOnSameLevel(t *testing.T) {
 	mgr.SetMaxAllowedLevel("sandboxed")
 	defer mgr.Close()
 
-	firstMount := filepath.Join(tmpHome, "first")
 	secondMount := filepath.Join(tmpHome, "second")
 
 	if err := mgr.RequestEscalation(
 		"esc_merge_001",
 		"sandboxed",
-		"initial mount",
-		"",
+		"initial sandbox grant",
+		"run-1",
 		"",
 		"",
 		"",
 		30,
-		MountRequest{HostPath: firstMount, MountMode: "ro"},
 	); err != nil {
-		t.Fatalf("initial request failed: %v", err)
+		t.Fatalf("initial sandbox request failed: %v", err)
 	}
 	if err := mgr.ResolveEscalation(true, 30); err != nil {
-		t.Fatalf("initial approve failed: %v", err)
+		t.Fatalf("initial sandbox approve failed: %v", err)
 	}
 
 	if err := mgr.RequestEscalation(
 		"esc_merge_002",
 		"sandboxed",
 		"add mount",
-		"",
+		"run-2",
 		"",
 		"",
 		"",
@@ -297,12 +309,70 @@ func TestEscalationResolve_MergesMountRequestsOnSameLevel(t *testing.T) {
 	if !status.HasActive || status.Active == nil {
 		t.Fatal("expected active grant")
 	}
-	if got := len(status.Active.MountRequests); got != 2 {
-		t.Fatalf("expected 2 merged mount requests, got %d", got)
+	if got := len(status.ActiveGrants); got != 2 {
+		t.Fatalf("expected 2 active grants, got %d", got)
+	}
+	if mounts := mgr.GetActiveMountRequestsForRun("run-1"); len(mounts) != 0 {
+		t.Fatalf("expected run-1 to have no task-scoped mounts, got %+v", mounts)
+	}
+	mounts := mgr.GetActiveMountRequestsForRun("run-2")
+	if len(mounts) != 1 || mounts[0].HostPath != secondMount {
+		t.Fatalf("expected run-2 mount %q, got %+v", secondMount, mounts)
 	}
 }
 
-func TestEscalationResolve_MergesAllowlistMountRequestsOnSameLevel(t *testing.T) {
+func TestEscalationResolve_AllowlistGrantCoexistsWithTaskScopedSandboxMount(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	mountPath := filepath.Join(tmpHome, "task-mount")
+
+	if err := mgr.RequestEscalation("esc_allow_001", "allowlist", "need l1", "", "", "", "", 30); err != nil {
+		t.Fatalf("allowlist request failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 30); err != nil {
+		t.Fatalf("allowlist approve failed: %v", err)
+	}
+
+	if err := mgr.RequestEscalation(
+		"esc_mount_001",
+		"sandboxed",
+		"need task mount",
+		"run-2",
+		"",
+		"",
+		"",
+		30,
+		MountRequest{HostPath: mountPath, MountMode: "ro"},
+	); err != nil {
+		t.Fatalf("task-scoped mount request failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 0); err != nil {
+		t.Fatalf("task-scoped mount approve failed: %v", err)
+	}
+
+	status := mgr.GetStatus()
+	if status.ActiveLevel != "sandboxed" {
+		t.Fatalf("expected effective level sandboxed, got %q", status.ActiveLevel)
+	}
+	if got := len(status.ActiveGrants); got != 2 {
+		t.Fatalf("expected 2 active grants, got %d", got)
+	}
+	if mounts := mgr.GetActiveMountRequestsForRun("run-2"); len(mounts) != 1 || mounts[0].HostPath != mountPath {
+		t.Fatalf("expected run-2 mount %q, got %+v", mountPath, mounts)
+	}
+	if mounts := mgr.GetActiveMountRequestsForRun("run-other"); len(mounts) != 0 {
+		t.Fatalf("expected unrelated run to see no task mount, got %+v", mounts)
+	}
+}
+
+func TestEscalationResolve_TaskScopedMountsAreRunScoped(t *testing.T) {
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
@@ -316,48 +386,49 @@ func TestEscalationResolve_MergesAllowlistMountRequestsOnSameLevel(t *testing.T)
 	secondMount := filepath.Join(tmpHome, "second")
 
 	if err := mgr.RequestEscalation(
-		"esc_allow_merge_001",
-		"allowlist",
-		"initial mount",
-		"",
+		"esc_scope_001",
+		"sandboxed",
+		"mount for run 1",
+		"run-1",
 		"",
 		"",
 		"",
 		30,
 		MountRequest{HostPath: firstMount, MountMode: "ro"},
 	); err != nil {
-		t.Fatalf("initial request failed: %v", err)
+		t.Fatalf("run-1 mount request failed: %v", err)
 	}
-	if err := mgr.ResolveEscalation(true, 30); err != nil {
-		t.Fatalf("initial approve failed: %v", err)
+	if err := mgr.ResolveEscalation(true, 0); err != nil {
+		t.Fatalf("run-1 mount approve failed: %v", err)
 	}
 
 	if err := mgr.RequestEscalation(
-		"esc_allow_merge_002",
-		"allowlist",
-		"add mount",
-		"",
+		"esc_scope_002",
+		"sandboxed",
+		"mount for run 2",
+		"run-2",
 		"",
 		"",
 		"",
 		30,
-		MountRequest{HostPath: secondMount, MountMode: "ro"},
+		MountRequest{HostPath: secondMount, MountMode: "rw"},
 	); err != nil {
-		t.Fatalf("extension request failed: %v", err)
+		t.Fatalf("run-2 mount request failed: %v", err)
 	}
-	if err := mgr.ResolveEscalation(true, 30); err != nil {
-		t.Fatalf("extension approve failed: %v", err)
+	if err := mgr.ResolveEscalation(true, 0); err != nil {
+		t.Fatalf("run-2 mount approve failed: %v", err)
 	}
 
-	status := mgr.GetStatus()
-	if !status.HasActive || status.Active == nil {
-		t.Fatal("expected active grant")
+	if mounts := mgr.GetActiveMountRequests(); len(mounts) != 0 {
+		t.Fatalf("expected global mount lookup to hide task-scoped grants, got %+v", mounts)
 	}
-	if status.Active.Level != "allowlist" {
-		t.Fatalf("expected active level allowlist, got %q", status.Active.Level)
+	run1Mounts := mgr.GetActiveMountRequestsForRun("run-1")
+	if len(run1Mounts) != 1 || run1Mounts[0].HostPath != firstMount {
+		t.Fatalf("expected run-1 mount %q, got %+v", firstMount, run1Mounts)
 	}
-	if got := len(status.Active.MountRequests); got != 2 {
-		t.Fatalf("expected 2 merged mount requests, got %d", got)
+	run2Mounts := mgr.GetActiveMountRequestsForRun("run-2")
+	if len(run2Mounts) != 1 || run2Mounts[0].HostPath != secondMount {
+		t.Fatalf("expected run-2 mount %q, got %+v", secondMount, run2Mounts)
 	}
 }
 
@@ -374,7 +445,7 @@ func TestEscalationRestoreFromDisk_PreservesMountRequests(t *testing.T) {
 		"esc_restore_001",
 		"sandboxed",
 		"persist mount request",
-		"",
+		"run-restore",
 		"",
 		"",
 		"",
@@ -399,6 +470,9 @@ func TestEscalationRestoreFromDisk_PreservesMountRequests(t *testing.T) {
 	}
 	if status.Pending.MountRequests[0].HostPath != mountPath {
 		t.Fatalf("unexpected restored mount path: %q", status.Pending.MountRequests[0].HostPath)
+	}
+	if !status.Pending.TaskScoped {
+		t.Fatal("expected restored mount request to remain task-scoped")
 	}
 }
 
@@ -509,13 +583,13 @@ func TestEscalationAutoDeescalate(t *testing.T) {
 	// Override TTL to very short for testing
 	mgr.mu.Lock()
 	mgr.pending = nil
-	mgr.active = &ActiveEscalationGrant{
+	mgr.activeGrants = []*ActiveEscalationGrant{{
 		ID:        "esc_001",
 		Level:     "sandboxed",
 		GrantedAt: time.Now(),
 		ExpiresAt: time.Now().Add(100 * time.Millisecond),
-	}
-	mgr.startDeescalateTimerLocked(100 * time.Millisecond)
+	}}
+	mgr.rescheduleDeescalateTimerLocked()
 	mgr.mu.Unlock()
 
 	// Wait for auto-deescalation
@@ -585,9 +659,54 @@ func TestEscalationApprove_FullIgnoresFallbackSandboxedMode(t *testing.T) {
 	}
 }
 
+func TestEscalationApprove_MountAccessOnBaseFullBypassesApproval(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	setBaseSecurityLevelForTest(t, infra.ExecSecurityFull)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("full")
+	defer mgr.Close()
+
+	mountDir := t.TempDir()
+	if err := mgr.RequestEscalationWithMetadata(EscalationRequestOptions{
+		ID:         "esc_mount_full_base",
+		Level:      string(infra.ExecSecuritySandboxed),
+		Reason:     "temporary mount access",
+		RunID:      "run-1",
+		TTLMinutes: 30,
+		MountRequests: []MountRequest{
+			{HostPath: mountDir, MountMode: "ro"},
+		},
+	}); err == nil {
+		t.Fatal("expected base full security to bypass mount approval request")
+	}
+
+	status := mgr.GetStatus()
+	if status.HasActive || status.Active != nil {
+		t.Fatal("expected no active mount grant when base level is full")
+	}
+	if status.BaseLevel != string(infra.ExecSecurityFull) {
+		t.Fatalf("expected base level to remain full, got %q", status.BaseLevel)
+	}
+	if status.ActiveLevel != string(infra.ExecSecurityFull) {
+		t.Fatalf("effective level = %q, want full", status.ActiveLevel)
+	}
+	if got := mgr.GetEffectiveLevel(); got != string(infra.ExecSecurityFull) {
+		t.Fatalf("GetEffectiveLevel() = %q, want full", got)
+	}
+	mounts := mgr.GetActiveMountRequests()
+	if len(mounts) != 0 {
+		t.Fatalf("active mounts = %+v, want none", mounts)
+	}
+}
+
 // ---------- Task Complete ----------
 
-func TestEscalationTaskComplete(t *testing.T) {
+func TestEscalationTaskComplete_ClearsPendingTaskScopedMountGrant(t *testing.T) {
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
@@ -597,19 +716,76 @@ func TestEscalationTaskComplete(t *testing.T) {
 	mgr.SetMaxAllowedLevel("sandboxed")
 	defer mgr.Close()
 
-	mgr.RequestEscalation("esc_001", "sandboxed", "reason", "run-1", "", "", "", 30)
-	mgr.ResolveEscalation(true, 30)
+	mountDir := t.TempDir()
+	if err := mgr.RequestEscalationWithMetadata(EscalationRequestOptions{
+		ID:         "esc_pending_mount",
+		Level:      "sandboxed",
+		Reason:     "reason",
+		RunID:      "run-1",
+		TTLMinutes: 30,
+		MountRequests: []MountRequest{
+			{HostPath: mountDir, MountMode: "ro"},
+		},
+	}); err != nil {
+		t.Fatalf("request escalation failed: %v", err)
+	}
+
+	mgr.TaskComplete("run-1")
+
+	status := mgr.GetStatus()
+	if status.HasPending || status.Pending != nil {
+		t.Fatalf("expected pending task-scoped mount request to be cleared, got %+v", status.Pending)
+	}
+	if status.HasActive {
+		t.Fatal("expected no active grant after clearing pending task-scoped mount request")
+	}
+}
+
+func TestEscalationTaskComplete_TaskScopedMountGrant(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	mountDir := t.TempDir()
+	if err := mgr.RequestEscalationWithMetadata(EscalationRequestOptions{
+		ID:         "esc_001",
+		Level:      "sandboxed",
+		Reason:     "reason",
+		RunID:      "run-1",
+		TTLMinutes: 30,
+		MountRequests: []MountRequest{
+			{HostPath: mountDir, MountMode: "ro"},
+		},
+	}); err != nil {
+		t.Fatalf("request escalation failed: %v", err)
+	}
+
+	status := mgr.GetStatus()
+	if status.Pending == nil || !status.Pending.TaskScoped {
+		t.Fatal("expected pending task-scoped mount request")
+	}
+	if status.Pending.TTLMinutes != 0 {
+		t.Fatalf("pending TTLMinutes = %d, want 0 for task-scoped mount grant", status.Pending.TTLMinutes)
+	}
+	if err := mgr.ResolveEscalation(true, 0); err != nil {
+		t.Fatalf("approve failed: %v", err)
+	}
 
 	// Task complete with matching runID
 	mgr.TaskComplete("run-1")
 
-	status := mgr.GetStatus()
+	status = mgr.GetStatus()
 	if status.HasActive {
 		t.Error("should not have active grant after task complete")
 	}
 }
 
-func TestEscalationTaskComplete_WrongRunID(t *testing.T) {
+func TestEscalationTaskComplete_TaskScopedMountGrantWrongRunID(t *testing.T) {
 	tmpHome := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpHome)
@@ -619,15 +795,57 @@ func TestEscalationTaskComplete_WrongRunID(t *testing.T) {
 	mgr.SetMaxAllowedLevel("sandboxed")
 	defer mgr.Close()
 
-	mgr.RequestEscalation("esc_001", "sandboxed", "reason", "run-1", "", "", "", 30)
-	mgr.ResolveEscalation(true, 30)
+	mountDir := t.TempDir()
+	if err := mgr.RequestEscalationWithMetadata(EscalationRequestOptions{
+		ID:         "esc_001",
+		Level:      "sandboxed",
+		Reason:     "reason",
+		RunID:      "run-1",
+		TTLMinutes: 30,
+		MountRequests: []MountRequest{
+			{HostPath: mountDir, MountMode: "ro"},
+		},
+	}); err != nil {
+		t.Fatalf("request escalation failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 0); err != nil {
+		t.Fatalf("approve failed: %v", err)
+	}
 
 	// Task complete with wrong runID should NOT deescalate
 	mgr.TaskComplete("run-other")
 
 	status := mgr.GetStatus()
 	if !status.HasActive {
-		t.Error("should still have active grant (wrong runID)")
+		t.Error("should still have active task-scoped grant (wrong runID)")
+	}
+	if status.Active == nil || !status.Active.TaskScoped {
+		t.Fatal("expected active task-scoped mount grant")
+	}
+}
+
+func TestEscalationTaskComplete_IgnoresNonTaskScopedGrant(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	if err := mgr.RequestEscalation("esc_001", "sandboxed", "reason", "run-1", "", "", "", 30); err != nil {
+		t.Fatalf("request escalation failed: %v", err)
+	}
+	if err := mgr.ResolveEscalation(true, 30); err != nil {
+		t.Fatalf("approve failed: %v", err)
+	}
+
+	mgr.TaskComplete("run-1")
+
+	status := mgr.GetStatus()
+	if !status.HasActive {
+		t.Error("non-task-scoped grant should remain active after task complete")
 	}
 }
 
@@ -730,6 +948,53 @@ func TestEscalationHandlers_RequestAndStatus(t *testing.T) {
 	statusResult := gotPayload.(EscalationStatus)
 	if !statusResult.HasPending {
 		t.Error("expected hasPending=true")
+	}
+}
+
+func TestEscalationHandlers_RequestMountAccessReturnsTaskScoped(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	mgr := NewEscalationManager(nil, nil, nil)
+	mgr.SetMaxAllowedLevel("sandboxed")
+	defer mgr.Close()
+
+	r := NewMethodRegistry()
+	r.RegisterAll(EscalationHandlers())
+
+	mountDir := t.TempDir()
+	req := &RequestFrame{Method: "security.escalation.request", Params: map[string]interface{}{
+		"level":      "sandboxed",
+		"reason":     "Need temporary workspace mount",
+		"runId":      "run-1",
+		"ttlMinutes": float64(30),
+		"mountRequests": []interface{}{
+			map[string]interface{}{"hostPath": mountDir, "mountMode": "ro"},
+		},
+	}}
+
+	var gotOK bool
+	var gotPayload interface{}
+	respond := func(ok bool, payload interface{}, _ *ErrorShape) {
+		gotOK = ok
+		gotPayload = payload
+	}
+	HandleGatewayRequest(r, req, nil, &GatewayMethodContext{EscalationMgr: mgr}, respond)
+	if !gotOK {
+		t.Fatal("request should succeed")
+	}
+
+	result := gotPayload.(map[string]interface{})
+	if result["status"] != "pending" {
+		t.Fatalf("expected status pending, got %v", result["status"])
+	}
+	if taskScoped, _ := result["taskScoped"].(bool); !taskScoped {
+		t.Fatalf("expected taskScoped=true, got %v", result["taskScoped"])
+	}
+	if ttl, _ := result["ttlMinutes"].(int); ttl != 0 {
+		t.Fatalf("expected ttlMinutes=0 for task-scoped mount request, got %v", result["ttlMinutes"])
 	}
 }
 

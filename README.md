@@ -126,8 +126,8 @@ make start
 
 如果你是 **macOS** 或 **Windows** 用户，体验极致简单，直接双击项目根目录下的系统专属启动脚本即可：
 
-- macOS: 双击 `start.command`
-- Windows: 双击 `start.bat`
+- macOS: 双击 `一键部署脚本/mac-start.command`
+- Windows: 双击 `一键部署脚本/win-start.bat`
 
 详细的底层开发环境配置与多终端极客启动方式，请参阅 [启动指南 (STARTUP.md)](./STARTUP.md)。
 
@@ -231,8 +231,8 @@ make start
 
 If you are a **macOS** or **Windows** user, experience extreme simplicity by just double-clicking the OS-specific startup script in the root directory:
 
-- macOS: Double-click `start.command`
-- Windows: Double-click `start.bat`
+- macOS: Double-click `一键部署脚本/mac-start.command`
+- Windows: Double-click `一键部署脚本/win-start.bat`
 
 For detailed developer environments and multi-terminal startup methods, please refer to the [Startup Guide (STARTUP.md)](./STARTUP.md).
 

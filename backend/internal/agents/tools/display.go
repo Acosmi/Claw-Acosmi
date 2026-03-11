@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/capabilities"
+	"github.com/Acosmi/ClawAcosmi/internal/agents/configtools"
 	"github.com/Acosmi/ClawAcosmi/pkg/log"
 	"github.com/Acosmi/ClawAcosmi/pkg/utils"
 )
@@ -138,7 +139,33 @@ var toolRegistry = map[string]ToolDisplaySpec{
 		"wake":   {Label: "wake", DetailKeys: []string{"text", "mode"}},
 	}},
 	"gateway": {Emoji: "🔌", Title: "Gateway", Actions: map[string]ToolDisplayActionSpec{
-		"restart": {Label: "restart", DetailKeys: []string{"reason", "delayMs"}},
+		"restart":                            {Label: "restart", DetailKeys: []string{"reason", "delayMs"}},
+		"config.get":                         {Label: "config get"},
+		"config.schema":                      {Label: "config schema"},
+		"config.set":                         {Label: "config set", DetailKeys: []string{"baseHash"}},
+		"config.patch":                       {Label: "config patch", DetailKeys: []string{"baseHash", "sessionKey", "restartDelayMs"}},
+		"config.apply":                       {Label: "config apply", DetailKeys: []string{"baseHash", "sessionKey", "restartDelayMs"}},
+		"tools.browser.get":                  {Label: "browser config get"},
+		"tools.browser.set":                  {Label: "browser config set", DetailKeys: []string{"baseHash"}},
+		"security.remoteApproval.config.get": {Label: "remote approval get"},
+		"security.remoteApproval.config.set": {Label: "remote approval set", DetailKeys: []string{"baseHash"}},
+		"security.remoteApproval.test":       {Label: "remote approval test", DetailKeys: []string{"provider"}},
+		"image.config.get":                   {Label: "image config get"},
+		"image.config.set":                   {Label: "image config set", DetailKeys: []string{"baseHash", "provider"}},
+		"image.test":                         {Label: "image test"},
+		"image.models":                       {Label: "image models", DetailKeys: []string{"provider"}},
+		"image.ollama.models":                {Label: "image ollama models"},
+		"stt.config.get":                     {Label: "stt config get"},
+		"stt.config.set":                     {Label: "stt config set", DetailKeys: []string{"baseHash", "provider"}},
+		"stt.test":                           {Label: "stt test"},
+		"stt.models":                         {Label: "stt models", DetailKeys: []string{"provider"}},
+		"docconv.config.get":                 {Label: "docconv config get"},
+		"docconv.config.set":                 {Label: "docconv config set", DetailKeys: []string{"baseHash", "provider"}},
+		"docconv.test":                       {Label: "docconv test"},
+		"docconv.formats":                    {Label: "docconv formats", DetailKeys: []string{"provider"}},
+		"media.config.get":                   {Label: "media config get"},
+		"media.config.update":                {Label: "media config update", DetailKeys: []string{"baseHash", "provider"}},
+		"update.run":                         {Label: "update run"},
 	}},
 	"message": {Emoji: "✉️", Title: "Message", Actions: map[string]ToolDisplayActionSpec{
 		"send":           {Label: "send", DetailKeys: []string{"provider", "to", "media", "replyTo", "threadId"}},
@@ -187,6 +214,32 @@ var toolRegistry = map[string]ToolDisplaySpec{
 		"start": {Label: "start"}, "wait": {Label: "wait"},
 	}},
 	"tts": {Emoji: "🔊", Title: "Text-to-Speech"},
+}
+
+func init() {
+	registerSpecializedConfigDisplays()
+}
+
+func registerSpecializedConfigDisplays() {
+	for _, spec := range configtools.ToolSpecs() {
+		actions := make(map[string]ToolDisplayActionSpec, len(spec.Actions))
+		for _, action := range spec.Actions {
+			label := strings.ReplaceAll(action.Name, "_", " ")
+			detailKeys := action.AllowedParams
+			if len(detailKeys) > 0 {
+				detailKeys = append([]string(nil), detailKeys...)
+			}
+			actions[action.Name] = ToolDisplayActionSpec{
+				Label:      label,
+				DetailKeys: detailKeys,
+			}
+		}
+		toolRegistry[spec.ToolName] = ToolDisplaySpec{
+			Emoji:   spec.Emoji,
+			Title:   spec.Title,
+			Actions: actions,
+		}
+	}
 }
 
 // ---------- 辅助函数 ----------

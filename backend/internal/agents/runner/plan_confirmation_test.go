@@ -445,7 +445,7 @@ func TestPlanConfirmation_RequestCarriesApprovalSummary(t *testing.T) {
 	scope.AdditionalApprovals = []ApprovalRequirement{
 		{
 			Type:       "mount_access",
-			TTLMinutes: 30,
+			TTLMinutes: 0,
 			MountMode:  "ro",
 			MountPath:  "/Users/test/Desktop",
 		},
@@ -482,6 +482,9 @@ func TestPlanConfirmation_RequestCarriesApprovalSummary(t *testing.T) {
 	}
 	if !strings.Contains(captured.ApprovalSummary[1], "mount_access") {
 		t.Fatalf("ApprovalSummary[1] = %q, want mount_access summary", captured.ApprovalSummary[1])
+	}
+	if !strings.Contains(captured.ApprovalSummary[1], "本任务") {
+		t.Fatalf("ApprovalSummary[1] = %q, want task-scoped mount wording", captured.ApprovalSummary[1])
 	}
 
 	<-done
@@ -615,6 +618,9 @@ func TestDeriveApprovalScope_SendFileKnownAbsolutePathAddsSecondaryMountAccess(t
 	if scope.AdditionalApprovals[0].MountPath != "/Users/test/Desktop" {
 		t.Fatalf("AdditionalApprovals[0].MountPath = %q, want /Users/test/Desktop", scope.AdditionalApprovals[0].MountPath)
 	}
+	if scope.AdditionalApprovals[0].TTLMinutes != 0 {
+		t.Fatalf("AdditionalApprovals[0].TTLMinutes = %d, want 0 for task-scoped mount access", scope.AdditionalApprovals[0].TTLMinutes)
+	}
 }
 
 func TestDeriveApprovalScope_SendFilePlusBashAddsSecondaryExportAndMount(t *testing.T) {
@@ -644,6 +650,9 @@ func TestDeriveApprovalScope_SendFilePlusBashAddsSecondaryExportAndMount(t *test
 	seen := map[string]bool{}
 	for _, approval := range scope.AdditionalApprovals {
 		seen[approval.Type] = true
+		if approval.Type == "mount_access" && approval.TTLMinutes != 0 {
+			t.Fatalf("mount_access TTLMinutes = %d, want 0 for task-scoped mount access", approval.TTLMinutes)
+		}
 	}
 	if !seen["data_export"] {
 		t.Fatalf("expected additional data_export approval, got %+v", scope.AdditionalApprovals)
@@ -755,6 +764,9 @@ func TestValidateApprovalScope_MountAccessDefaults(t *testing.T) {
 	if validated.MountMode != "ro" {
 		t.Errorf("MountMode = %q, want ro (safe default)", validated.MountMode)
 	}
+	if validated.TTLMinutes != 0 {
+		t.Errorf("TTLMinutes = %d, want 0 for task-scoped mount access", validated.TTLMinutes)
+	}
 }
 
 func TestValidateApprovalScope_NormalizesAdditionalApprovals(t *testing.T) {
@@ -780,8 +792,8 @@ func TestValidateApprovalScope_NormalizesAdditionalApprovals(t *testing.T) {
 	if validated.AdditionalApprovals[0].MountMode != "ro" {
 		t.Fatalf("AdditionalApprovals[0].MountMode = %q, want ro", validated.AdditionalApprovals[0].MountMode)
 	}
-	if validated.AdditionalApprovals[0].TTLMinutes != 30 {
-		t.Fatalf("AdditionalApprovals[0].TTLMinutes = %d, want 30", validated.AdditionalApprovals[0].TTLMinutes)
+	if validated.AdditionalApprovals[0].TTLMinutes != 0 {
+		t.Fatalf("AdditionalApprovals[0].TTLMinutes = %d, want 0", validated.AdditionalApprovals[0].TTLMinutes)
 	}
 }
 
@@ -798,7 +810,7 @@ func TestApprovalSummaryFromScope_SendMediaDualApproval(t *testing.T) {
 	scope.AdditionalApprovals = []ApprovalRequirement{
 		{
 			Type:       "mount_access",
-			TTLMinutes: 30,
+			TTLMinutes: 0,
 			MountMode:  "ro",
 			MountPath:  "/Users/test/Desktop",
 		},
@@ -812,6 +824,9 @@ func TestApprovalSummaryFromScope_SendMediaDualApproval(t *testing.T) {
 		t.Fatalf("unexpected primary approval summary: %q", lines[0])
 	}
 	if !strings.Contains(lines[1], "附加审批") || !strings.Contains(lines[1], "mount_access") {
+		t.Fatalf("unexpected additional approval summary: %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "本任务") {
 		t.Fatalf("unexpected additional approval summary: %q", lines[1])
 	}
 }

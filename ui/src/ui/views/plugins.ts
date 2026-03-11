@@ -29,12 +29,15 @@ export type PluginsProps = {
   packagesKindFilter: PackageKind | "all";
   packagesKeyword: string;
   packagesBusyId: string | null;
+  skillsLoadedCount?: number;
+  requestUpdate?: () => void;
   onEditChange: (pluginId: string, key: string, value: string) => void;
   onSave: (pluginId: string) => void;
   onGoToChannels: () => void;
   onPanelChange: (panel: PluginsPanelType) => void;
   onBrowserEditChange: (key: string, value: string | boolean) => void;
   onBrowserSave: () => void;
+  onOpenExternal?: (url: string) => void;
   onPackagesKindChange: (kind: PackageKind | "all") => void;
   onPackagesKeywordChange: (keyword: string) => void;
   onPackagesSearch: () => void;
@@ -70,6 +73,18 @@ export function renderPlugins(props: PluginsProps) {
             : props.skillsView ?? nothing}
     </section>
   `;
+}
+
+let activePackageDetail: PackageCatalogItem | null = null;
+
+function openPackageDetail(item: PackageCatalogItem, requestUpdate?: () => void) {
+  activePackageDetail = item;
+  requestUpdate?.();
+}
+
+function closePackageDetail(requestUpdate?: () => void) {
+  activePackageDetail = null;
+  requestUpdate?.();
 }
 
 function renderSubTab(
@@ -399,6 +414,7 @@ function renderBrowserToolCard(props: PluginsProps) {
   const getString = (key: string, fallback: string): string => {
     return getEffectiveBrowserString(cfg, edits, key, fallback);
   };
+  const extensionGuideUrl = `${gatewayHttpBase(props.gatewayUrl)}/browser-extension/`;
 
   return html`
     <div style="margin-top: 20px;">
@@ -541,10 +557,8 @@ function renderBrowserToolCard(props: PluginsProps) {
                   <div style="font-size: 11px; opacity: 0.6; padding: 4px 0;">${_extStatusCache.msg}</div>
                 ` : nothing}
                 <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px;">
-                  <a
-                    href="${gatewayHttpBase(props.gatewayUrl)}/browser-extension/"
-                    target="_blank"
-                    rel="noopener"
+                  <button
+                    type="button"
                     class="btn btn-sm"
                     style="
                       font-size: 12px;
@@ -558,9 +572,16 @@ function renderBrowserToolCard(props: PluginsProps) {
                       align-items: center;
                       gap: 4px;
                     "
+                    @click=${() => {
+          if (props.onOpenExternal) {
+            props.onOpenExternal(extensionGuideUrl);
+            return;
+          }
+          window.location.assign(extensionGuideUrl);
+        }}
                   >
                     ${t("tools.browser.ext.installBtn")}
-                  </a>
+                  </button>
                   <button
                     class="btn btn-sm"
                     style="font-size: 12px; padding: 5px 12px; border-radius: 6px; background: var(--color-bg-secondary, #e8e8ed); border: none; cursor: pointer;"
@@ -572,6 +593,9 @@ function renderBrowserToolCard(props: PluginsProps) {
                   >
                     ${t("tools.browser.ext.refreshBtn")}
                   </button>
+                </div>
+                <div style="font-size: 11px; opacity: 0.55; line-height: 1.5; margin-top: 4px;">
+                  ${t("tools.browser.ext.packagedZipHint")}
                 </div>
               </div>
 
@@ -640,6 +664,8 @@ const KIND_FILTERS: Array<{ value: PackageKind | "all"; labelKey: string }> = [
 ];
 
 function renderPackagesPanel(props: PluginsProps) {
+  const showSkillsCatalogHint =
+    props.packagesKindFilter === "all" || props.packagesKindFilter === "skill";
   return html`
     <div style="margin-top: 16px;">
       <!-- Kind filter + search -->
@@ -697,9 +723,20 @@ function renderPackagesPanel(props: PluginsProps) {
           <div style="margin-top: 8px; font-size: 12px; opacity: 0.5;">
             ${t("packages.count").replace("{shown}", String(props.packagesItems.length)).replace("{total}", String(props.packagesTotal))}
           </div>
+          ${showSkillsCatalogHint
+            ? html`
+                <div class="callout" style="margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                  <span>${t("packages.skillsCatalogHint").replace("{count}", String(props.skillsLoadedCount ?? 0))}</span>
+                  <button class="btn btn-sm" @click=${() => props.onPanelChange("skills")}>
+                    ${t("packages.skillsCatalogAction")}
+                  </button>
+                </div>
+              `
+            : nothing}
           <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px;">
             ${props.packagesItems.map((item) => renderPackageCard(item, props))}
           </div>
+          ${renderPackageDetailModal(props)}
         `
         : nothing}
 
@@ -732,19 +769,24 @@ function kindBadgeColor(kind: string): string {
 function renderPackageCard(item: PackageCatalogItem, props: PluginsProps) {
   const isBusy = props.packagesBusyId === item.id;
   return html`
-    <div class="card" style="
-      padding: 14px 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      transition: transform 0.1s ease, box-shadow 0.1s ease;
-    ">
-      <div class="row" style="justify-content: space-between; align-items: center;">
-        <div style="display: flex; align-items: center; gap: 8px;">
+    <div
+      class="card package-card"
+      role="button"
+      tabindex="0"
+      @click=${() => openPackageDetail(item, props.requestUpdate)}
+      @keydown=${(event: KeyboardEvent) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openPackageDetail(item, props.requestUpdate);
+        }
+      }}
+    >
+      <div class="package-card__header">
+        <div class="package-card__title-group">
           <span style="font-size: 18px;">${item.icon || "📦"}</span>
-          <span style="font-weight: 600; font-size: 14px;">${item.name}</span>
+          <span class="package-card__title">${item.name}</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 6px;">
+        <div class="package-card__badges">
           <span class="chip" style="font-size: 10px; background: ${kindBadgeColor(item.kind)}; color: #fff;">
             ${item.kind}
           </span>
@@ -753,9 +795,9 @@ function renderPackageCard(item: PackageCatalogItem, props: PluginsProps) {
       : nothing}
         </div>
       </div>
-      <div style="font-size: 12px; opacity: 0.6; line-height: 1.4;">${item.description}</div>
-      <div class="row" style="justify-content: space-between; align-items: center;">
-        <div style="font-size: 11px; opacity: 0.4;">
+      <div class="package-card__desc">${item.description}</div>
+      <div class="package-card__footer">
+        <div class="package-card__meta">
           ${item.version ? `v${item.version}` : ""}
           ${item.author ? ` · ${item.author}` : ""}
         </div>
@@ -765,7 +807,10 @@ function renderPackageCard(item: PackageCatalogItem, props: PluginsProps) {
               class="btn btn-sm"
               style="font-size: 11px;"
               ?disabled=${isBusy}
-              @click=${() => props.onPackagesRemove(item.id)}
+              @click=${(event: Event) => {
+                event.stopPropagation();
+                props.onPackagesRemove(item.id);
+              }}
             >
               ${isBusy ? t("packages.btn.removing") : t("packages.btn.remove")}
             </button>
@@ -775,11 +820,94 @@ function renderPackageCard(item: PackageCatalogItem, props: PluginsProps) {
               class="btn btn-primary btn-sm"
               style="font-size: 11px;"
               ?disabled=${isBusy}
-              @click=${() => props.onPackagesInstall(item.id, item.kind)}
+              @click=${(event: Event) => {
+                event.stopPropagation();
+                props.onPackagesInstall(item.id, item.kind);
+              }}
             >
               ${isBusy ? t("packages.btn.installing") : t("packages.btn.install")}
             </button>
           `}
+      </div>
+    </div>
+  `;
+}
+
+function renderPackageDetailModal(props: PluginsProps) {
+  const item = activePackageDetail;
+  if (!item) {
+    return nothing;
+  }
+
+  return html`
+    <div
+      class="modal-overlay"
+      style="position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 80;"
+      @click=${(event: Event) => {
+        if (event.target === event.currentTarget) {
+          closePackageDetail(props.requestUpdate);
+        }
+      }}
+    >
+      <div class="card" style="width: min(560px, 100%); max-height: 88vh; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+        <div class="row" style="justify-content: space-between; align-items: flex-start; gap: 16px;">
+          <div style="display: flex; gap: 12px; align-items: flex-start;">
+            <div style="font-size: 28px; line-height: 1;">${item.icon || "📦"}</div>
+            <div>
+              <div class="card-title" style="margin-bottom: 4px;">${item.name}</div>
+              <div class="card-sub">${item.author ? `${item.author} · v${item.version}` : `v${item.version}`}</div>
+            </div>
+          </div>
+          <button class="btn btn-sm" @click=${() => closePackageDetail(props.requestUpdate)}>${t("wizard.close")}</button>
+        </div>
+
+        <div style="font-size: 14px; line-height: 1.7;">${item.description}</div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+          <div>
+            <div style="font-size: 12px; opacity: 0.55; margin-bottom: 4px;">${t("packages.detail.kind")}</div>
+            <div><span class="chip" style="background: ${kindBadgeColor(item.kind)}; color: #fff;">${item.kind}</span></div>
+          </div>
+          <div>
+            <div style="font-size: 12px; opacity: 0.55; margin-bottom: 4px;">${t("packages.detail.id")}</div>
+            <code style="font-size: 12px; white-space: pre-wrap; word-break: break-word;">${item.id}</code>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size: 12px; opacity: 0.55; margin-bottom: 8px;">${t("packages.detail.tags")}</div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            ${(item.tags.length > 0 ? item.tags : [t("packages.detail.noTags")]).map((tag) => html`
+              <span class="chip">${tag}</span>
+            `)}
+          </div>
+        </div>
+
+        <div class="row" style="justify-content: flex-end; gap: 8px;">
+          ${item.isInstalled
+            ? html`
+                <button
+                  class="btn btn-sm"
+                  @click=${() => {
+                    props.onPackagesRemove(item.id);
+                    closePackageDetail(props.requestUpdate);
+                  }}
+                >
+                  ${t("packages.btn.remove")}
+                </button>
+              `
+            : html`
+                <button
+                  class="btn btn-primary btn-sm"
+                  @click=${() => {
+                    props.onPackagesInstall(item.id, item.kind);
+                    closePackageDetail(props.requestUpdate);
+                  }}
+                >
+                  ${t("packages.btn.install")}
+                </button>
+              `}
+        </div>
       </div>
     </div>
   `;

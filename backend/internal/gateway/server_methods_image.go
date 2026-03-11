@@ -34,6 +34,7 @@ func ImageHandlers() map[string]GatewayMethodHandler {
 // ImageConfigGetResult image.config.get 响应
 type ImageConfigGetResult struct {
 	Configured   bool                `json:"configured"`
+	Hash         string              `json:"hash,omitempty"`
 	Provider     string              `json:"provider,omitempty"`
 	Model        string              `json:"model,omitempty"`
 	BaseURL      string              `json:"baseUrl,omitempty"`
@@ -51,7 +52,7 @@ type ImageProviderInfo struct {
 	Hint  string `json:"hint,omitempty"`
 }
 
-func handleImageConfigGet(ctx *MethodHandlerContext) {
+func buildImageConfigGetResult(cfg *types.ImageUnderstandingConfig) ImageConfigGetResult {
 	ollamaOnline := probeOllama()
 
 	ollamaHint := "本地 Ollama 视觉模型（llava 等）"
@@ -73,7 +74,6 @@ func handleImageConfigGet(ctx *MethodHandlerContext) {
 		},
 	}
 
-	cfg := loadImageConfigFromCtx(ctx)
 	if cfg != nil && cfg.Provider != "" {
 		result.Configured = true
 		result.Provider = cfg.Provider
@@ -84,49 +84,63 @@ func handleImageConfigGet(ctx *MethodHandlerContext) {
 		result.HasAPIKey = cfg.APIKey != ""
 	}
 
+	return result
+}
+
+func handleImageConfigGet(ctx *MethodHandlerContext) {
+	result := buildImageConfigGetResult(loadImageConfigFromCtx(ctx))
+	if loader := ctx.Context.ConfigLoader; loader != nil {
+		if snapshot, err := loader.ReadConfigFileSnapshot(); err == nil && snapshot != nil {
+			result.Hash = snapshot.Hash
+		}
+	}
+
 	ctx.Respond(true, result, nil)
 }
 
 // ---------- image.config.set ----------
 
 func handleImageConfigSet(ctx *MethodHandlerContext) {
-	paramsJSON, err := json.Marshal(ctx.Params)
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "invalid params"))
-		return
-	}
-	var params types.ImageUnderstandingConfig
-	if err := json.Unmarshal(paramsJSON, &params); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "parse params: "+err.Error()))
-		return
-	}
+	executeConfigMutation(ctx, configMutationOptions{
+		Action: "image.config.set",
+		Mutate: func(currentCfg *types.OpenAcosmiConfig) error {
+			if currentCfg.ImageUnderstanding == nil {
+				currentCfg.ImageUnderstanding = &types.ImageUnderstandingConfig{}
+			}
+			current := currentCfg.ImageUnderstanding
 
-	cfgLoader := ctx.Context.ConfigLoader
-	if cfgLoader == nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "config loader not available"))
-		return
-	}
-
-	currentCfg, err := cfgLoader.LoadConfig()
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "load config: "+err.Error()))
-		return
-	}
-	if currentCfg == nil {
-		currentCfg = &types.OpenAcosmiConfig{}
-	}
-
-	currentCfg.ImageUnderstanding = &params
-
-	if err := cfgLoader.WriteConfigFile(currentCfg); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "save config: "+err.Error()))
-		return
-	}
-
-	ctx.Respond(true, map[string]interface{}{
-		"saved":    true,
-		"provider": params.Provider,
-	}, nil)
+			if provider, ok := readTrimmedStringParam(ctx.Params, "provider"); ok {
+				current.Provider = provider
+			}
+			if apiKeyRaw, ok := ctx.Params["apiKey"].(string); ok {
+				trimmed := strings.TrimSpace(apiKeyRaw)
+				if !strings.HasPrefix(trimmed, "••") {
+					current.APIKey = trimmed
+				}
+			}
+			if model, ok := readTrimmedStringParam(ctx.Params, "model"); ok {
+				current.Model = model
+			}
+			if baseURL, ok := readTrimmedStringParam(ctx.Params, "baseUrl"); ok {
+				current.BaseURL = baseURL
+			}
+			if prompt, ok := readTrimmedStringParam(ctx.Params, "prompt"); ok {
+				current.Prompt = prompt
+			}
+			if maxTokens, found, err := readOptionalIntParam(ctx.Params, "maxTokens"); err != nil {
+				return err
+			} else if found {
+				current.MaxTokens = maxTokens
+			}
+			return nil
+		},
+		AfterWrite: func(_ *MethodHandlerContext, cfg *types.OpenAcosmiConfig) map[string]interface{} {
+			result := buildImageConfigGetResult(cfg.ImageUnderstanding)
+			return map[string]interface{}{
+				"image": result,
+			}
+		},
+	})
 }
 
 // ---------- image.test ----------

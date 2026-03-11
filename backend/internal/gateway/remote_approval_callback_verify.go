@@ -60,7 +60,7 @@ func VerifyWeComSignature(token, timestamp, nonce, msgSignature, encrypt string)
 	hash.Write([]byte(joined))
 	expected := fmt.Sprintf("%x", hash.Sum(nil))
 
-	return expected == msgSignature
+	return hmac.Equal([]byte(expected), []byte(msgSignature))
 }
 
 // ---------- 企业微信 AES 解密 ----------

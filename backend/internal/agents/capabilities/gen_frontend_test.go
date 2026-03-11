@@ -306,7 +306,8 @@ func TestGenerateWizardSkillGroups_MatchesHandWritten(t *testing.T) {
 	// Verify expected default-on groups
 	defaultOnExpected := map[string]bool{
 		"fs": true, "runtime": true, "ui": true,
-		"web": true, "memory": true, "sessions": true,
+		"web": true, "memory": true, "sessions": true, "ai": true,
+		"system": true, "messaging": true,
 	}
 
 	for _, g := range groups {
@@ -315,6 +316,31 @@ func TestGenerateWizardSkillGroups_MatchesHandWritten(t *testing.T) {
 				t.Errorf("wizard group %q: defaultOn=%v, want %v",
 					g.Key, g.DefaultOn, expected)
 			}
+		}
+	}
+}
+
+func TestGenerateWizardSkillGroups_JSONContract(t *testing.T) {
+	tree := GenerateTreeFromRegistry()
+	groups := GenerateWizardSkillGroups(tree)
+	if len(groups) == 0 {
+		t.Fatal("no wizard skill groups generated")
+	}
+
+	data, err := json.Marshal(groups[:1])
+	if err != nil {
+		t.Fatalf("marshal wizard skill groups: %v", err)
+	}
+
+	text := string(data)
+	for _, key := range []string{`"key"`, `"defaultOn"`, `"tools"`} {
+		if !strings.Contains(text, key) {
+			t.Fatalf("wizard skill group json missing %s: %s", key, text)
+		}
+	}
+	for _, key := range []string{`"Key"`, `"DefaultOn"`, `"Tools"`} {
+		if strings.Contains(text, key) {
+			t.Fatalf("wizard skill group json should not contain %s: %s", key, text)
 		}
 	}
 }

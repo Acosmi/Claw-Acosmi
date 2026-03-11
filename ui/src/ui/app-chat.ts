@@ -11,6 +11,23 @@ import { normalizeBasePath } from "./navigation.ts";
 import { createChatReadonlyRunState, type ChatReadonlyRunState } from "./chat/readonly-run-state.ts";
 import { generateUUID } from "./uuid.ts";
 
+// P2 身份收敛: 通过网关 sessions.create API 创建 session。
+// 失败时回退到本地生成（兼容离线/断连场景）。
+async function requestCreateSession(host: { connected: boolean }): Promise<string> {
+  const app = host as unknown as { client?: { request: <T>(method: string, params?: Record<string, unknown>) => Promise<T> } };
+  if (app.client && host.connected) {
+    try {
+      const res = await app.client.request<{ sessionKey?: string }>("sessions.create", {});
+      if (res?.sessionKey) {
+        return res.sessionKey;
+      }
+    } catch {
+      // 网关不可达 — 回退到本地生成
+    }
+  }
+  return `user:${generateUUID()}`;
+}
+
 export type ChatHost = {
   connected: boolean;
   chatMessage: string;
@@ -25,6 +42,7 @@ export type ChatHost = {
   refreshSessionsAfterChat: Set<string>;
   chatReadonlyRun?: ChatReadonlyRunState;
   chatReadonlyRunHistory?: ChatReadonlyRunState[];
+  setTab?: (next: "chat") => void;
 };
 
 // 会话下拉框不限制活跃时间，显示所有历史会话
@@ -165,6 +183,7 @@ export async function handleSendChat(
   messageOverride?: string,
   opts?: { restoreDraft?: boolean },
 ) {
+  host.setTab?.("chat");
   if (!host.connected) {
     return;
   }
@@ -184,12 +203,12 @@ export async function handleSendChat(
     return;
   }
 
-  // /new 或 /reset: 直接本地创建新会话，不发送给 AI
+  // /new 或 /reset: 通过网关创建新会话（P2 身份收敛: 不再本地生成 sessionKey）
   if (isChatResetCommand(message)) {
     // 保留草稿（如果通过"新会话"按钮触发）
     const draftToRestore = opts?.restoreDraft ? previousDraft : "";
-    // 生成新 session key 并重置本地状态
-    const newKey = `user:${generateUUID()}`;
+    // 通过 sessions.create API 获取网关分配的 sessionKey
+    const newKey = await requestCreateSession(host);
     host.sessionKey = newKey;
     host.chatMessage = draftToRestore;
     host.chatAttachments = [];

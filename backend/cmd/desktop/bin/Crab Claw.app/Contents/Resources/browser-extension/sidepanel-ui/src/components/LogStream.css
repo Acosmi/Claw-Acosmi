@@ -1,0 +1,129 @@
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--cc-bg-1);
+  border-bottom: 1px solid var(--cc-border);
+  flex-shrink: 0;
+}
+
+.log-filter {
+  flex: 1;
+  padding: 4px 8px;
+  background: var(--cc-bg-2);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-sm);
+  color: var(--cc-text);
+  font-size: 11px;
+  font-family: var(--cc-mono);
+  outline: none;
+}
+
+.log-filter:focus { border-color: var(--cc-orange); }
+.log-filter::placeholder { color: var(--cc-text-muted); }
+
+.log-count {
+  font-size: 10px;
+  color: var(--cc-text-muted);
+  min-width: 30px;
+  text-align: right;
+}
+
+.log-clear {
+  background: transparent;
+  border: 1px solid var(--cc-border);
+  color: var(--cc-text-dim);
+  padding: 3px 8px;
+  border-radius: var(--cc-radius-sm);
+  font-size: 10px;
+  cursor: pointer;
+  font-family: var(--cc-font);
+}
+
+.log-clear:hover { color: var(--cc-red); border-color: var(--cc-red); }
+
+.log-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 12px;
+  font-family: var(--cc-mono);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.log-empty {
+  text-align: center;
+  color: var(--cc-text-muted);
+  padding: 40px 0;
+}
+
+.log-row {
+  display: flex;
+  gap: 6px;
+  padding: 1px 0;
+  border-bottom: 1px solid rgba(255,255,255, 0.02);
+}
+
+.log-row:hover { background: var(--cc-bg-2); }
+
+.log-time {
+  color: var(--cc-text-muted);
+  flex-shrink: 0;
+  min-width: 70px;
+}
+
+.log-dir {
+  flex-shrink: 0;
+  font-weight: 700;
+  min-width: 12px;
+  text-align: center;
+}
+
+.log-dir.in { color: var(--cc-blue); }
+.log-dir.out { color: var(--cc-green); }
+.log-dir.sys { color: var(--cc-orange); }
+.log-dir.err { color: var(--cc-red); }
+
+.log-type {
+  color: var(--cc-text-dim);
+  flex-shrink: 0;
+  min-width: 80px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-detail {
+  color: var(--cc-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-scroll-btn {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--cc-orange);
+  color: white;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  font-family: var(--cc-font);
+}
+
+.log-scroll-btn:hover { background: var(--cc-orange-dark); }

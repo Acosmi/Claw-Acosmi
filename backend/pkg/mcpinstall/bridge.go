@@ -669,13 +669,12 @@ func (b *McpLocalBridge) Stop() {
 	slog.Info("mcpinstall: bridge stopped", "name", b.cfg.Server.Name)
 }
 
-// validateBinaryPath checks the binary is within ~/.openacosmi/mcp-servers/.
+// validateBinaryPath checks the binary is within the managed mcp-servers directory.
 func validateBinaryPath(binaryPath string) error {
-	home, err := os.UserHomeDir()
+	managedAbs, err := filepath.Abs(managedMcpServersDir())
 	if err != nil {
-		return fmt.Errorf("mcpinstall: cannot resolve home: %w", err)
+		return fmt.Errorf("mcpinstall: abs managed dir: %w", err)
 	}
-	managed := filepath.Join(home, ".openacosmi", "mcp-servers")
 
 	// Resolve symlinks for the check
 	absPath, err := filepath.Abs(binaryPath)
@@ -683,8 +682,8 @@ func validateBinaryPath(binaryPath string) error {
 		return fmt.Errorf("mcpinstall: abs path: %w", err)
 	}
 
-	if !strings.HasPrefix(absPath, managed) {
-		return fmt.Errorf("mcpinstall: binary path %q is outside managed directory %q", absPath, managed)
+	if !strings.HasPrefix(absPath, managedAbs) {
+		return fmt.Errorf("mcpinstall: binary path %q is outside managed directory %q", absPath, managedAbs)
 	}
 	return nil
 }

@@ -41,6 +41,7 @@ describe("config view", () => {
     onUpdate: vi.fn(),
     onRollback: vi.fn(),
     onSubsectionChange: vi.fn(),
+    onOpenTab: vi.fn(),
   });
 
   it("allows save when form is unsafe", () => {
@@ -230,5 +231,43 @@ describe("config view", () => {
 
     rollbackButton?.click();
     expect(onRollback).toHaveBeenCalled();
+  });
+
+  it("opens the security tab from the settings hub", () => {
+    const container = document.createElement("div");
+    const onOpenTab = vi.fn();
+    render(
+      renderConfig({
+        ...baseProps(),
+        onOpenTab,
+      }),
+      container,
+    );
+
+    const btn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Manage security"),
+    );
+    expect(btn).toBeTruthy();
+    btn?.click();
+    expect(onOpenTab).toHaveBeenCalledWith("security");
+  });
+
+  it("switches to raw mode from the advanced settings hub card", () => {
+    const container = document.createElement("div");
+    const onFormModeChange = vi.fn();
+    render(
+      renderConfig({
+        ...baseProps(),
+        onFormModeChange,
+      }),
+      container,
+    );
+
+    const btn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Open advanced editor"),
+    );
+    expect(btn).toBeTruthy();
+    btn?.click();
+    expect(onFormModeChange).toHaveBeenCalledWith("raw");
   });
 });

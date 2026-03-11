@@ -3,6 +3,8 @@ package gateway
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -70,5 +72,38 @@ func TestServeBrowserExtensionStatusUsesLiveRelayInfo(t *testing.T) {
 	}
 	if info.RelayURL != "ws://127.0.0.1:19004/ws" {
 		t.Fatalf("relayUrl = %q, want ws://127.0.0.1:19004/ws", info.RelayURL)
+	}
+}
+
+func TestResolveExtensionDirFromPaths_FindsAppBundleResources(t *testing.T) {
+	tmpDir := t.TempDir()
+	extDir := filepath.Join(tmpDir, "Crab Claw.app", "Contents", "Resources", "browser-extension")
+	if err := os.MkdirAll(extDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(extDir, "manifest.json"), []byte(`{"manifest_version":3}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	execPath := filepath.Join(tmpDir, "Crab Claw.app", "Contents", "MacOS", "CrabClaw")
+	got := resolveExtensionDirFromPaths("", execPath, "")
+	if got != extDir {
+		t.Fatalf("resolveExtensionDirFromPaths() = %q, want %q", got, extDir)
+	}
+}
+
+func TestResolveExtensionDirFromPaths_PrefersConfiguredDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	configuredDir := filepath.Join(tmpDir, "configured-extension")
+	if err := os.MkdirAll(configuredDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configuredDir, "manifest.json"), []byte(`{"manifest_version":3}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := resolveExtensionDirFromPaths(configuredDir, "", "")
+	if got != configuredDir {
+		t.Fatalf("resolveExtensionDirFromPaths() = %q, want %q", got, configuredDir)
 	}
 }

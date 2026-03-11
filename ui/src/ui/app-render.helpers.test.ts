@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyChatSessionSwitchState,
+  isMacosWailsShell,
   type ChatSessionSwitchHost,
 } from "./app-render.helpers.ts";
 import { createChatReadonlyRunState, persistChatReadonlyRun } from "./chat/readonly-run-state.ts";
@@ -87,6 +88,38 @@ describe("applyChatSessionSwitchState", () => {
     expect(host.settings.lastSessionByChannel?.user).toBe("main");
   });
 
+  it("persists the previous session workflow before switching away", () => {
+    const host = createHost();
+    host.chatReadonlyRun = {
+      ...createChatReadonlyRunState("main"),
+      runId: "run-main",
+      sessionKey: "main",
+      phase: "working",
+      startedAt: 100,
+      updatedAt: 150,
+      latestProgress: "collecting data",
+      activity: [],
+      toolSteps: [],
+      completedAt: null,
+      progressPhase: null,
+      draftingText: null,
+      lastToolName: null,
+      lastError: null,
+      finalMessageId: null,
+      finalMessageTimestamp: null,
+      finalMessageText: null,
+    };
+
+    applyChatSessionSwitchState(host, "feishu:chat-a", 1_234);
+
+    const persisted = JSON.parse(
+      window.localStorage.getItem("openacosmi.control.chat-readonly-run.v1:main") ?? "{}",
+    ) as { current?: { runId?: string; phase?: string } };
+
+    expect(persisted.current?.runId).toBe("run-main");
+    expect(persisted.current?.phase).toBe("working");
+  });
+
   it("starts a fresh remote wait-state run for pending messages even if the previous session had an active run", () => {
     const host = createHost();
     host._pendingChannelMsgs = {
@@ -112,5 +145,31 @@ describe("applyChatSessionSwitchState", () => {
       },
     ]);
     expect(host._pendingChannelMsgs?.["feishu:chat-a"]).toBeUndefined();
+  });
+});
+
+describe("isMacosWailsShell", () => {
+  it("matches packaged macos-wails installs directly", () => {
+    expect(isMacosWailsShell("macos-wails", {
+      platform: "Win32",
+      protocol: "http:",
+      hostname: "127.0.0.1",
+    })).toBe(true);
+  });
+
+  it("matches the Wails runtime host on macOS before desktop status loads", () => {
+    expect(isMacosWailsShell(null, {
+      platform: "MacIntel",
+      protocol: "http:",
+      hostname: "wails.localhost",
+    })).toBe(true);
+  });
+
+  it("does not match regular mac browsers", () => {
+    expect(isMacosWailsShell(null, {
+      platform: "MacIntel",
+      protocol: "http:",
+      hostname: "127.0.0.1",
+    })).toBe(false);
   });
 });

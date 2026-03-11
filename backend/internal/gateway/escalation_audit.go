@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ---------- 审计事件类型 ----------
@@ -54,12 +56,8 @@ type EscalationAuditLogger struct {
 
 // NewEscalationAuditLogger 创建审计日志写入器。
 func NewEscalationAuditLogger() *EscalationAuditLogger {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
 	return &EscalationAuditLogger{
-		filePath: filepath.Join(home, ".openacosmi", defaultAuditLogFile),
+		filePath: filepath.Join(config.ResolveStateDir(), defaultAuditLogFile),
 	}
 }
 

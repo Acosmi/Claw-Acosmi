@@ -31,11 +31,12 @@ func ArgusHandlers() map[string]GatewayMethodHandler {
 // ---------- argus.permission.check ----------
 
 func handleArgusPermissionCheck(ctx *MethodHandlerContext) {
-	tcc := argus.CheckTCCPermissions()
+	result := resolveArgusBinaryFull(resolveLiveArgusBinaryPath(ctx))
+	tcc := argus.CheckTCCPermissionsForBinary(result.Path)
 
 	// ARGUS-006: 构建结构化恢复动作（供前端 UI 渲染按钮）
 	var actions []map[string]string
-	if tcc.ScreenRecording == argus.PermDenied {
+	if tcc.ScreenRecording != argus.PermGranted {
 		actions = append(actions, map[string]string{
 			"action": "open_settings",
 			"target": "screen_recording",
@@ -43,7 +44,7 @@ func handleArgusPermissionCheck(ctx *MethodHandlerContext) {
 			"hint":   "System Settings > Privacy & Security > Screen Recording",
 		})
 	}
-	if tcc.Accessibility == argus.PermDenied {
+	if tcc.Accessibility != argus.PermGranted {
 		actions = append(actions, map[string]string{
 			"action": "open_settings",
 			"target": "accessibility",
@@ -77,6 +78,9 @@ func handleArgusPermissionCheck(ctx *MethodHandlerContext) {
 		"recovery":                   tcc.Recovery(),
 		"screen_recording_expiring":  tcc.ScreenRecordingExpiring,
 		"screen_recording_days_left": tcc.ScreenRecordingDaysLeft,
+		"permission_subject":         tcc.PermissionSubject,
+		"permission_path":            tcc.PermissionPath,
+		"detection_mode":             tcc.DetectionMode,
 		"bridge_state":               bridgeState,
 		"actions":                    actions,
 	}, nil)
@@ -165,35 +169,25 @@ func handleArgusApprovalResolve(ctx *MethodHandlerContext) {
 // ARGUS-004: 一键诊断 — 输出 resolvedPath/exists/executable/codesign/TCC/recovery/trace。
 
 func handleArgusDiagnose(ctx *MethodHandlerContext) {
-	// 从 live config 获取 binaryPath 配置
-	var configBinaryPath string
-	liveCfg := ctx.Context.Config
-	if ctx.Context.ConfigLoader != nil {
-		if fresh, err := ctx.Context.ConfigLoader.LoadConfig(); err == nil {
-			liveCfg = fresh
-		}
-	}
-	if liveCfg != nil && liveCfg.SubAgents != nil && liveCfg.SubAgents.ScreenObserver != nil {
-		configBinaryPath = liveCfg.SubAgents.ScreenObserver.BinaryPath
-	}
-
 	// 运行完整 resolver 获取路径和 trace
-	result := resolveArgusBinaryFull(configBinaryPath)
+	result := resolveArgusBinaryFull(resolveLiveArgusBinaryPath(ctx))
 
 	// 二进制检查
 	binaryCheck := argus.CheckBinary(result.Path)
 
 	// TCC 权限检查
-	tcc := argus.CheckTCCPermissions()
+	tcc := argus.CheckTCCPermissionsForBinary(result.Path)
 
 	// 签名状态（仅路径有效时检查）
 	codesignStatus := "unknown"
+	codesignIdentifier := ""
 	if binaryCheck.Status == "available" {
 		if argus.IsValidlySigned(result.Path) {
 			codesignStatus = "valid"
 		} else {
 			codesignStatus = "unsigned_or_invalid"
 		}
+		codesignIdentifier = argus.CodeSignIdentifier(result.Path)
 	}
 
 	// Bridge 运行状态
@@ -220,10 +214,14 @@ func handleArgusDiagnose(ctx *MethodHandlerContext) {
 		"exists":       binaryCheck.Status != "not_found",
 		"executable":   binaryCheck.Status == "available",
 		"codesign":     codesignStatus,
+		"identifier":   codesignIdentifier,
 		"tcc": map[string]interface{}{
 			"screen_recording": string(tcc.ScreenRecording),
 			"accessibility":    string(tcc.Accessibility),
 			"all_granted":      tcc.HasRequiredPermissions(),
+			"subject":          tcc.PermissionSubject,
+			"path":             tcc.PermissionPath,
+			"detection_mode":   tcc.DetectionMode,
 		},
 		"bridge": map[string]interface{}{
 			"state": bridgeState,
@@ -232,6 +230,20 @@ func handleArgusDiagnose(ctx *MethodHandlerContext) {
 		"trace":    result.Trace,
 		"recovery": recovery,
 	}, nil)
+}
+
+func resolveLiveArgusBinaryPath(ctx *MethodHandlerContext) string {
+	var configBinaryPath string
+	liveCfg := ctx.Context.Config
+	if ctx.Context.ConfigLoader != nil {
+		if fresh, err := ctx.Context.ConfigLoader.LoadConfig(); err == nil {
+			liveCfg = fresh
+		}
+	}
+	if liveCfg != nil && liveCfg.SubAgents != nil && liveCfg.SubAgents.ScreenObserver != nil {
+		configBinaryPath = liveCfg.SubAgents.ScreenObserver.BinaryPath
+	}
+	return configBinaryPath
 }
 
 // ---------- 动态方法注册 ----------

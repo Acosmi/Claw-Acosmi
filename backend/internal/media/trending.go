@@ -49,6 +49,18 @@ func (a *TrendingAggregator) AddSource(src TrendingSource) {
 	a.sources = append(a.sources, src)
 }
 
+// SetSources 原子替换全部热点源。
+func (a *TrendingAggregator) SetSources(sources []TrendingSource) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sources = make([]TrendingSource, 0, len(sources))
+	for _, src := range sources {
+		if src != nil {
+			a.sources = append(a.sources, src)
+		}
+	}
+}
+
 // SourceNames 返回已注册数据源名称列表。
 func (a *TrendingAggregator) SourceNames() []string {
 	a.mu.RLock()

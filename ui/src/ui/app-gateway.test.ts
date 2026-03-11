@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { handleGatewayEvent } from "./app-gateway.ts";
+import { handleGatewayEvent, resolveSetupBootstrapAction } from "./app-gateway.ts";
 import { createChatReadonlyRunState } from "./chat/readonly-run-state.ts";
 
 function createRemoteHost() {
@@ -29,8 +29,12 @@ function createRemoteHost() {
       navGroupsCollapsed: {},
     },
     password: "",
-    client: null,
-    connected: false,
+    client: {
+      request: vi.fn().mockResolvedValue({ sessions: [], count: 0 }),
+      start: vi.fn(),
+      stop: vi.fn(),
+    },
+    connected: true,
     hello: null,
     lastError: null,
     eventLogBuffer: [] as unknown[],
@@ -66,8 +70,20 @@ function createRemoteHost() {
     chatAttachments: [],
     basePath: "",
     chatAvatarUrl: null,
+    sessionsLoading: false,
+    sessionsResult: null,
+    sessionsError: null,
+    sessionsFilterActive: "",
+    sessionsFilterLimit: "",
+    sessionsIncludeGlobal: false,
+    sessionsIncludeUnknown: false,
+    channelUnreadCounts: {},
+    crossChannelNotificationActive: false,
+    crossChannelNotificationText: "",
+    crossChannelNotificationSessionKey: null,
     requestUpdate: vi.fn(),
     addNotification: vi.fn(),
+    clearCrossChannelNotification: vi.fn(),
   };
 }
 
@@ -117,5 +133,141 @@ describe("gateway remote workflow handling", () => {
     expect(host.chatReadonlyRun.finalMessageId).toBe("msg-final");
     expect(host.chatReadonlyRunHistory).toHaveLength(1);
     expect(host.chatReadonlyRunHistory[0]?.finalMessageId).toBe("msg-final");
+  });
+
+  it("keeps the active web chat selected when a background remote session completes", async () => {
+    const host = createRemoteHost();
+    host.sessionKey = "main";
+    host.settings.sessionKey = "main";
+    host.settings.lastActiveSessionKey = "main";
+    host.settings.lastSessionByChannel = { user: "main", feishu: "feishu:old-chat" };
+    host.chatReadonlyRun = createChatReadonlyRunState("main");
+    host.chatRunId = null;
+    host.chatStream = null;
+    host.chatStreamStartedAt = null;
+
+    handleGatewayEvent(host as never, {
+      type: "event",
+      event: "chat",
+      payload: {
+        runId: "run-feishu-background",
+        sessionKey: "feishu:chat-b",
+        state: "final",
+        message: {
+          id: "msg-final-b",
+          role: "assistant",
+          content: [{ type: "text", text: "后台飞书回复" }],
+          timestamp: 220,
+        },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(host.client.request).toHaveBeenCalledWith("sessions.list", {
+        includeGlobal: false,
+        includeUnknown: false,
+      });
+    });
+
+    expect(host.sessionKey).toBe("main");
+    expect(host.settings.sessionKey).toBe("main");
+    expect(host.settings.lastActiveSessionKey).toBe("main");
+    expect(host.settings.lastSessionByChannel?.feishu).toBe("feishu:chat-b");
+  });
+
+  it("refreshes sessions and remembers the newest remote channel session on inbound messages", async () => {
+    const host = createRemoteHost();
+    host.sessionKey = "main";
+    host.settings.sessionKey = "main";
+    host.settings.lastActiveSessionKey = "main";
+    host.settings.lastSessionByChannel = { user: "main", feishu: "feishu:old-chat" };
+    host.chatReadonlyRun = createChatReadonlyRunState("main");
+    host.chatRunId = null;
+    host.chatStream = null;
+    host.chatStreamStartedAt = null;
+
+    handleGatewayEvent(host as never, {
+      type: "event",
+      event: "channel.message.incoming",
+      payload: {
+        sessionKey: "feishu:chat-c",
+        channel: "feishu",
+        text: "有新消息",
+        from: "alice",
+        ts: 300,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(host.client.request).toHaveBeenCalledWith("sessions.list", {
+        includeGlobal: false,
+        includeUnknown: false,
+      });
+    });
+
+    expect(host.sessionKey).toBe("main");
+    expect(host.settings.lastActiveSessionKey).toBe("main");
+    expect(host.settings.lastSessionByChannel?.feishu).toBe("feishu:chat-c");
+    expect(host.crossChannelNotificationActive).toBe(true);
+    expect(host.crossChannelNotificationSessionKey).toBe("feishu:chat-c");
+    expect(host.channelUnreadCounts.feishu).toBe(1);
+  });
+});
+
+describe("resolveSetupBootstrapAction", () => {
+  it("starts the wizard only for explicit onboarding", () => {
+    expect(
+      resolveSetupBootstrapAction(
+        { onboarding: true, wizardAutoStarted: false, wizardV2Open: false },
+        { exists: false },
+      ),
+    ).toBe("wizard");
+  });
+
+  it("keeps first install in readonly shell mode without auto-starting the wizard", () => {
+    expect(
+      resolveSetupBootstrapAction(
+        { onboarding: false, wizardAutoStarted: false, wizardV2Open: false },
+        { exists: false },
+      ),
+    ).toBe("readonly-shell");
+  });
+
+  it("auto-opens the wizard for invalid existing config so recovery can take over", () => {
+    expect(
+      resolveSetupBootstrapAction(
+        { onboarding: false, wizardAutoStarted: false, wizardV2Open: false },
+        {
+          exists: true,
+          valid: false,
+          issues: [{ path: "models.primary", message: "missing provider" }],
+        },
+      ),
+    ).toBe("wizard");
+  });
+
+  it("does nothing once meaningful config is available", () => {
+    expect(
+      resolveSetupBootstrapAction(
+        { onboarding: false, wizardAutoStarted: false, wizardV2Open: false },
+        {
+          exists: true,
+          valid: true,
+          config: {
+            wizard: { lastRunAt: "2026-03-11T00:00:00Z" },
+            models: { providers: { openai: { apiKey: "sk-test" } } },
+          },
+        },
+      ),
+    ).toBe("none");
+  });
+
+  it("does nothing when the wizard is already active", () => {
+    expect(
+      resolveSetupBootstrapAction(
+        { onboarding: true, wizardAutoStarted: false, wizardV2Open: true },
+        { exists: false },
+      ),
+    ).toBe("none");
   });
 });

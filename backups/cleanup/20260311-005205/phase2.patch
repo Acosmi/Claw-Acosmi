@@ -1,0 +1,1020 @@
+diff --git a/backend/Makefile b/backend/Makefile
+index e6f9bf0..a5bcdec 100644
+--- a/backend/Makefile
++++ b/backend/Makefile
+@@ -12,7 +12,7 @@
+ #   make clean          # 清理构建产物
+ 
+ .PHONY: gateway cli build-all build-cpp test test-multimedia report-multimedia lint clean fmt vet help \
+-        gateway-dev gateway-run test-rust install-cli build-go-cli-deprecated gateway-ffi \
++        gateway-dev gateway-run test-rust install-cli gateway-ffi \
+         gen-frontend native-host install-native-host
+ 
+ # 版本信息
+@@ -105,14 +105,6 @@ install-native-host: native-host ## 安装 Native Messaging Host 到 Chrome
+ build-all: gateway cli native-host ## 编译 Gateway + Rust CLI + Native Host
+ 	@echo "✅ 全部编译完成"
+ 
+-# --- Go CLI (已弃用) ---
+-build-go-cli-deprecated: fmt vet ## [已弃用] 编译 Go CLI
+-	@echo "⚠️  Go CLI (openacosmi) 已弃用，请使用 Rust CLI（主命令 crabclaw）"
+-	@echo "   运行 'make cli' 编译 Rust CLI"
+-	@echo "   运行 'make gateway' 编译 Go Gateway"
+-	go build $(LDFLAGS) -o build/openacosmi-go ./cmd/openacosmi
+-	@echo "✅ 编译完成: build/openacosmi-go (已弃用)"
+-
+ # --- 测试 ---
+ test: ## 运行全部 Go 测试
+ 	@echo "🧪 运行测试..."
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_anthropic.go b/backend/cmd/openacosmi/_deprecated_providers/provider_anthropic.go
+deleted file mode 100644
+index e7d948e..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_anthropic.go
++++ /dev/null
+@@ -1,60 +0,0 @@
+-package main
+-
+-// provider_anthropic.go — Anthropic Claude provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	AnthropicBaseURL         = "https://api.anthropic.com/v1"
+-	AnthropicDefaultModelID  = "claude-opus-4-6"
+-	AnthropicDefaultModelRef = "anthropic/claude-opus-4-6"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyAnthropicProviderConfig 注册 Anthropic provider 及模型列表。
+-func ApplyAnthropicProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, AnthropicDefaultModelRef, "Claude Opus")
+-	setModelAlias(cfg, "anthropic/claude-sonnet-4-6", "Claude Sonnet")
+-	setModelAlias(cfg, "anthropic/claude-haiku-4-5", "Claude Haiku")
+-
+-	p := ensureProvider(cfg, "anthropic")
+-	p.API = "anthropic-messages"
+-
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "claude-opus-4-6",
+-		Name:          "Claude Opus 4.6",
+-		ContextWindow: 200_000,
+-		MaxTokens:     128_000, // 官方 128K（2026-02-05 Anthropic 文档）
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "claude-sonnet-4-6",
+-		Name:          "Claude Sonnet 4.6",
+-		ContextWindow: 200_000,
+-		MaxTokens:     64_000, // 官方 64K（2026-02-05 Anthropic 文档）
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "claude-haiku-4-5",
+-		Name:          "Claude Haiku 4.5",
+-		ContextWindow: 200_000,
+-		MaxTokens:     64_000, // 官方 64K（2026 Anthropic 文档，原 8K 错误）
+-	})
+-}
+-
+-// ApplyAnthropicConfig 注册并设为默认模型。
+-func ApplyAnthropicConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyAnthropicProviderConfig(cfg)
+-	setDefaultModel(cfg, AnthropicDefaultModelRef)
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetAnthropicApiKey 写入 Anthropic API key。
+-func SetAnthropicApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "anthropic", key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_deepseek.go b/backend/cmd/openacosmi/_deprecated_providers/provider_deepseek.go
+deleted file mode 100644
+index 1f81d71..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_deepseek.go
++++ /dev/null
+@@ -1,56 +0,0 @@
+-package main
+-
+-// provider_deepseek.go — DeepSeek provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	DeepSeekBaseURL         = "https://api.deepseek.com/v1"
+-	DeepSeekDefaultModelID  = "deepseek-chat"
+-	DeepSeekDefaultModelRef = "deepseek/deepseek-chat"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyDeepSeekProviderConfig 注册 DeepSeek provider 及模型列表。
+-func ApplyDeepSeekProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, DeepSeekDefaultModelRef, "DeepSeek Chat")
+-
+-	p := ensureProvider(cfg, "deepseek")
+-	if p.BaseURL == "" {
+-		p.BaseURL = DeepSeekBaseURL
+-	}
+-	p.API = "openai-completions"
+-
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "deepseek-chat",
+-		Name:          "DeepSeek Chat (V3.2)",
+-		ContextWindow: 131_072, // DeepSeek-V3.2 实际 128K
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "deepseek-reasoner",
+-		Name:          "DeepSeek Reasoner (V3.2)",
+-		Reasoning:     true,
+-		ContextWindow: 131_072, // DeepSeek-V3.2 实际 128K
+-		MaxTokens:     65_536,  // 官方最大 64K（含 reasoning token，来源: api-docs.deepseek.com）
+-	})
+-}
+-
+-// ApplyDeepSeekConfig 注册 DeepSeek 并设为默认。
+-func ApplyDeepSeekConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyDeepSeekProviderConfig(cfg)
+-	setDefaultModel(cfg, DeepSeekDefaultModelRef)
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetDeepSeekApiKey 写入 DeepSeek API key。
+-func SetDeepSeekApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "deepseek", key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_doubao.go b/backend/cmd/openacosmi/_deprecated_providers/provider_doubao.go
+deleted file mode 100644
+index 6071526..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_doubao.go
++++ /dev/null
+@@ -1,72 +0,0 @@
+-package main
+-
+-// provider_doubao.go — 豆包 / 火山方舟 Ark provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	DoubaoBaseURL         = "https://ark.cn-beijing.volces.com/api/v3"
+-	DoubaoDefaultModelID  = "doubao-pro-32k"
+-	DoubaoDefaultModelRef = "doubao/doubao-pro-32k"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyDoubaoProviderConfig 注册豆包（火山方舟）provider 及模型列表。
+-func ApplyDoubaoProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, DoubaoDefaultModelRef, "豆包 Pro")
+-	p := ensureProvider(cfg, "doubao")
+-	if p.BaseURL == "" {
+-		p.BaseURL = DoubaoBaseURL
+-	}
+-	p.API = "openai-completions"
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "doubao-pro-32k",
+-		Name:          "豆包 Pro 32K",
+-		ContextWindow: 32_768,
+-		MaxTokens:     4_096,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "doubao-pro-128k",
+-		Name:          "豆包 Pro 128K",
+-		ContextWindow: 131_072,
+-		MaxTokens:     4_096,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "doubao-lite-32k",
+-		Name:          "豆包 Lite 32K",
+-		ContextWindow: 32_768,
+-		MaxTokens:     4_096,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "doubao-1-5-pro-32k",
+-		Name:          "豆包 1.5 Pro 32K",
+-		ContextWindow: 32_768,
+-		MaxTokens:     4_096,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "doubao-1-5-thinking-pro-32k",
+-		Name:          "豆包 1.5 Thinking Pro 32K",
+-		Reasoning:     true,
+-		ContextWindow: 32_768,
+-		MaxTokens:     4_096,
+-	})
+-}
+-
+-// ApplyDoubaoConfig 注册豆包并设为默认。
+-func ApplyDoubaoConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyDoubaoProviderConfig(cfg)
+-	setDefaultModel(cfg, DoubaoDefaultModelRef)
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetDoubaoApiKey 写入豆包/火山方舟 API key。
+-func SetDoubaoApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "doubao", key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_google.go b/backend/cmd/openacosmi/_deprecated_providers/provider_google.go
+deleted file mode 100644
+index b379b10..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_google.go
++++ /dev/null
+@@ -1,74 +0,0 @@
+-package main
+-
+-// provider_google.go — Google Gemini provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	GeminiBaseURL         = "https://generativelanguage.googleapis.com/v1beta"
+-	GeminiDefaultModelID  = "gemini-2.5-flash"
+-	GeminiDefaultModelRef = "google/gemini-2.5-flash"
+-	// OAuth ClientID 定义在 internal/agents/auth/google_oauth.go (GeminiOAuthClientID)
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyGoogleProviderConfig 注册 Google Gemini provider 及模型列表。
+-func ApplyGoogleProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, GeminiDefaultModelRef, "Gemini Flash")
+-	setModelAlias(cfg, "google/gemini-2.5-pro", "Gemini Pro")
+-
+-	p := ensureProvider(cfg, "google")
+-	p.API = "google-gemini"
+-
+-	// ---------- Gemini 3 系列 ----------
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gemini-3.1-pro-preview", // 旗舰（2026-02-26 发布）
+-		Name:          "Gemini 3.1 Pro Preview",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     65_536, // 官方 64K（ai.google.dev）
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gemini-3-flash-preview", // Gemini 3 快速版（正式可用）
+-		Name:          "Gemini 3 Flash Preview",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     65_536, // 官方 64K（ai.google.dev）
+-	})
+-	// ---------- Stable 2.5 系列 ----------
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gemini-2.5-pro",
+-		Name:          "Gemini 2.5 Pro",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     65_536, // 官方 64K（ai.google.dev）
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gemini-2.5-flash",
+-		Name:          "Gemini 2.5 Flash",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     65_536, // 官方 64K（ai.google.dev）
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gemini-2.5-flash-lite",
+-		Name:          "Gemini 2.5 Flash Lite",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     65_536, // 官方 64K（ai.google.dev）
+-	})
+-}
+-
+-// ApplyGoogleConfig 注册 Google Gemini 并设为默认模型。
+-func ApplyGoogleConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyGoogleProviderConfig(cfg)
+-	setDefaultModel(cfg, GeminiDefaultModelRef)
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetGeminiApiKey 写入 Google/Gemini API key。
+-func SetGeminiApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "google", key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_kimi.go b/backend/cmd/openacosmi/_deprecated_providers/provider_kimi.go
+deleted file mode 100644
+index 00ea03f..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_kimi.go
++++ /dev/null
+@@ -1,69 +0,0 @@
+-package main
+-
+-// provider_kimi.go — Moonshot / Kimi provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	KimiBaseURL         = "https://api.moonshot.ai/v1"
+-	KimiCnBaseURL       = "https://api.moonshot.cn/v1"
+-	KimiDefaultModelID  = "moonshot-v1-kimi-k2" // K2.5 稳定别名，替代快照 kimi-k2-0905-preview
+-	KimiDefaultModelRef = "moonshot/moonshot-v1-kimi-k2"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyKimiProviderConfig 注册 Moonshot/Kimi provider（国际线路）。
+-func ApplyKimiProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	applyKimiWithBaseURL(cfg, KimiBaseURL)
+-}
+-
+-// ApplyKimiProviderConfigCn 注册 Moonshot/Kimi provider（中国区线路）。
+-func ApplyKimiProviderConfigCn(cfg *types.OpenAcosmiConfig) {
+-	applyKimiWithBaseURL(cfg, KimiCnBaseURL)
+-}
+-
+-func applyKimiWithBaseURL(cfg *types.OpenAcosmiConfig, baseURL string) {
+-	setModelAlias(cfg, KimiDefaultModelRef, "Kimi")
+-	p := ensureProvider(cfg, "moonshot")
+-	if p.BaseURL == "" {
+-		p.BaseURL = baseURL
+-	}
+-	p.API = "openai-completions"
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "moonshot-v1-kimi-k2", // K2.5 正式生产别名（2026-01-27 发布）
+-		Name:          "Kimi K2.5",
+-		ContextWindow: 131_072,
+-		MaxTokens:     16_384,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "moonshot-v1-128k",
+-		Name:          "Moonshot V1 128K",
+-		ContextWindow: 128_000,
+-		MaxTokens:     8_192,
+-	})
+-}
+-
+-// ApplyKimiConfig 注册 Kimi 并设为默认。
+-func ApplyKimiConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyKimiProviderConfig(cfg)
+-	setDefaultModel(cfg, KimiDefaultModelRef)
+-}
+-
+-// ApplyKimiConfigCn 注册中国区 Kimi 并设为默认。
+-func ApplyKimiConfigCn(cfg *types.OpenAcosmiConfig) {
+-	ApplyKimiProviderConfigCn(cfg)
+-	setDefaultModel(cfg, KimiDefaultModelRef)
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetMoonshotApiKey 写入 Moonshot API key。
+-func SetMoonshotApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "moonshot", key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_minimax.go b/backend/cmd/openacosmi/_deprecated_providers/provider_minimax.go
+deleted file mode 100644
+index a78b761..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_minimax.go
++++ /dev/null
+@@ -1,86 +0,0 @@
+-package main
+-
+-// provider_minimax.go — MiniMax provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	MinimaxBaseURL         = "https://api.minimax.io/v1"
+-	MinimaxAnthropicURL    = "https://api.minimax.io/anthropic"
+-	MinimaxDefaultModelID  = "MiniMax-M2.5" // M2.5（2026-02-12 发布）
+-	MinimaxDefaultModelRef = "minimax/MiniMax-M2.5"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyMinimaxProviderConfig 注册 MiniMax API provider（OpenAI 兼容）。
+-func ApplyMinimaxProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, MinimaxDefaultModelRef, "MiniMax M2.5")
+-
+-	p := ensureProvider(cfg, "minimax")
+-	if p.BaseURL == "" {
+-		p.BaseURL = MinimaxBaseURL
+-	}
+-	p.API = "openai-completions"
+-
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "MiniMax-M2.5", // 2026-02-12 发布
+-		Name:          "MiniMax M2.5",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "MiniMax-M2.1",
+-		Name:          "MiniMax M2.1",
+-		ContextWindow: 204_800,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "MiniMax-Text-01",
+-		Name:          "MiniMax Text-01",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     8_192,
+-	})
+-}
+-
+-// ApplyMinimaxConfig 注册 MiniMax 并设为默认。
+-func ApplyMinimaxConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyMinimaxProviderConfig(cfg)
+-	setDefaultModel(cfg, MinimaxDefaultModelRef)
+-}
+-
+-// ApplyMinimaxPortalProviderConfig 注册 MiniMax Portal provider（Anthropic 兼容，OAuth 授权）。
+-func ApplyMinimaxPortalProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, "minimax-portal/MiniMax-M2.5", "MiniMax Portal")
+-
+-	p := ensureProvider(cfg, "minimax-portal")
+-	if p.BaseURL == "" {
+-		p.BaseURL = MinimaxAnthropicURL
+-	}
+-	p.API = "anthropic-messages"
+-
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "MiniMax-M2.5",
+-		Name:          "MiniMax M2.5 (Portal)",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "MiniMax-Text-01",
+-		Name:          "MiniMax Text-01 (Portal)",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     8_192,
+-	})
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetMinimaxApiKey 写入 MiniMax API key。
+-func SetMinimaxApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "minimax", key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_ollama.go b/backend/cmd/openacosmi/_deprecated_providers/provider_ollama.go
+deleted file mode 100644
+index 03af7e6..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_ollama.go
++++ /dev/null
+@@ -1,58 +0,0 @@
+-package main
+-
+-// provider_ollama.go — Ollama 本地 LLM provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	OllamaBaseURL         = "http://localhost:11434/v1"
+-	OllamaDefaultModelID  = "llama3.2"
+-	OllamaDefaultModelRef = "ollama/llama3.2"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyOllamaProviderConfig 注册本地 Ollama provider 及常用模型。
+-func ApplyOllamaProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, OllamaDefaultModelRef, "Ollama")
+-	p := ensureProvider(cfg, "ollama")
+-	if p.BaseURL == "" {
+-		p.BaseURL = OllamaBaseURL
+-	}
+-	p.API = "openai-completions"
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "llama3.2",
+-		Name:          "Llama 3.2",
+-		ContextWindow: 128_000,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "llama3.1",
+-		Name:          "Llama 3.1",
+-		ContextWindow: 128_000,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "qwen2.5-coder",
+-		Name:          "Qwen 2.5 Coder",
+-		ContextWindow: 128_000,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "deepseek-r1",
+-		Name:          "DeepSeek R1",
+-		Reasoning:     true,
+-		ContextWindow: 128_000,
+-		MaxTokens:     8_192,
+-	})
+-}
+-
+-// ApplyOllamaConfig 注册 Ollama 并设为默认。
+-func ApplyOllamaConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyOllamaProviderConfig(cfg)
+-	setDefaultModel(cfg, OllamaDefaultModelRef)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_openai.go b/backend/cmd/openacosmi/_deprecated_providers/provider_openai.go
+deleted file mode 100644
+index 9a5b797..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_openai.go
++++ /dev/null
+@@ -1,106 +0,0 @@
+-package main
+-
+-// provider_openai.go — OpenAI provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	OpenAIBaseURL         = "https://api.openai.com/v1"
+-	OpenAIDefaultModelID  = "gpt-4.1"
+-	OpenAIDefaultModelRef = "openai/gpt-4.1"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyOpenAIProviderConfig 注册 OpenAI provider 及模型列表。
+-func ApplyOpenAIProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, OpenAIDefaultModelRef, "GPT-4.1")
+-	setModelAlias(cfg, "openai/o3", "o3")
+-
+-	p := ensureProvider(cfg, "openai")
+-	p.API = "openai-completions"
+-
+-	// ---------- GPT-5 系列 ----------
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gpt-5",
+-		Name:          "GPT-5",
+-		ContextWindow: 400_000,
+-		MaxTokens:     128_000,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gpt-5.2",
+-		Name:          "GPT-5.2",
+-		ContextWindow: 400_000,
+-		MaxTokens:     128_000,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gpt-5-mini",
+-		Name:          "GPT-5 Mini",
+-		ContextWindow: 400_000,
+-		MaxTokens:     32_768,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gpt-5-nano",
+-		Name:          "GPT-5 Nano",
+-		ContextWindow: 200_000,
+-		MaxTokens:     16_384,
+-	})
+-	// ---------- GPT-4.1 系列 ----------
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gpt-4.1",
+-		Name:          "GPT-4.1",
+-		ContextWindow: 1_047_576,
+-		MaxTokens:     32_768,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gpt-4.1-mini",
+-		Name:          "GPT-4.1 Mini",
+-		ContextWindow: 1_047_576,
+-		MaxTokens:     32_768,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gpt-4.1-nano",
+-		Name:          "GPT-4.1 Nano",
+-		ContextWindow: 1_047_576,
+-		MaxTokens:     32_768,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "gpt-4o",
+-		Name:          "GPT-4o",
+-		ContextWindow: 128_000,
+-		MaxTokens:     16_384,
+-	})
+-	// ---------- 推理系列 ----------
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "o3",
+-		Name:          "o3",
+-		Reasoning:     true,
+-		ContextWindow: 200_000,
+-		MaxTokens:     100_000,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "o4-mini",
+-		Name:          "o4-mini",
+-		Reasoning:     true,
+-		ContextWindow: 200_000,
+-		MaxTokens:     100_000,
+-	})
+-}
+-
+-// ApplyOpenAIConfig 注册 OpenAI 并设为默认模型。
+-func ApplyOpenAIConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyOpenAIProviderConfig(cfg)
+-	setDefaultModel(cfg, OpenAIDefaultModelRef)
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetOpenAIApiKey 写入 OpenAI API key。
+-func SetOpenAIApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "openai", key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_openai_compat.go b/backend/cmd/openacosmi/_deprecated_providers/provider_openai_compat.go
+deleted file mode 100644
+index 8b0d99c..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_openai_compat.go
++++ /dev/null
+@@ -1,78 +0,0 @@
+-package main
+-
+-// provider_openai_compat.go — 自定义 OpenAI 兼容 Provider 配置
+-//
+-// 支持任意 OpenAI 兼容端点注册为命名 provider，替代 OpenRouter 等聚合服务。
+-// 用户可自行配置多个命名端点，每个端点独立维护 BaseURL、APIKey 和模型列表。
+-
+-import (
+-	"fmt"
+-
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 类型定义 ----------
+-
+-// CustomOpenAIEndpointConfig 自定义 OpenAI 兼容端点配置。
+-type CustomOpenAIEndpointConfig struct {
+-	// Name 端点名称，用作 provider ID 后缀（e.g. "myservice" → provider "custom-myservice"）。
+-	Name string
+-	// BaseURL OpenAI 兼容 API 端点，e.g. "https://api.openrouter.ai/v1"。
+-	BaseURL string
+-	// Models 端点支持的模型列表（可选，为空时允许用户手动填写模型 ID）。
+-	Models []CustomOpenAIModelConfig
+-}
+-
+-// CustomOpenAIModelConfig 自定义端点的模型定义。
+-type CustomOpenAIModelConfig struct {
+-	ID            string
+-	Name          string
+-	ContextWindow int
+-	MaxTokens     int
+-	Reasoning     bool
+-}
+-
+-// ---------- 内部 helper ----------
+-
+-// customProviderID 由端点名称生成 provider ID。
+-func customProviderID(name string) string {
+-	return "custom-" + name
+-}
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyCustomOpenAICompatProviderConfig 注册自定义 OpenAI 兼容 provider。
+-func ApplyCustomOpenAICompatProviderConfig(cfg *types.OpenAcosmiConfig, endpoint CustomOpenAIEndpointConfig) {
+-	providerID := customProviderID(endpoint.Name)
+-	p := ensureProvider(cfg, providerID)
+-	if endpoint.BaseURL != "" && p.BaseURL == "" {
+-		p.BaseURL = endpoint.BaseURL
+-	}
+-	p.API = "openai-completions"
+-	for _, m := range endpoint.Models {
+-		mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-			ID:            m.ID,
+-			Name:          m.Name,
+-			ContextWindow: m.ContextWindow,
+-			MaxTokens:     m.MaxTokens,
+-			Reasoning:     m.Reasoning,
+-		})
+-	}
+-}
+-
+-// ApplyCustomOpenAICompatConfig 注册自定义端点并设为默认 provider。
+-func ApplyCustomOpenAICompatConfig(cfg *types.OpenAcosmiConfig, endpoint CustomOpenAIEndpointConfig, defaultModelID string) {
+-	ApplyCustomOpenAICompatProviderConfig(cfg, endpoint)
+-	if defaultModelID != "" {
+-		ref := fmt.Sprintf("custom-%s/%s", endpoint.Name, defaultModelID)
+-		setDefaultModel(cfg, ref)
+-	}
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetCustomOpenAICompatApiKey 写入自定义端点 API key。
+-func SetCustomOpenAICompatApiKey(store *auth.AuthStore, name, key string) error {
+-	return upsertApiKeyProfile(store, customProviderID(name), key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_qwen.go b/backend/cmd/openacosmi/_deprecated_providers/provider_qwen.go
+deleted file mode 100644
+index 10a692f..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_qwen.go
++++ /dev/null
+@@ -1,76 +0,0 @@
+-package main
+-
+-// provider_qwen.go — Qwen 通义千问 provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	QwenBaseURLIntl   = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+-	QwenBaseURLCN     = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+-	QwenPortalBaseURL = "https://portal.qwen.ai/v1"
+-
+-	QwenDefaultModelID  = "qwen3.5-plus" // Qwen3.5（1M ctx，2026-02-16 发布）
+-	QwenDefaultModelRef = "qwen/qwen3.5-plus"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyQwenProviderConfig 注册 Qwen DashScope provider（国际线路）。
+-func ApplyQwenProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, QwenDefaultModelRef, "Qwen")
+-
+-	p := ensureProvider(cfg, "qwen")
+-	if p.BaseURL == "" {
+-		p.BaseURL = QwenBaseURLIntl
+-	}
+-	p.API = "openai-completions"
+-
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "qwen3.5-plus", // 2026-02-16 发布，1M ctx
+-		Name:          "Qwen3.5 Plus",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "qwen3-max",
+-		Name:          "Qwen3 Max",
+-		ContextWindow: 262_144, // 官方 262K（阿里云 Model Studio 2026）
+-		MaxTokens:     65_536,  // 官方 64K（alibabacloud.com Model Studio 文档）
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "qwen-max",
+-		Name:          "Qwen Max",
+-		ContextWindow: 131_072,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "qwen-turbo",
+-		Name:          "Qwen Turbo",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "qwen-flash",
+-		Name:          "Qwen Flash",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     8_192,
+-	})
+-}
+-
+-// ApplyQwenConfig 注册 Qwen 并设为默认。
+-func ApplyQwenConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyQwenProviderConfig(cfg)
+-	setDefaultModel(cfg, QwenDefaultModelRef)
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetQwenApiKey 写入 Qwen DashScope API key。
+-func SetQwenApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "qwen", key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_xai.go b/backend/cmd/openacosmi/_deprecated_providers/provider_xai.go
+deleted file mode 100644
+index e8aa740..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_xai.go
++++ /dev/null
+@@ -1,92 +0,0 @@
+-package main
+-
+-// provider_xai.go — xAI Grok provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	xaiBaseURL  = "https://api.x.ai/v1"
+-	xaiModelRef = "xai/grok-4"
+-	xaiModelID  = "grok-4"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyXaiProviderConfig 注册 xAI/Grok provider 及模型列表。
+-func ApplyXaiProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, xaiModelRef, "Grok")
+-	p := ensureProvider(cfg, "xai")
+-	p.BaseURL = xaiBaseURL
+-	p.API = "openai-completions"
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "grok-4",
+-		Name:          "Grok 4",
+-		ContextWindow: 256_000,
+-		MaxTokens:     16_384,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "grok-4-fast-reasoning",
+-		Name:          "Grok 4 Fast (Reasoning)",
+-		Reasoning:     true,
+-		ContextWindow: 2_000_000,
+-		MaxTokens:     32_768,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "grok-4-fast-non-reasoning",
+-		Name:          "Grok 4 Fast",
+-		ContextWindow: 2_000_000,
+-		MaxTokens:     32_768,
+-	})
+-	// ---------- Grok 4.1 系列 ----------
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "grok-4-1-fast-reasoning",
+-		Name:          "Grok 4.1 Fast (Reasoning)",
+-		Reasoning:     true,
+-		ContextWindow: 2_000_000,
+-		MaxTokens:     32_768,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "grok-4-1-fast-non-reasoning",
+-		Name:          "Grok 4.1 Fast",
+-		ContextWindow: 2_000_000,
+-		MaxTokens:     32_768,
+-	})
+-	// ---------- 编程专用 ----------
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "grok-code-fast-1",
+-		Name:          "Grok Code Fast",
+-		ContextWindow: 256_000,
+-		MaxTokens:     16_384,
+-	})
+-	// ---------- Grok 3 系列 ----------
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "grok-3",
+-		Name:          "Grok 3",
+-		ContextWindow: 131_072,
+-		MaxTokens:     8_192,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "grok-3-mini",
+-		Name:          "Grok 3 Mini",
+-		ContextWindow: 131_072,
+-		MaxTokens:     8_192,
+-	})
+-}
+-
+-// ApplyXaiConfig 注册并设为默认。
+-func ApplyXaiConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyXaiProviderConfig(cfg)
+-	setDefaultModel(cfg, xaiModelRef)
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetXaiApiKey 写入 xAI/Grok API key。
+-func SetXaiApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "xai", key)
+-}
+diff --git a/backend/cmd/openacosmi/_deprecated_providers/provider_zhipu.go b/backend/cmd/openacosmi/_deprecated_providers/provider_zhipu.go
+deleted file mode 100644
+index 27c7cca..0000000
+--- a/backend/cmd/openacosmi/_deprecated_providers/provider_zhipu.go
++++ /dev/null
+@@ -1,73 +0,0 @@
+-package main
+-
+-// provider_zhipu.go — 智谱 GLM (ZAI) provider 配置
+-
+-import (
+-	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+-	"github.com/Acosmi/ClawAcosmi/pkg/types"
+-)
+-
+-// ---------- 模型常量 ----------
+-
+-const (
+-	ZhipuBaseURL         = "https://open.bigmodel.cn/api/paas/v4"
+-	ZhipuDefaultModelID  = "glm-5" // GLM-5（744B MoE，2026-02-11 发布）
+-	ZhipuDefaultModelRef = "zai/glm-5"
+-)
+-
+-// ---------- Provider 配置 ----------
+-
+-// ApplyZhipuProviderConfig 注册智谱 GLM provider 及模型列表。
+-func ApplyZhipuProviderConfig(cfg *types.OpenAcosmiConfig) {
+-	setModelAlias(cfg, ZhipuDefaultModelRef, "GLM")
+-
+-	p := ensureProvider(cfg, "zai")
+-	if p.BaseURL == "" {
+-		p.BaseURL = ZhipuBaseURL
+-	}
+-	p.API = "openai-completions"
+-
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "glm-5", // 2026-02-11 发布，744B MoE，205K ctx
+-		Name:          "GLM-5",
+-		ContextWindow: 204_800,
+-		MaxTokens:     128_000, // 官方 128K（docs.z.ai/guides/llm/glm-5）
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "glm-4.7",
+-		Name:          "GLM-4.7",
+-		ContextWindow: 204_800, // 官方 200K（docs.z.ai/guides/llm/glm-4-7，原 128K 错误）
+-		MaxTokens:     128_000, // 官方 128K（同上，原 4K 错误）
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "glm-4-plus",
+-		Name:          "GLM-4 Plus",
+-		ContextWindow: 128_000,
+-		MaxTokens:     4_096,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "glm-4-flash",
+-		Name:          "GLM-4 Flash",
+-		ContextWindow: 128_000,
+-		MaxTokens:     4_096,
+-	})
+-	mergeModelIfMissing(p, types.ModelDefinitionConfig{
+-		ID:            "glm-4-long",
+-		Name:          "GLM-4 Long",
+-		ContextWindow: 1_000_000,
+-		MaxTokens:     4_096,
+-	})
+-}
+-
+-// ApplyZhipuConfig 注册智谱 GLM 并设为默认。
+-func ApplyZhipuConfig(cfg *types.OpenAcosmiConfig) {
+-	ApplyZhipuProviderConfig(cfg)
+-	setDefaultModel(cfg, ZhipuDefaultModelRef)
+-}
+-
+-// ---------- 凭据 ----------
+-
+-// SetZaiApiKey 写入 ZAI/GLM API key。
+-func SetZaiApiKey(store *auth.AuthStore, key string) error {
+-	return upsertApiKeyProfile(store, "zai", key)
+-}
+diff --git a/docker-compose.yml b/docker-compose.yml
+index a2a08dc..984124f 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -31,15 +31,6 @@ services:
+     restart: unless-stopped
+     command: [ "-port", "19001" ]
+ 
+-  # Legacy Node.js Gateway (for backward compatibility)
+-  gateway-legacy:
+-    image: ${OPENACOSMI_IMAGE:-crabclaw:local}
+-    profiles: [ "legacy" ]
+-    environment:
+-      HOME: /home/node
+-      TERM: xterm-256color
+-      OPENACOSMI_GATEWAY_TOKEN: ${OPENACOSMI_GATEWAY_TOKEN}
+-      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
+       CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
+       CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+     volumes:

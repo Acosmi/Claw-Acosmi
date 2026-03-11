@@ -85,7 +85,8 @@ func handleRulesAdd(ctx *MethodHandlerContext) {
 		CreatedAt:   &now,
 	}
 
-	// 读取 → 追加 → 保存
+	// 读取 → 追加 → 保存（受锁保护）
+	unlock := infra.AcquireExecApprovalsLock()
 	snapshot := infra.ReadExecApprovalsSnapshot()
 	file := snapshot.File
 	if file == nil {
@@ -94,8 +95,10 @@ func handleRulesAdd(ctx *MethodHandlerContext) {
 	infra.NormalizeExecApprovals(file)
 	file.Defaults.Rules = append(file.Defaults.Rules, newRule)
 
-	if err := infra.SaveExecApprovals(file); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to save rule: "+err.Error()))
+	saveErr := infra.SaveExecApprovals(file)
+	unlock()
+	if saveErr != nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to save rule: "+saveErr.Error()))
 		return
 	}
 
@@ -124,10 +127,12 @@ func handleRulesRemove(ctx *MethodHandlerContext) {
 		}
 	}
 
-	// 读取 → 删除 → 保存
+	// 读取 → 删除 → 保存（受锁保护）
+	unlock := infra.AcquireExecApprovalsLock()
 	snapshot := infra.ReadExecApprovalsSnapshot()
 	file := snapshot.File
 	if file == nil || file.Defaults == nil {
+		unlock()
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "rule not found: "+ruleID))
 		return
 	}
@@ -143,14 +148,17 @@ func handleRulesRemove(ctx *MethodHandlerContext) {
 	}
 
 	if !found {
+		unlock()
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "rule not found: "+ruleID))
 		return
 	}
 
 	file.Defaults.Rules = remaining
 
-	if err := infra.SaveExecApprovals(file); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to save rules: "+err.Error()))
+	saveErr := infra.SaveExecApprovals(file)
+	unlock()
+	if saveErr != nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to save rules: "+saveErr.Error()))
 		return
 	}
 

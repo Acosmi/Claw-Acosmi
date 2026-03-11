@@ -48,9 +48,9 @@ func DetectSuspiciousPatterns(content string) []string {
 
 // ---------- Unicode 全角折叠 ----------
 
-// foldMarkerChar 将 Unicode 全角字母/角括号折叠为 ASCII 等价字符。
-// 攻击者可能使用 Ｅ(U+FF25) 等全角字符绕过标记检测。
-// TS 对照: external-content.ts L89-104
+// foldMarkerChar 将 Unicode 全角/变体字母折叠为 ASCII 等价字符。
+// 覆盖攻击向量：全角字母、数学字母符号 (U+1D400 系列)、带圈字母。
+// TS 对照: external-content.ts L89-104 (扩展版)
 func foldMarkerChar(r rune) rune {
 	// 全角大写字母 FF21-FF3A → ASCII A-Z
 	if r >= 0xFF21 && r <= 0xFF3A {
@@ -68,21 +68,41 @@ func foldMarkerChar(r rune) rune {
 	if r == 0xFF1E {
 		return '>'
 	}
+	// 带圈大写字母 Ⓐ-Ⓩ (U+24B6-U+24CF) → ASCII A-Z
+	if r >= 0x24B6 && r <= 0x24CF {
+		return 'A' + (r - 0x24B6)
+	}
+	// 带圈小写字母 ⓐ-ⓩ (U+24D0-U+24E9) → ASCII a-z
+	if r >= 0x24D0 && r <= 0x24E9 {
+		return 'a' + (r - 0x24D0)
+	}
+	// 数学粗体大写 𝐀-𝐙 (U+1D400-U+1D419) → ASCII A-Z
+	if r >= 0x1D400 && r <= 0x1D419 {
+		return 'A' + (r - 0x1D400)
+	}
+	// 数学粗体小写 𝐚-𝐳 (U+1D41A-U+1D433) → ASCII a-z
+	if r >= 0x1D41A && r <= 0x1D433 {
+		return 'a' + (r - 0x1D41A)
+	}
+	// 数学斜体大写 𝐴-𝑍 (U+1D434-U+1D44D) → ASCII A-Z
+	if r >= 0x1D434 && r <= 0x1D44D {
+		return 'A' + (r - 0x1D434)
+	}
+	// 数学斜体小写 𝑎-𝑧 (U+1D44E-U+1D467) → ASCII a-z
+	if r >= 0x1D44E && r <= 0x1D467 {
+		return 'a' + (r - 0x1D44E)
+	}
 	return r
 }
 
-// foldMarkerText 将字符串中的全角字符折叠为 ASCII。
-// TS 对照: external-content.ts L106-108
+// foldMarkerText 将字符串中的可混淆 Unicode 字符折叠为 ASCII。
+// TS 对照: external-content.ts L106-108 (扩展版)
 func foldMarkerText(input string) string {
 	var b strings.Builder
 	b.Grow(len(input))
 	for _, r := range input {
-		if (r >= 0xFF21 && r <= 0xFF3A) || (r >= 0xFF41 && r <= 0xFF5A) ||
-			r == 0xFF1C || r == 0xFF1E {
-			b.WriteRune(foldMarkerChar(r))
-		} else {
-			b.WriteRune(r)
-		}
+		folded := foldMarkerChar(r)
+		b.WriteRune(folded)
 	}
 	return b.String()
 }

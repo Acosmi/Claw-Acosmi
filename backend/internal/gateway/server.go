@@ -46,6 +46,7 @@ import (
 	"github.com/Acosmi/ClawAcosmi/internal/plugins"
 	"github.com/Acosmi/ClawAcosmi/internal/sandbox"
 	applog "github.com/Acosmi/ClawAcosmi/pkg/log"
+	"github.com/Acosmi/ClawAcosmi/pkg/mcpinstall"
 	"github.com/Acosmi/ClawAcosmi/pkg/mcpremote"
 	types "github.com/Acosmi/ClawAcosmi/pkg/types"
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
@@ -56,11 +57,12 @@ import (
 
 // GatewayServerOptions 网关启动选项。
 type GatewayServerOptions struct {
-	ControlUIDir   string
-	ControlUIFS    fs.FS  // 嵌入式前端文件系统（桌面端使用）
-	ControlUIIndex string // 入口文件名，默认 "index.html"
-	BindMode       BindMode
-	BindHost       string
+	ControlUIDir     string
+	ControlUIFS      fs.FS  // 嵌入式前端文件系统（桌面端使用）
+	ControlUIIndex   string // 入口文件名，默认 "index.html"
+	BindMode         BindMode
+	BindHost         string
+	BootstrapProfile GatewayBootstrapProfile
 }
 
 // GatewayRuntime 网关运行时，持有 server/state 引用及关闭方法。
@@ -70,78 +72,137 @@ type GatewayRuntime struct {
 	MaintenanceTimers *MaintenanceTimers
 	mu                sync.Mutex
 	closed            bool
+	controller        *gatewayRuntimeController
 }
 
 // Close 优雅关闭网关。
 func (rt *GatewayRuntime) Close(reason string) error {
+	if rt == nil {
+		return nil
+	}
+
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
+	controller := rt.controller
+	if controller != nil {
+		if rt.closed {
+			rt.mu.Unlock()
+			return nil
+		}
+		rt.closed = true
+		rt.mu.Unlock()
+		return controller.close(reason)
+	}
+	rt.mu.Unlock()
+
+	return rt.closeCurrent(reason)
+}
+
+func (rt *GatewayRuntime) closeCurrent(reason string) error {
+	rt.mu.Lock()
 	if rt.closed {
+		rt.mu.Unlock()
 		return nil
 	}
 	rt.closed = true
+	state := rt.State
+	httpServer := rt.HTTPServer
+	maintenanceTimers := rt.MaintenanceTimers
+	rt.mu.Unlock()
 
 	slog.Info("gateway: shutting down", "reason", reason)
 
 	// 停止维护计时器（tick 广播）
-	if rt.MaintenanceTimers != nil {
-		rt.MaintenanceTimers.Stop()
+	if maintenanceTimers != nil {
+		maintenanceTimers.Stop()
 	}
 
-	rt.State.SetPhase(BootPhaseStopping)
+	if state != nil {
+		state.SetPhase(BootPhaseStopping)
+	}
 
 	// 广播 shutdown 事件
-	rt.State.Broadcaster().Broadcast("gateway.shutdown", ShutdownEvent{
-		Reason: reason,
-	}, nil)
+	if state != nil {
+		state.Broadcaster().Broadcast("gateway.shutdown", ShutdownEvent{
+			Reason: reason,
+		}, nil)
+	}
 
 	// 停止沙箱子系统（容器池 + Worker）
-	rt.State.StopSandbox()
+	if state != nil {
+		state.StopSandbox()
+	}
 
 	// 停止原生沙箱 Worker
-	rt.State.StopNativeSandbox()
+	if state != nil {
+		state.StopNativeSandbox()
+	}
 
 	// 停止 Argus 视觉子智能体
-	rt.State.StopArgus()
+	if state != nil {
+		state.StopArgus()
+	}
 
 	// (Phase 2A: Coder Bridge 已删除 — oa-coder 升级为 spawn_coder_agent)
 
 	// 停止 MCP 远程工具 Bridge
-	rt.State.StopRemoteMCP()
+	if state != nil {
+		state.StopRemoteMCP()
+	}
 
 	// 停止浏览器扩展 relay
-	if rt.State.extensionRelay != nil {
-		if err := rt.State.extensionRelay.Close(); err != nil {
+	if state != nil && state.extensionRelay != nil {
+		if err := state.extensionRelay.Close(); err != nil {
 			slog.Error("gateway: extension relay shutdown error", "error", err)
 		}
 	}
 
 	// 停止合约 TTL 清理 goroutine
-	if rt.State.contractCleanupDone != nil {
-		close(rt.State.contractCleanupDone)
+	if state != nil && state.contractCleanupDone != nil {
+		close(state.contractCleanupDone)
 	}
 
 	// 停止方案确认 TTL 清理 goroutine
-	if rt.State.planConfirmMgr != nil {
-		rt.State.planConfirmMgr.Close()
+	if state != nil && state.planConfirmMgr != nil {
+		state.planConfirmMgr.Close()
 	}
 
 	// 停止结果签收 TTL 清理 goroutine
-	if rt.State.resultApprovalMgr != nil {
-		rt.State.resultApprovalMgr.Close()
+	if state != nil && state.resultApprovalMgr != nil {
+		state.resultApprovalMgr.Close()
 	}
 
 	// 停止 UHMS 记忆系统
-	rt.State.StopUHMS()
-
-	// 优雅关闭 HTTP 服务器
-	if err := rt.HTTPServer.Shutdown(); err != nil {
-		slog.Error("gateway: http shutdown error", "error", err)
+	if state != nil {
+		state.StopUHMS()
 	}
 
-	rt.State.SetPhase(BootPhaseStopped)
+	// 优雅关闭 HTTP 服务器
+	if httpServer != nil {
+		if err := httpServer.Shutdown(); err != nil {
+			slog.Error("gateway: http shutdown error", "error", err)
+		}
+	}
+
+	if state != nil {
+		state.SetPhase(BootPhaseStopped)
+	}
 	slog.Info("gateway: shutdown complete")
 	return nil
+}
+
+func (rt *GatewayRuntime) adopt(target *GatewayRuntime) {
+	if rt == nil || target == nil || rt == target {
+		return
+	}
+
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.closed {
+		return
+	}
+	rt.State = target.State
+	rt.HTTPServer = target.HTTPServer
+	rt.MaintenanceTimers = target.MaintenanceTimers
 }
 
 // ---------- Argus Bridge → Agent 适配器 ----------
@@ -313,6 +374,30 @@ func (a *remoteMCPBridgeAdapter) AgentCallRemoteTool(ctx context.Context, name s
 		return "", err
 	}
 	return mcpremote.ToolCallResultToText(result), nil
+}
+
+// ---------- Local MCP Manager → Agent 适配器 ----------
+
+type localMCPBridgeAdapter struct {
+	manager *mcpinstall.McpLocalManager
+}
+
+func (a *localMCPBridgeAdapter) AgentLocalMcpTools() []runner.RemoteToolDef {
+	tools := a.manager.AllTools()
+	result := make([]runner.RemoteToolDef, 0, len(tools))
+	for _, t := range tools {
+		result = append(result, runner.RemoteToolDef{
+			Name:        t.PrefixedName,
+			Title:       t.Tool.Title,
+			Description: t.Tool.Description,
+			InputSchema: t.Tool.InputSchema,
+		})
+	}
+	return result
+}
+
+func (a *localMCPBridgeAdapter) AgentCallLocalMcpTool(ctx context.Context, prefixedName string, args json.RawMessage, timeout time.Duration) (string, error) {
+	return a.manager.CallTool(ctx, prefixedName, args, timeout)
 }
 
 // ---------- Media Sender → Agent 适配器 ----------
@@ -972,30 +1057,16 @@ func autoDistributeSkills(mgr *uhms.DefaultManager, bootMgr *uhms.BootManager, c
 // Returns nil if no provider is configured — UHMS LLM features degrade gracefully.
 // Used at boot and by memory.uhms.llm.set RPC for hot-swap.
 func buildUHMSLLMAdapter(uhmsCfg *types.MemoryUHMSConfig, fullCfg *types.OpenAcosmiConfig) uhms.LLMProvider {
-	if uhmsCfg == nil || uhmsCfg.LLMProvider == "" {
+	resolved := resolveEffectiveUHMSLLMConfig(uhmsCfg, fullCfg)
+	if resolved.Provider == "" {
 		return nil
 	}
 
-	provider := uhmsCfg.LLMProvider
-	model := uhmsCfg.LLMModel
-	if model == "" {
-		model = defaultModelForProvider(provider)
-	}
-	baseURL := uhmsCfg.LLMBaseURL
-
-	// UHMS 独立 API key 优先, 否则从 agent providers 查找
-	apiKey := uhmsCfg.LLMApiKey
-	if apiKey == "" && fullCfg != nil && fullCfg.Models != nil && fullCfg.Models.Providers != nil {
-		if pc := fullCfg.Models.Providers[provider]; pc != nil {
-			apiKey = pc.APIKey
-		}
-	}
-
 	return &uhms.LLMClientAdapter{
-		Provider: provider,
-		Model:    model,
-		APIKey:   apiKey,
-		BaseURL:  baseURL,
+		Provider: resolved.Provider,
+		Model:    resolved.Model,
+		APIKey:   resolved.APIKey,
+		BaseURL:  resolved.BaseURL,
 	}
 }
 
@@ -1083,12 +1154,36 @@ func buildColdStartInfoFunc(state *GatewayState) func() string {
 }
 
 // StartGatewayServer 启动网关服务。
-// 这是核心启动函数，将所有 Phase 0-9 实现的子系统组装起来。
+// 这是对外稳定 runtime 句柄，内部实例可按需原地换代。
 func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, error) {
+	controller := newGatewayRuntimeController(port, opts)
+	target, err := controller.startFn(port, opts, controller)
+	if err != nil {
+		return nil, err
+	}
+
+	runtime, ok := target.(*GatewayRuntime)
+	if !ok {
+		if target != nil {
+			_ = target.Close("unexpected gateway runtime target")
+		}
+		return nil, fmt.Errorf("gateway: unexpected runtime target %T", target)
+	}
+
+	handle := &GatewayRuntime{controller: controller}
+	controller.bind(runtime)
+	controller.attachHandle(handle)
+	return handle, nil
+}
+
+// startGatewayServerInstance 启动单个网关运行实例。
+// 这是核心启动函数，将所有 Phase 0-9 实现的子系统组装起来。
+func startGatewayServerInstance(port int, opts GatewayServerOptions, controller *gatewayRuntimeController) (*GatewayRuntime, error) {
 	slog.Info("gateway: starting", "port", port)
+	bootstrapPlan := resolveGatewayBootstrapPlan(opts)
 
 	// ---------- 1. 创建运行时状态 ----------
-	state := NewGatewayState()
+	state := newGatewayStateWithPlan(bootstrapPlan)
 	state.SetPhase(BootPhaseStarting)
 	if escMgr := state.EscalationMgr(); escMgr != nil {
 		// 默认启用 L3 提权上限，实际是否长期保持 L3 由 base level/审批策略决定。
@@ -1096,11 +1191,16 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	}
 
 	// ---------- 1b. 启用文件日志 ----------
-	applog.EnableFileLogging("")
-	logFilePath := applog.DefaultRollingPath()
+	logFilePath := ""
+	if !bootstrapPlan.DisableFileLogging {
+		applog.EnableFileLogging("")
+		logFilePath = applog.DefaultRollingPath()
+	}
 
 	// ---------- 2. 解析认证配置 ----------
-	auth := ResolveGatewayAuth(nil, "")
+	auth := ResolveGatewayAuthWithOptions(nil, "", GatewayAuthResolveOptions{
+		PersistGeneratedToken: bootstrapPlan.PersistGeneratedGatewayToken,
+	})
 
 	// 校验配置
 	bootCfg := BootConfig{
@@ -1136,18 +1236,32 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 
 	// ---------- 3. 创建方法注册表 ----------
 	registry := NewMethodRegistry()
-	storePath := resolveDefaultStorePath()
-	sessionStore := NewSessionStore(storePath)
+	storePath := ""
+	if bootstrapPlan.PersistentStore {
+		storePath = resolveDefaultStorePath()
+	}
+	sessionStore := NewSessionStoreWithSQLite(storePath) // P3: SQLite 后端（自动迁移 sessions.json）
+	taskStore := NewTaskStore(storePath)
+
+	var localMCPManager *mcpinstall.McpLocalManager
+	if mgr, err := mcpinstall.NewMcpLocalManager(); err != nil {
+		slog.Warn("gateway: MCP local manager init failed (non-fatal)", "error", err)
+	} else {
+		localMCPManager = mgr
+		state.SetMcpLocalManager(mgr)
+	}
 
 	// 注册会话方法 (对齐 TS server-methods-list.ts)
 	registry.RegisterAll(map[string]GatewayMethodHandler{
-		"sessions.list":    handleSessionsList,
-		"sessions.preview": handleSessionsPreview,
-		"sessions.resolve": handleSessionsResolve,
-		"sessions.patch":   handleSessionsPatch,
-		"sessions.reset":   handleSessionsReset,
-		"sessions.delete":  handleSessionsDelete,
-		"sessions.compact": handleSessionsCompact,
+		"sessions.list":       handleSessionsList,
+		"sessions.preview":    handleSessionsPreview,
+		"sessions.resolve":    handleSessionsResolve,
+		"sessions.patch":      handleSessionsPatch,
+		"sessions.reset":      handleSessionsReset,
+		"sessions.delete":     handleSessionsDelete,
+		"sessions.compact":    handleSessionsCompact,
+		"sessions.create":     handleSessionsCreate,     // P2: 网关接管 session 创建
+		"sessions.ensureMain": handleSessionsEnsureMain, // P2: 确保主 session 存在
 	})
 
 	// 注册 Batch A 方法 (config/models/agents/agent)
@@ -1199,6 +1313,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	registry.RegisterAll(EmailHandlers())          // P10: 邮箱连接验证
 	registry.RegisterAll(TaskKanbanHandlers())     // 任务看板
 	registry.RegisterAll(AuthHandlers())           // P2: OAuth 认证
+	registerMcpInstallHandlers(registry, localMCPManager)
 	if state.ArgusBridge() != nil {
 		RegisterArgusDynamicMethods(registry, state.ArgusBridge()) // Argus 动态工具方法
 	}
@@ -1306,12 +1421,30 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		loadedCfg = cfg
 		modelCatalog.BuildFromConfig(cfg)
 	}
+	if loadedCfg != nil && loadedCfg.SubAgents != nil && loadedCfg.SubAgents.ScreenObserver != nil &&
+		loadedCfg.SubAgents.ScreenObserver.Enabled != nil && *loadedCfg.SubAgents.ScreenObserver.Enabled {
+		if bridge := state.ArgusBridge(); bridge != nil {
+			if err := bridge.Start(); err != nil {
+				slog.Warn("gateway: argus auto-start failed", "error", err)
+			} else {
+				slog.Info("gateway: argus auto-started from persisted enabled state", "pid", bridge.PID())
+			}
+		}
+	}
 
 	// 浏览器扩展 relay 使用运行时网关端口推导，避免与实际监听端口偏离。
 	browserEnabled := loadedCfg == nil || loadedCfg.Browser == nil || loadedCfg.Browser.Enabled == nil || *loadedCfg.Browser.Enabled
-	expectedRelayPort := config.DeriveDefaultBrowserControlPort(port) + 1
+	relayBasePort := port
+	if relayBasePort <= 0 {
+		relayBasePort = config.DefaultGatewayPort
+		slog.Warn("gateway: port=0 detected, using default port for relay derivation",
+			"fallbackPort", relayBasePort)
+	}
+	expectedRelayPort := config.DeriveDefaultBrowserControlPort(relayBasePort) + 1
 	expectedRelayURL := fmt.Sprintf("ws://127.0.0.1:%d/ws", expectedRelayPort)
-	if config.SkipBrowserControl {
+	if !bootstrapPlan.StartExtensionRelay {
+		slog.Info("gateway: bootstrap profile disables browser extension relay startup")
+	} else if config.SkipBrowserControl {
 		slog.Info("gateway: browser extension relay skipped because browser control is disabled")
 	} else if !browserEnabled {
 		slog.Info("gateway: browser extension relay disabled by browser.enabled=false")
@@ -1340,6 +1473,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 
 	// ---------- 4a-wizard. 注册 Wizard V2 方法 ----------
 	registry.Register("wizard.v2.providers.list", WizardV2ProvidersListHandler())
+	registry.Register("wizard.v2.skill-groups.list", WizardV2SkillGroupsListHandler())
 	registry.Register("wizard.v2.apply", WizardV2ApplyHandler())
 	registry.Register("wizard.v2.oauth", WizardV2OAuthHandler())
 	registry.Register("wizard.v2.oauth.device.start", WizardV2OAuthDeviceStartHandler())
@@ -1484,30 +1618,75 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		go autoDistributeSkills(mgr, uhmsBootMgr, cfgLoader)
 	}
 
-	// 浏览器控制器初始化（CDP 直连模式）
+	// 浏览器控制器初始化：
+	// 1. 显式 cdpUrl/profile → 直连
+	// 2. 未显式配置 → 首次实际调用浏览器工具时自动发现/拉起 Chrome
 	var browserControllerForAgent tools.BrowserController
 	var browserCDPTools browser.PlaywrightTools // P0-3: 提升到外层供 XHS 注入
 	var browserCDPURL string                    // P0-3: CDP WebSocket 地址
-	browserEvaluateEnabled := true              // 默认允许 JS 执行
-	if loadedCfg != nil && loadedCfg.Browser != nil {
-		enabled := loadedCfg.Browser.Enabled == nil || *loadedCfg.Browser.Enabled
-		if enabled {
-			browserCDPURL = resolveBrowserCdpURL(loadedCfg.Browser)
-			if browserCDPURL != "" {
-				browserCDPTools = browser.NewCDPPlaywrightTools(browserCDPURL, slog.Default())
-				browserControllerForAgent = browser.NewPlaywrightBrowserController(browserCDPTools, browserCDPURL)
-				slog.Info("browser controller configured for agent", "cdpURL", browserCDPURL)
+	var browserRuntimeResolver xiaohongshu.BrowserRuntimeResolver
+	browserEvaluateEnabled := true // 默认允许 JS 执行
+	var browserCfg *types.BrowserConfig
+	if loadedCfg != nil {
+		browserCfg = loadedCfg.Browser
+	}
+	enabled := true
+	if browserCfg != nil && browserCfg.Enabled != nil {
+		enabled = *browserCfg.Enabled
+	}
+	if enabled {
+		browserRuntimeResolver = func(ctx context.Context) (browser.PlaywrightTools, string, *browser.ChromeInstance, error) {
+			if browserCDPTools != nil && browserCDPURL != "" {
+				return browserCDPTools, browserCDPURL, nil, nil
 			}
+			ensured, err := browser.EnsureChrome(ctx, slog.Default())
+			if err != nil {
+				return nil, "", nil, err
+			}
+			cdpURL := ensured.WSURL
+			if cdpURL == "" {
+				cdpURL = ensured.CDPURL
+			}
+			if cdpURL == "" {
+				if ensured.Instance != nil {
+					_ = ensured.Instance.Stop()
+				}
+				return nil, "", nil, fmt.Errorf("chrome CDP endpoint unavailable after ensure")
+			}
+			tools := browser.NewCDPPlaywrightTools(cdpURL, slog.Default())
+			return tools, cdpURL, ensured.Instance, nil
 		}
-		if loadedCfg.Browser.EvaluateEnabled != nil {
-			browserEvaluateEnabled = *loadedCfg.Browser.EvaluateEnabled
+		if browserCfg != nil {
+			browserCDPURL = resolveBrowserCdpURL(browserCfg)
 		}
+		if browserCDPURL != "" {
+			browserCDPTools = browser.NewCDPPlaywrightTools(browserCDPURL, slog.Default())
+			browserControllerForAgent = browser.NewPlaywrightBrowserController(browserCDPTools, browserCDPURL)
+			slog.Info("browser controller configured for agent", "mode", "explicit-cdp", "cdpURL", browserCDPURL)
+		} else {
+			browserControllerForAgent = browser.NewLazyBrowserController(browser.LazyBrowserControllerConfig{
+				Logger:  slog.Default(),
+				Resolve: browserRuntimeResolver,
+				OnLaunched: func(instance *browser.ChromeInstance) {
+					state.SetManagedChrome(instance)
+				},
+			})
+			slog.Info("browser controller configured for agent", "mode", "lazy-auto-discovery")
+		}
+	}
+	if browserCfg != nil && browserCfg.EvaluateEnabled != nil {
+		browserEvaluateEnabled = *browserCfg.EvaluateEnabled
 	}
 
 	// 从配置读取 Argus 审批模式
 	var argusApprovalMode string
 	if loadedCfg != nil && loadedCfg.SubAgents != nil && loadedCfg.SubAgents.ScreenObserver != nil {
 		argusApprovalMode = loadedCfg.SubAgents.ScreenObserver.ApprovalMode
+	}
+
+	gatewayPort := config.ResolveGatewayPort(nil)
+	if loadedCfg != nil && loadedCfg.Gateway != nil {
+		gatewayPort = config.ResolveGatewayPort(loadedCfg.Gateway.Port)
 	}
 
 	attemptRunner := &runner.EmbeddedAttemptRunner{
@@ -1522,8 +1701,12 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		ResultApprovalMgr:      state.ResultApprovalMgr(), // Phase 3: 结果签收门控注入
 		BrowserController:      browserControllerForAgent, // 浏览器工具注入
 		BrowserEvaluateEnabled: browserEvaluateEnabled,    // JS 执行开关
-		ArgusApprovalMode:      argusApprovalMode,         // Argus 审批模式
-		ContractStore:          state.contractStore,       // Phase 6: 合约持久化注入
+		GatewayOpts: tools.GatewayOptions{
+			URL:     fmt.Sprintf("ws://127.0.0.1:%d", gatewayPort),
+			Timeout: 30 * time.Second,
+		},
+		ArgusApprovalMode: argusApprovalMode,   // Argus 审批模式
+		ContractStore:     state.contractStore, // Phase 6: 合约持久化注入
 		// RemoteMCPBridge 在 4h 节之后注入
 	}
 
@@ -1545,7 +1728,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 
 	// MediaSubsystem 注入 — 媒体工具子系统（可选，初始化失败不影响主流程）
 	var mediaSub *media.MediaSubsystem
-	{
+	if bootstrapPlan.InitializeMediaSubsystem {
 		mediaWorkspace := config.ResolveStateDir()
 		var mErr error
 		// 从配置读取媒体子系统设置
@@ -1572,9 +1755,12 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			slog.Warn("media subsystem init failed (non-fatal)", "error", mErr)
 			mediaSub = nil
 		} else {
+			mediaSub.SetTrendingSources(media.BuildTrendingSourcesFromConfig(loadedCfg))
 			attemptRunner.MediaSubsystem = mediaSub
 			slog.Info("media subsystem configured for agent", "tools", mediaSub.ToolNames())
 		}
+	} else {
+		slog.Info("gateway: bootstrap profile disables media subsystem startup")
 	}
 
 	// MediaEventManager — 媒体事件触发器管理（Phase 3: 心跳巡检）
@@ -1789,6 +1975,12 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			AgentChannel:       helpChannel,  // Phase 4: 异步消息通道
 			AgentType:          sp.AgentType, // 传递子智能体类型（media/coder/argus）
 			PromptMode:         "minimal",    // 子智能体不需要 Self-Update/Messaging/Voice 等段落
+			SecurityLevelFunc: func() string {
+				return resolveEffectiveSecurityLevelWithManager(state.EscalationMgr(), currentCfg)
+			},
+			MountRequestsFunc: func(runID string) []runner.MountRequestForSandbox {
+				return resolveActiveMountRequests(state.EscalationMgr(), runID)
+			},
 			// 子智能体对话频道广播回调
 			OnCoderEvent: func(event string, data map[string]interface{}) {
 				text := ""
@@ -1956,6 +2148,8 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			slog.Warn("pipeline: config reload failed, using cached", "error", err)
 		}
 
+		lastApprovalID := ""
+
 		// 1. 创建 AgentExecutor: ModelFallbackExecutor 需要 RunnerDeps + Config
 		executor := &reply.ModelFallbackExecutor{
 			RunnerDeps: runner.EmbeddedRunDeps{
@@ -1967,57 +2161,60 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			OnPermissionDeniedWithContext: func(notice runner.PermissionDeniedNotice) {
 				tool := notice.Tool
 				detail := notice.Detail
+				escLevel := "allowlist"
+				if tool == "bash" || tool == "write_file" || tool == "write" || tool == "edit" {
+					escLevel = "sandboxed"
+				}
+
+				// 路径放行扩展：路径型工具指向绝对路径时，自动携带最小目录范围的临时放行审批请求。
+				var mountRequests []MountRequest
+				if tool == "write_file" || tool == "send_media" {
+					pathCandidate := strings.TrimSpace(detail)
+					if pathCandidate != "" && filepath.IsAbs(pathCandidate) {
+						mountPath := filepath.Clean(pathCandidate)
+						if fi, err := os.Stat(mountPath); err == nil && !fi.IsDir() {
+							mountPath = filepath.Dir(mountPath)
+						} else if filepath.Ext(mountPath) != "" {
+							mountPath = filepath.Dir(mountPath)
+						}
+						if mountPath != "/" && mountPath != "." {
+							mode := "ro"
+							if tool == "write_file" {
+								mode = "rw"
+							}
+							mountRequests = []MountRequest{{HostPath: mountPath, MountMode: mode}}
+						}
+					}
+				}
+				if len(mountRequests) > 0 {
+					escLevel = "sandboxed"
+				}
+
+				effectiveLevel := resolveEffectiveSecurityLevelWithManager(state.EscalationMgr(), currentCfg)
 				bc := state.Broadcaster()
 				if bc != nil {
-					// 读取安全等级（与前端 PermissionDeniedEvent 契约一致）
-					level := "deny"
-					if currentCfg != nil && currentCfg.Tools != nil && currentCfg.Tools.Exec != nil && currentCfg.Tools.Exec.Security != "" {
-						level = currentCfg.Tools.Exec.Security
+					payload := map[string]interface{}{
+						"tool":           tool,
+						"detail":         detail,
+						"level":          effectiveLevel,
+						"requestedLevel": escLevel,
+						"ts":             time.Now().UnixMilli(),
 					}
-					bc.Broadcast("permission_denied", map[string]interface{}{
-						"tool":   tool,
-						"detail": detail,
-						"level":  level,
-						"ts":     time.Now().UnixMilli(),
-					}, nil)
+					if len(mountRequests) > 0 {
+						payload["approvalType"] = ApprovalTypeMountAccess
+						payload["mountRequests"] = mountRequests
+					} else {
+						payload["approvalType"] = ApprovalTypeExecEscalation
+					}
+					bc.Broadcast("permission_denied", payload, nil)
 				}
 
 				// 自动触发提权请求（幂等，重复调用安全）
 				// 四级安全模型: bash/write/edit 需要 L2(sandboxed)，其他工具 L1(allowlist)
 				escMgr := state.EscalationMgr()
 				if escMgr != nil {
-					escLevel := "allowlist"
-					if tool == "bash" || tool == "write_file" || tool == "write" || tool == "edit" {
-						escLevel = "sandboxed"
-					}
-
-					// 路径放行扩展：路径型工具指向绝对路径时，自动携带最小目录范围的临时放行审批请求。
-					var mountRequests []MountRequest
-					if tool == "write_file" || tool == "send_media" {
-						pathCandidate := strings.TrimSpace(detail)
-						if pathCandidate != "" && filepath.IsAbs(pathCandidate) {
-							mountPath := filepath.Clean(pathCandidate)
-							if fi, err := os.Stat(mountPath); err == nil && !fi.IsDir() {
-								mountPath = filepath.Dir(mountPath)
-							} else if filepath.Ext(mountPath) != "" {
-								mountPath = filepath.Dir(mountPath)
-							}
-							if mountPath != "/" && mountPath != "." {
-								mode := "ro"
-								if tool == "write_file" {
-									mode = "rw"
-								}
-								mountRequests = []MountRequest{{HostPath: mountPath, MountMode: mode}}
-							}
-						}
-					}
-
 					effectiveLevel := escMgr.GetEffectiveLevel()
 					effectiveRank := infra.LevelOrder(infra.ExecSecurity(effectiveLevel))
-					if len(mountRequests) > 0 && effectiveLevel != "" && effectiveLevel != string(infra.ExecSecurityDeny) &&
-						effectiveRank > infra.LevelOrder(infra.ExecSecurity(escLevel)) {
-						escLevel = effectiveLevel
-					}
 
 					// Design Fix 2: effective level 已满足则跳过提权。
 					// 例外：同级路径放行扩展请求（mountRequests 非空）仍需审批。
@@ -2052,6 +2249,11 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 							Workflow:         notice.ApprovalWorkflow,
 						}); err != nil {
 							slog.Debug("auto-escalation skipped (expected if already pending)", "error", err)
+							if pendingID := escMgr.GetPendingID(); pendingID != "" {
+								lastApprovalID = pendingID
+							}
+						} else {
+							lastApprovalID = escId
 						}
 					}
 				}
@@ -2066,6 +2268,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 				}
 				const pollInterval = 2 * time.Second
 				const maxWait = 10 * time.Minute
+				initialLevel := escMgr.GetEffectiveLevel()
 				deadline := time.After(maxWait)
 				ticker := time.NewTicker(pollInterval)
 				defer ticker.Stop()
@@ -2079,12 +2282,13 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 						return false
 					case <-ticker.C:
 						status := escMgr.GetStatus()
-						if status.HasActive {
-							// 审批已通过
-							return true
-						}
-						if !status.HasPending && !status.HasActive {
-							// 既无 pending 也无 active — 被拒绝或超时
+						done, approved := resolveApprovalWaitOutcome(initialLevel, lastApprovalID, status)
+						if done {
+							if approved {
+								// 审批已通过，或基础级别已被提升到更高档位
+								return true
+							}
+							// 既无 pending 也无 active，且有效级别未提升 — 被拒绝或超时
 							return false
 						}
 						// 仍有 pending — 继续等待
@@ -2093,41 +2297,11 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			},
 			// SecurityLevelFunc 动态返回有效安全级别（含临时提权）
 			SecurityLevelFunc: func() string {
-				escMgr := state.EscalationMgr()
-				if escMgr != nil {
-					return escMgr.GetEffectiveLevel()
-				}
-				// fallback 到静态配置（需规范化，防止 "Sandbox"/"OFF" 等非规范值）
-				if currentCfg != nil && currentCfg.Tools != nil && currentCfg.Tools.Exec != nil {
-					sec := strings.ToLower(strings.TrimSpace(currentCfg.Tools.Exec.Security))
-					switch sec {
-					case "full":
-						return "full"
-					case "sandboxed":
-						return "sandboxed"
-					case "allowlist", "sandbox":
-						return "allowlist"
-					default:
-						return "deny"
-					}
-				}
-				return "deny"
+				return resolveEffectiveSecurityLevelWithManager(state.EscalationMgr(), currentCfg)
 			},
 			// MountRequestsFunc 动态返回活跃 grant 的临时挂载请求（Phase 3.4）
-			MountRequestsFunc: func() []runner.MountRequestForSandbox {
-				escMgr := state.EscalationMgr()
-				if escMgr == nil {
-					return nil
-				}
-				mounts := escMgr.GetActiveMountRequests()
-				if len(mounts) == 0 {
-					return nil
-				}
-				result := make([]runner.MountRequestForSandbox, len(mounts))
-				for i, m := range mounts {
-					result[i] = runner.MountRequestForSandbox{HostPath: m.HostPath, MountMode: m.MountMode}
-				}
-				return result
+			MountRequestsFunc: func(runID string) []runner.MountRequestForSandbox {
+				return resolveActiveMountRequests(state.EscalationMgr(), runID)
 			},
 		}
 
@@ -2156,7 +2330,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	// ---------- 4c. 初始化中国频道插件 ----------
 	// Phase 5: 从 config 读取频道配置，初始化并启动已配置的频道插件
 	channelMgr := state.ChannelMgr()
-	if !config.SkipChannels && loadedCfg != nil && loadedCfg.Channels != nil {
+	if bootstrapPlan.StartChannels && !config.SkipChannels && loadedCfg != nil && loadedCfg.Channels != nil {
 		// 注册插件
 		if loadedCfg.Channels.Feishu != nil {
 			feishuPlugin := feishu.NewFeishuPlugin(loadedCfg)
@@ -2191,6 +2365,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 							SessionId:  newId,
 							Label:      fmt.Sprintf("飞书:%s", chatID),
 							Channel:    "feishu",
+							CreatedAt:  time.Now().UnixMilli(),
 						}
 						sessionStore.Save(entry)
 						slog.Info("feishu: auto-created session", "sessionKey", sessionKey, "sessionId", newId)
@@ -2297,18 +2472,29 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 
 				// AI 回复 transcript 由 attempt_runner.persistToTranscript 写入，此处不再双写
 
-				replyTs := time.Now().UnixMilli()
-				assistantMessage := buildRemoteAssistantMessage(replyText, replyTs, mediaItems, mediaB64, mediaMime)
-				chatPayload := buildRemoteAssistantChatPayload(
+				assistantMessage, chatPayload := loadLatestSessionAssistantBroadcastMatching(
+					sessionStore,
 					sessionKey,
 					"feishu",
 					chatID,
+					storePath,
 					replyText,
-					replyTs,
 					mediaItems,
-					mediaB64,
-					mediaMime,
 				)
+				if assistantMessage == nil {
+					replyTs := time.Now().UnixMilli()
+					assistantMessage = buildRemoteAssistantMessage(replyText, replyTs, mediaItems, mediaB64, mediaMime)
+					chatPayload = buildRemoteAssistantChatPayload(
+						sessionKey,
+						"feishu",
+						chatID,
+						replyText,
+						replyTs,
+						mediaItems,
+						mediaB64,
+						mediaMime,
+					)
+				}
 				if bc != nil && chatPayload != nil {
 					bc.Broadcast("chat.message", chatPayload, nil)
 				}
@@ -2431,6 +2617,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 							SessionId:  newId,
 							Label:      fmt.Sprintf("钉钉:%s", chatID),
 							Channel:    "dingtalk",
+							CreatedAt:  time.Now().UnixMilli(),
 						}
 						sessionStore.Save(entry)
 						slog.Info("dingtalk: auto-created session", "sessionKey", sessionKey, "sessionId", newId)
@@ -2502,18 +2689,29 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 
 				// AI 回复 transcript 由 attempt_runner.persistToTranscript 写入，此处不再双写。
 
-				replyTs := time.Now().UnixMilli()
-				assistantMessage := buildRemoteAssistantMessage(reply, replyTs, dtMediaItems, dtMediaB64, dtMediaMime)
-				dtPayload := buildRemoteAssistantChatPayload(
+				assistantMessage, dtPayload := loadLatestSessionAssistantBroadcastMatching(
+					sessionStore,
 					sessionKey,
 					"dingtalk",
 					chatID,
+					storePath,
 					reply,
-					replyTs,
 					dtMediaItems,
-					dtMediaB64,
-					dtMediaMime,
 				)
+				if assistantMessage == nil {
+					replyTs := time.Now().UnixMilli()
+					assistantMessage = buildRemoteAssistantMessage(reply, replyTs, dtMediaItems, dtMediaB64, dtMediaMime)
+					dtPayload = buildRemoteAssistantChatPayload(
+						sessionKey,
+						"dingtalk",
+						chatID,
+						reply,
+						replyTs,
+						dtMediaItems,
+						dtMediaB64,
+						dtMediaMime,
+					)
+				}
 				if bc != nil && dtPayload != nil {
 					bc.Broadcast("chat.message", dtPayload, nil)
 				}
@@ -2639,6 +2837,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 							SessionId:  newId,
 							Label:      fmt.Sprintf("企微:%s", chatID),
 							Channel:    "wecom",
+							CreatedAt:  time.Now().UnixMilli(),
 						}
 						sessionStore.Save(entry)
 						slog.Info("wecom: auto-created session", "sessionKey", sessionKey, "sessionId", newId)
@@ -2710,18 +2909,29 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 
 				// AI 回复 transcript 由 attempt_runner.persistToTranscript 写入，此处不再双写。
 
-				replyTs := time.Now().UnixMilli()
-				assistantMessage := buildRemoteAssistantMessage(reply, replyTs, wcMediaItems, wcMediaB64, wcMediaMime)
-				wcPayload := buildRemoteAssistantChatPayload(
+				assistantMessage, wcPayload := loadLatestSessionAssistantBroadcastMatching(
+					sessionStore,
 					sessionKey,
 					"wecom",
 					chatID,
+					storePath,
 					reply,
-					replyTs,
 					wcMediaItems,
-					wcMediaB64,
-					wcMediaMime,
 				)
+				if assistantMessage == nil {
+					replyTs := time.Now().UnixMilli()
+					assistantMessage = buildRemoteAssistantMessage(reply, replyTs, wcMediaItems, wcMediaB64, wcMediaMime)
+					wcPayload = buildRemoteAssistantChatPayload(
+						sessionKey,
+						"wecom",
+						chatID,
+						reply,
+						replyTs,
+						wcMediaItems,
+						wcMediaB64,
+						wcMediaMime,
+					)
+				}
 				if bc != nil && wcPayload != nil {
 					bc.Broadcast("chat.message", wcPayload, nil)
 				}
@@ -2887,6 +3097,11 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		}
 		if loadedCfg.Channels.Xiaohongshu != nil && loadedCfg.Channels.Xiaohongshu.Enabled {
 			xhsPlugin := xiaohongshu.NewXiaohongshuPlugin()
+			if browserRuntimeResolver != nil {
+				xhsPlugin.SetBrowserRuntimeResolver(browserRuntimeResolver, func(instance *browser.ChromeInstance) {
+					state.SetManagedChrome(instance)
+				})
+			}
 			xhsCfg := loadedCfg.Channels.Xiaohongshu
 			if err := xhsPlugin.ConfigureAccount(channels.DefaultAccountID, &xiaohongshu.XiaohongshuConfig{
 				Enabled:              xhsCfg.Enabled,
@@ -2966,6 +3181,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 							SessionId:  newId,
 							Label:      fmt.Sprintf("邮箱:%s", userID),
 							Channel:    "email",
+							CreatedAt:  time.Now().UnixMilli(),
 						}
 						sessionStore.Save(entry)
 						slog.Info("email: auto-created session", "sessionKey", sessionKey, "sessionId", newId)
@@ -3038,18 +3254,29 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 					return nil
 				}
 
-				replyTs := time.Now().UnixMilli()
-				assistantMessage := buildRemoteAssistantMessage(replyText, replyTs, nil, "", "")
-				emailPayload := buildRemoteAssistantChatPayload(
+				assistantMessage, emailPayload := loadLatestSessionAssistantBroadcastMatching(
+					sessionStore,
 					sessionKey,
 					"email",
 					chatID,
+					storePath,
 					replyText,
-					replyTs,
 					nil,
-					"",
-					"",
 				)
+				if assistantMessage == nil {
+					replyTs := time.Now().UnixMilli()
+					assistantMessage = buildRemoteAssistantMessage(replyText, replyTs, nil, "", "")
+					emailPayload = buildRemoteAssistantChatPayload(
+						sessionKey,
+						"email",
+						chatID,
+						replyText,
+						replyTs,
+						nil,
+						"",
+						"",
+					)
+				}
 				if bc != nil && emailPayload != nil {
 					bc.Broadcast("chat.message", emailPayload, nil)
 					finalPayload := map[string]interface{}{
@@ -3141,7 +3368,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			heartbeatState.SetEnabled(true)
 		},
 	})
-	if !config.SkipCron {
+	if bootstrapPlan.StartCron && !config.SkipCron {
 		if err := cronSvc.Start(); err != nil {
 			slog.Warn("gateway: cron service start failed", "error", err)
 		} else {
@@ -3150,7 +3377,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	}
 
 	// ---------- 4f-2. 注册媒体巡检 Cron 任务 (Phase 3) ----------
-	if mediaSub != nil && !config.SkipCron {
+	if mediaSub != nil && bootstrapPlan.StartCron && !config.SkipCron {
 		cronCfg := media.DefaultMediaCronConfig()
 		jobRefs, err := media.RegisterMediaCronJobs(cronSvc, cronCfg)
 		if err != nil {
@@ -3173,6 +3400,17 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			skillStoreClient = skills.NewSkillStoreClient(store.URL, store.Token)
 			slog.Info("gateway: skill store client configured", "url", store.URL)
 		}
+	}
+
+	// ---------- 4g-b. 启动本地 MCP 管理器 ----------
+	if localMCPManager != nil {
+		attemptRunner.LocalMCPBridge = &localMCPBridgeAdapter{manager: localMCPManager}
+		go func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			localMCPManager.StartAll(bgCtx)
+		}()
+		slog.Info("gateway: MCP local manager initialized", "servers", len(localMCPManager.ListServers()))
 	}
 
 	// ---------- 4h. 创建 MCP 远程工具 Bridge (P2) ----------
@@ -3218,7 +3456,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 
 	// ---------- 4i-pre. Phase 2A: OAuth AuthManager 初始化 ----------
 	// [FIX-01: 使用 FileTokenStore 初始化 AuthManager，启动时 Load 不阻塞]
-	{
+	if bootstrapPlan.InitializeAuthManager {
 		tokenPath := ResolveAuthTokenPath()
 		fileStore := mcpremote.NewFileTokenStore(tokenPath)
 		oauthCfg := mcpremote.OAuthConfig{}
@@ -3257,7 +3495,7 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	}
 
 	// ---------- 4j. Phase 3: 统一应用中心初始化（失败不阻塞启动）----------
-	{
+	if bootstrapPlan.InitializePackageCenter {
 		ledgerPath := filepath.Join(config.ResolveStateDir(), "packages", "installs.json")
 		pkgLedger := packages.NewPackageLedger(ledgerPath)
 		state.SetPackageLedger(pkgLedger)
@@ -3314,6 +3552,9 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 		RemoteMCPBridge:    remoteMCPBridge, // P2: MCP 远程工具
 		BootedAt:           time.Now(),
 		MediaSubsystem:     mediaSub, // Phase 5+6: 媒体子系统
+		RestartSentinel:    controller.sentinelWriter(),
+		GatewayRestarter:   controller,
+		TaskStore:          taskStore,
 	}
 
 	mux := http.NewServeMux()
@@ -3359,6 +3600,14 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 			return auth
 		},
 		PipelineDispatcher: pipelineDispatcher,
+		GetPublicMethodContext: func() *GatewayMethodContext {
+			return &GatewayMethodContext{
+				SessionStore: sessionStore,
+				TaskStore:    taskStore,
+				StorePath:    storePath,
+				Config:       loadedCfg,
+			}
+		},
 	}
 
 	// Hooks handler (直接注册到顶层)
@@ -3386,6 +3635,12 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	}
 	mux.HandleFunc("/tools/invoke/", func(w http.ResponseWriter, r *http.Request) {
 		HandleToolsInvoke(w, r, toolsCfg)
+	})
+
+	RegisterPublicUsageStatsRoutes(mux, PublicUsageStatsHandlerConfig{
+		GetMethodContext: httpCfg.GetPublicMethodContext,
+		CORSOrigin:       "*",
+		CacheControl:     "public, max-age=60",
 	})
 
 	// Control UI 静态文件（支持目录模式或嵌入式 FS 模式）
@@ -3451,10 +3706,14 @@ func StartGatewayServer(port int, opts GatewayServerOptions) (*GatewayRuntime, e
 	// ---------- 5a. 功能开关（SKIP_* 系列）----------
 	// 对应 TS server.impl.ts 启动顺序第 4-7 步的 CRABCLAW_SKIP_* / OPENACOSMI_SKIP_* 控制逻辑。
 	// 各子系统在未来接入时须先检查对应 flag 再执行 Start()。
-	if config.SkipCron {
+	if !bootstrapPlan.StartCron {
+		slog.Info("gateway: bootstrap profile disables cron startup")
+	} else if config.SkipCron {
 		slog.Info("gateway: CRABCLAW_SKIP_CRON / OPENACOSMI_SKIP_CRON set — cron scheduler will not start")
 	}
-	if config.SkipChannels {
+	if !bootstrapPlan.StartChannels {
+		slog.Info("gateway: bootstrap profile disables channel startup")
+	} else if config.SkipChannels {
 		slog.Info("gateway: CRABCLAW_SKIP_CHANNELS / OPENACOSMI_SKIP_CHANNELS set — channel subsystem will not start")
 	}
 	if config.SkipBrowserControl {
@@ -3535,17 +3794,9 @@ func RunGatewayBlocking(port int, opts GatewayServerOptions) error {
 }
 
 // resolveDefaultStorePath 解析默认存储路径。
-// 顺序: $CRABCLAW_STORE_PATH → $OPENACOSMI_STORE_PATH → ~/.openacosmi/store
+// 顺序: $CRABCLAW_STORE_PATH → $OPENACOSMI_STORE_PATH → <stateDir>/store
 func resolveDefaultStorePath() string {
-	if v := preferredGatewayEnvValue("CRABCLAW_STORE_PATH", "OPENACOSMI_STORE_PATH"); v != "" {
-		return v
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		slog.Warn("gateway: cannot resolve home dir, using ./store", "error", err)
-		return "./store"
-	}
-	return filepath.Join(home, ".openacosmi", "store")
+	return config.ResolveStoreDir()
 }
 
 // convertHookMappings 将 types.HookMappingConfig 列表转换为 gateway.HookMappingConfig 列表。
@@ -3669,9 +3920,16 @@ func handleFeishuEscalationAction(state *GatewayState, escalationID, actionStr s
 
 	switch actionStr {
 	case "approve":
-		ttl := 30
-		if ttlFloat, ok := value["ttl"].(float64); ok && ttlFloat > 0 {
-			ttl = int(ttlFloat)
+		ttl := 0
+		if status := escMgr.GetStatus(); status.Pending != nil && status.Pending.ID == escalationID {
+			if status.Pending.TaskScoped {
+				ttl = 0
+			} else {
+				ttl = status.Pending.TTLMinutes
+				if ttlFloat, ok := value["ttl"].(float64); ok && ttlFloat > 0 {
+					ttl = int(ttlFloat)
+				}
+			}
 		}
 		if err := escMgr.ResolveEscalation(true, ttl); err != nil {
 			slog.Warn("feishu card action: approve failed", "id", escalationID, "error", err)

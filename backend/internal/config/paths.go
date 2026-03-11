@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/Acosmi/ClawAcosmi/internal/statepaths"
 )
 
 // ----- 常量 -----
@@ -51,17 +53,7 @@ func IsNixMode() bool {
 
 // ResolveHomeDir 解析用户主目录（支持 OPENACOSMI_HOME 环境变量覆盖，旧名 OPENCLAW_HOME fallback）
 func ResolveHomeDir() string {
-	if v := envTrimmedCompat("CRABCLAW_HOME", "OPENACOSMI_HOME"); v != "" {
-		return expandTilde(v)
-	}
-	if v := strings.TrimSpace(os.Getenv("OPENCLAW_HOME")); v != "" {
-		return expandTilde(v)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "."
-	}
-	return home
+	return statepaths.ResolveHomeDir()
 }
 
 // expandTilde 展开 ~ 前缀
@@ -102,44 +94,7 @@ func resolveUserPath(input string) string {
 // 4. 已存在的旧版目录
 // 5. 默认 ~/.openacosmi（保持旧默认写路径不变）
 func ResolveStateDir() string {
-	if v := envTrimmedCompat("CRABCLAW_STATE_DIR", "OPENACOSMI_STATE_DIR"); v != "" {
-		return resolveUserPath(v)
-	}
-	if v := envTrimmed("OPENCLAW_STATE_DIR"); v != "" {
-		return resolveUserPath(v)
-	}
-	if v := envTrimmed("CLAWDBOT_STATE_DIR"); v != "" {
-		return resolveUserPath(v)
-	}
-
-	home := ResolveHomeDir()
-	compatDir := filepath.Join(home, CompatibilityStateDirname)
-	newDir := filepath.Join(home, NewStateDirname)
-
-	// 优先使用已存在且具备受管状态内容的新兼容目录。
-	if stateDirHasManagedContent(compatDir) {
-		return compatDir
-	}
-
-	// 继续优先旧默认目录，避免空的 .crabclaw 抢占现有状态。
-	if dirExists(newDir) {
-		return newDir
-	}
-
-	// 如果只有 .crabclaw 存在，则允许直接读取它。
-	if dirExists(compatDir) {
-		return compatDir
-	}
-
-	// 检测旧版目录
-	for _, name := range LegacyStateDirnames {
-		p := filepath.Join(home, name)
-		if dirExists(p) {
-			return p
-		}
-	}
-
-	return newDir
+	return statepaths.ResolveStateDir()
 }
 
 // ----- 配置文件路径 -----
@@ -192,6 +147,7 @@ func ResolveConfigCandidates() []string {
 
 	var candidates []string
 	home := ResolveHomeDir()
+	suffix := statepaths.ResolveProfileSuffix()
 
 	// 状态目录覆盖
 	for _, envKey := range []string{"CRABCLAW_STATE_DIR", "OPENACOSMI_STATE_DIR", "OPENCLAW_STATE_DIR", "CLAWDBOT_STATE_DIR"} {
@@ -206,11 +162,11 @@ func ResolveConfigCandidates() []string {
 
 	// 默认目录：先尝试新兼容目录，再尝试旧默认目录与更早的历史目录。
 	allDirs := []string{
-		filepath.Join(home, CompatibilityStateDirname),
-		filepath.Join(home, NewStateDirname),
+		filepath.Join(home, CompatibilityStateDirname+suffix),
+		filepath.Join(home, NewStateDirname+suffix),
 	}
 	for _, name := range LegacyStateDirnames {
-		allDirs = append(allDirs, filepath.Join(home, name))
+		allDirs = append(allDirs, filepath.Join(home, name+suffix))
 	}
 	for _, dir := range allDirs {
 		candidates = append(candidates, filepath.Join(dir, ConfigFilename))
@@ -255,18 +211,17 @@ func ResolveGatewayLockDir() string {
 
 // ResolveOAuthDir 解析 OAuth 凭证目录
 func ResolveOAuthDir() string {
-	if v := envTrimmedCompat("CRABCLAW_OAUTH_DIR", "OPENACOSMI_OAUTH_DIR"); v != "" {
-		return resolveUserPath(v)
-	}
-	if v := envTrimmed("OPENCLAW_OAUTH_DIR"); v != "" {
-		return resolveUserPath(v)
-	}
-	return filepath.Join(ResolveStateDir(), "credentials")
+	return statepaths.ResolveOAuthDir()
 }
 
 // ResolveOAuthPath 解析 OAuth 凭证文件路径
 func ResolveOAuthPath() string {
 	return filepath.Join(ResolveOAuthDir(), OAuthFilename)
+}
+
+// ResolveStoreDir 解析运行态 store 目录。
+func ResolveStoreDir() string {
+	return statepaths.ResolveStoreDir()
 }
 
 // ----- 辅助函数 -----
@@ -302,12 +257,19 @@ func stateDirHasManagedContent(dir string) bool {
 	markers := []string{
 		ConfigFilename,
 		"credentials",
+		"state",
+		"store",
 		"sessions",
 		"agents",
 		"memory",
+		"_media",
+		"workspace",
 		"extensions",
 		"logs",
 		"exec-approvals.json",
+		"gateway-token",
+		"relay-token",
+		"desktop-update-state.json",
 		"oauth.json",
 	}
 	for _, marker := range markers {

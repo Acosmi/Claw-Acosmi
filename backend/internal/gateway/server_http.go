@@ -33,6 +33,8 @@ type GatewayHTTPHandlerConfig struct {
 	ToolNames []string
 	// ToolInvoker 工具调用回调（DI 注入）
 	ToolInvoker ToolInvoker
+	// GetPublicMethodContext 公开统计 API 依赖（可选；nil = 不注册 /public/stats/*）。
+	GetPublicMethodContext func() *GatewayMethodContext
 }
 
 // CreateGatewayHTTPHandler 创建主 HTTP 路由分发处理器。
@@ -72,6 +74,12 @@ func CreateGatewayHTTPHandler(cfg GatewayHTTPHandlerConfig) http.Handler {
 	}
 	mux.HandleFunc("/tools/invoke/", func(w http.ResponseWriter, r *http.Request) {
 		HandleToolsInvoke(w, r, toolsCfg)
+	})
+
+	RegisterPublicUsageStatsRoutes(mux, PublicUsageStatsHandlerConfig{
+		GetMethodContext: cfg.GetPublicMethodContext,
+		CORSOrigin:       "*",
+		CacheControl:     "public, max-age=60",
 	})
 
 	// Control UI (静态文件)

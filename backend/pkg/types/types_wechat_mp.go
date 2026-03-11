@@ -4,6 +4,8 @@ package types
 
 // WeChatMPConfig 微信公众号频道配置。
 type WeChatMPConfig struct {
+	AccountName    string `json:"accountName,omitempty"`
+	AccountID      string `json:"accountId,omitempty"`
 	Enabled        bool   `json:"enabled,omitempty"`
 	AppID          string `json:"appId,omitempty"`
 	AppSecret      string `json:"appSecret,omitempty"`

@@ -12,7 +12,7 @@ export type CoderConfirmPreview = {
 
 export type CoderConfirmRequest = {
   id: string;
-  toolName: string; // "edit" | "write" | "bash"
+  toolName: string; // "edit" | "write" | "bash" | "send_media"
   preview: CoderConfirmPreview;
   createdAtMs: number;
   expiresAtMs: number;

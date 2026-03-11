@@ -1,0 +1,314 @@
+ M Makefile
+ M README.md
+ M STARTUP.md
+ M backend/cmd/desktop/build/Taskfile.yml
+ M backend/cmd/desktop/build/darwin/Info.plist
+ M backend/cmd/desktop/build/darwin/Taskfile.yml
+ M backend/cmd/desktop/runtime.go
+ M backend/cmd/desktop/runtime_test.go
+ M backend/cmd/desktop/wails_app.go
+ M backend/cmd/openacosmi/setup_skills.go
+ M backend/internal/agents/capabilities/capability_tree_test.go
+ M backend/internal/agents/capabilities/gen_frontend.go
+ M backend/internal/agents/capabilities/gen_frontend_test.go
+ M backend/internal/agents/capabilities/manage_tool_test.go
+ M backend/internal/agents/capabilities/registry.go
+ M backend/internal/agents/capabilities/tree_migrate.go
+ M backend/internal/agents/llmclient/client_test.go
+ M backend/internal/agents/llmclient/openai.go
+ M backend/internal/agents/llmclient/types.go
+ M backend/internal/agents/models/selection.go
+ M backend/internal/agents/models/selection_managed_test.go
+ M backend/internal/agents/models/selection_test.go
+ M backend/internal/agents/prompt/prompt.go
+ M backend/internal/agents/prompt/prompt_contract_test.go
+ M backend/internal/agents/prompt/prompt_sections.go
+ M backend/internal/agents/prompt/prompt_test.go
+ M backend/internal/agents/runner/approval_workflow.go
+ M backend/internal/agents/runner/attempt_runner.go
+ M backend/internal/agents/runner/attempt_runner_test.go
+ M backend/internal/agents/runner/intent_router.go
+ M backend/internal/agents/runner/intent_router_test.go
+ M backend/internal/agents/runner/persist_transcript_attachment_test.go
+ M backend/internal/agents/runner/plan_confirmation.go
+ M backend/internal/agents/runner/plan_confirmation_test.go
+ M backend/internal/agents/runner/result_approval.go
+ M backend/internal/agents/runner/run.go
+ M backend/internal/agents/runner/run_attempt.go
+ M backend/internal/agents/runner/spawn_argus_agent.go
+ M backend/internal/agents/runner/spawn_coder_agent.go
+ M backend/internal/agents/runner/tool_executor.go
+ M backend/internal/agents/runner/tool_executor_test.go
+ M backend/internal/agents/runner/types.go
+ M backend/internal/agents/session/manager.go
+ M backend/internal/agents/skills/bundled_context.go
+ M backend/internal/agents/skills/bundled_dir.go
+ M backend/internal/agents/skills/frontmatter.go
+ M backend/internal/agents/skills/workspace_skills.go
+ M backend/internal/agents/skills/workspace_skills_test.go
+ M backend/internal/agents/tools/browser_tool.go
+ M backend/internal/agents/tools/common_test.go
+ M backend/internal/agents/tools/display.go
+ M backend/internal/agents/tools/gateway.go
+ M backend/internal/agents/tools/send_media_tool.go
+ M backend/internal/agents/tools/sessions_helpers.go
+ M backend/internal/argus/codesign_darwin.go
+ M backend/internal/argus/codesign_other.go
+ M backend/internal/argus/codesign_test.go
+ M backend/internal/argus/tcc_darwin.go
+ M backend/internal/argus/tcc_other.go
+ M backend/internal/argus/tcc_test.go
+ M backend/internal/autoreply/reply/followup_runner.go
+ M backend/internal/autoreply/reply/get_reply_run.go
+ M backend/internal/autoreply/reply/model_fallback_executor.go
+ M backend/internal/autoreply/reply/model_fallback_executor_test.go
+ M backend/internal/browser/extension_relay.go
+ M backend/internal/browser/nativemsg/install.go
+ M backend/internal/channels/feishu/handler.go
+ M backend/internal/channels/xiaohongshu/playwright_adapter.go
+ M backend/internal/channels/xiaohongshu/plugin.go
+ M backend/internal/channels/xiaohongshu/rpa_client.go
+ M backend/internal/config/config_test.go
+ M backend/internal/config/defaults.go
+ M backend/internal/config/defaults_test.go
+ M backend/internal/config/loader.go
+ M backend/internal/config/paths.go
+ M backend/internal/config/portdefaults.go
+ M backend/internal/gateway/boot.go
+ M backend/internal/gateway/channel_deps_adapter.go
+ M backend/internal/gateway/permission_escalation.go
+ M backend/internal/gateway/remote_approval.go
+ M backend/internal/gateway/remote_approval_callback_verify.go
+ M backend/internal/gateway/remote_approval_feishu.go
+ M backend/internal/gateway/remote_approval_feishu_test.go
+ M backend/internal/gateway/remote_chat_payloads.go
+ M backend/internal/gateway/remote_chat_payloads_test.go
+ M backend/internal/gateway/server.go
+ M backend/internal/gateway/server_browser_extension.go
+ M backend/internal/gateway/server_browser_extension_test.go
+ M backend/internal/gateway/server_feishu_escalation_action_test.go
+ M backend/internal/gateway/server_http.go
+ M backend/internal/gateway/server_methods.go
+ M backend/internal/gateway/server_methods_agent_rpc.go
+ M backend/internal/gateway/server_methods_argus.go
+ M backend/internal/gateway/server_methods_batch_a_test.go
+ M backend/internal/gateway/server_methods_channels.go
+ M backend/internal/gateway/server_methods_chat.go
+ M backend/internal/gateway/server_methods_config.go
+ M backend/internal/gateway/server_methods_docconv.go
+ M backend/internal/gateway/server_methods_escalation.go
+ M backend/internal/gateway/server_methods_escalation_test.go
+ M backend/internal/gateway/server_methods_exec_approvals.go
+ M backend/internal/gateway/server_methods_image.go
+ M backend/internal/gateway/server_methods_interfaces.go
+ M backend/internal/gateway/server_methods_media.go
+ M backend/internal/gateway/server_methods_media_test.go
+ M backend/internal/gateway/server_methods_plugins.go
+ M backend/internal/gateway/server_methods_remote_approval.go
+ M backend/internal/gateway/server_methods_rules.go
+ M backend/internal/gateway/server_methods_sandbox.go
+ M backend/internal/gateway/server_methods_security.go
+ M backend/internal/gateway/server_methods_sessions.go
+ M backend/internal/gateway/server_methods_skills.go
+ M backend/internal/gateway/server_methods_skills_test.go
+ M backend/internal/gateway/server_methods_stt.go
+ M backend/internal/gateway/server_methods_subagent.go
+ M backend/internal/gateway/server_methods_subagent_test.go
+ M backend/internal/gateway/server_methods_system.go
+ M backend/internal/gateway/server_methods_tasks.go
+ M backend/internal/gateway/server_methods_tasks_test.go
+ M backend/internal/gateway/server_methods_test.go
+ M backend/internal/gateway/server_methods_uhms.go
+ M backend/internal/gateway/server_methods_usage.go
+ M backend/internal/gateway/server_methods_usage_test.go
+ M backend/internal/gateway/server_methods_wizard_v2.go
+ M backend/internal/gateway/server_methods_wizard_v2_test.go
+ M backend/internal/gateway/sessions.go
+ M backend/internal/gateway/transcript.go
+ M backend/internal/gateway/ws_server.go
+ M backend/internal/goproviders/bridge/bridge.go
+ M backend/internal/goproviders/bridge/bridge_test.go
+ M backend/internal/goproviders/common/paths.go
+ M backend/internal/goproviders/common/provider_normalize.go
+ M backend/internal/goproviders/onboard/credentials.go
+ M backend/internal/infra/exec_approvals.go
+ M backend/internal/infra/exec_approvals_ops.go
+ M backend/internal/media/bootstrap.go
+ M backend/internal/media/image_ops.go
+ M backend/internal/media/trending.go
+ M backend/internal/nodehost/allowlist_eval.go
+ M backend/internal/nodehost/allowlist_resolve.go
+ M backend/internal/nodehost/runner.go
+ M backend/internal/security/audit_extra.go
+ M backend/internal/security/external_content.go
+ M backend/internal/security/fix.go
+ M backend/internal/security/ssrf.go
+ M backend/pkg/i18n/i18n_onboarding_en.go
+ M backend/pkg/i18n/i18n_onboarding_zh.go
+ M backend/pkg/types/types_openacosmi.go
+ M backend/pkg/types/types_website.go
+ M backend/pkg/types/types_wechat_mp.go
+ M backend/pkg/types/types_xiaohongshu.go
+ M browser-extension/background.js
+ M browser-extension/manifest.json
+ M browser-extension/popup.html
+ M browser-extension/popup.js
+ M docs/skills/operations/system-config/SKILL.md
+ M docs/skills/subsystems/media/SKILL.md
+ M docs/skills/tools/media/send-media/SKILL.md
+ M docs/skills/tools/system/gateway/SKILL.md
+ M docs/skills/tools/ui/browser/SKILL.md
+ D scripts/start.sh
+ D start.bat
+ D start.command
+ M ui/index.html
+ M ui/public/providers/xai.svg
+ M ui/src/styles.css
+ M ui/src/styles/channels-cards.css
+ M ui/src/styles/chat/layout.css
+ M ui/src/styles/chat/readonly-run.css
+ M ui/src/styles/components.css
+ D ui/src/styles/permission-popup.css
+ M ui/src/ui/app-chat.ts
+ M ui/src/ui/app-gateway.test.ts
+ M ui/src/ui/app-gateway.ts
+ M ui/src/ui/app-render.helpers.test.ts
+ M ui/src/ui/app-render.helpers.ts
+ M ui/src/ui/app-render.ts
+ M ui/src/ui/app-settings.test.ts
+ M ui/src/ui/app-settings.ts
+ M ui/src/ui/app-view-state.ts
+ M ui/src/ui/app.ts
+ M ui/src/ui/chat/readonly-run-state.test.ts
+ M ui/src/ui/chat/readonly-run-state.ts
+ M ui/src/ui/controllers/chat.test.ts
+ M ui/src/ui/controllers/chat.ts
+ M ui/src/ui/controllers/coder-confirmation.ts
+ M ui/src/ui/controllers/media-dashboard.ts
+ M ui/src/ui/controllers/memory.ts
+ M ui/src/ui/controllers/sessions.ts
+ M ui/src/ui/controllers/subagents.ts
+ M ui/src/ui/focus-mode.browser.test.ts
+ M ui/src/ui/icons.ts
+ M ui/src/ui/locales/en.ts
+ M ui/src/ui/locales/zh.ts
+ M ui/src/ui/navigation.browser.test.ts
+ M ui/src/ui/navigation.test.ts
+ M ui/src/ui/navigation.ts
+ M ui/src/ui/storage.ts
+ M ui/src/ui/types.ts
+ M ui/src/ui/views/channel-config-modal.ts
+ M ui/src/ui/views/channels.dingtalk.ts
+ M ui/src/ui/views/channels.discord.ts
+ M ui/src/ui/views/channels.feishu.ts
+ M ui/src/ui/views/channels.googlechat.ts
+ M ui/src/ui/views/channels.imessage.ts
+ M ui/src/ui/views/channels.signal.ts
+ M ui/src/ui/views/channels.slack.ts
+ M ui/src/ui/views/channels.telegram.ts
+ M ui/src/ui/views/channels.ts
+ M ui/src/ui/views/channels.wecom.ts
+ M ui/src/ui/views/channels.whatsapp.ts
+ M ui/src/ui/views/chat.test.ts
+ M ui/src/ui/views/chat.ts
+ M ui/src/ui/views/coder-confirm.ts
+ M ui/src/ui/views/media-dashboard.ts
+ M ui/src/ui/views/media-manage.ts
+ M ui/src/ui/views/memory.ts
+ M ui/src/ui/views/notification-center.ts
+ M ui/src/ui/views/permission-popup.ts
+ M ui/src/ui/views/plugins.browser.test.ts
+ M ui/src/ui/views/plugins.ts
+ M ui/src/ui/views/skills.ts
+ M ui/src/ui/views/usage.ts
+ M ui/src/ui/views/wizard-v2-providers.ts
+ M ui/src/ui/views/wizard-v2.ts
+?? .gitattributes
+?? backend/cmd/desktop/build/skills-package-manifest.txt
+?? backend/cmd/desktop/build/tools/stage_skills/
+?? backend/cmd/desktop/internal/release/skills_bundle.go
+?? backend/cmd/desktop/internal/release/skills_bundle_test.go
+?? backend/desktop
+?? backend/internal/agents/browserdef/
+?? backend/internal/agents/capabilities/specialized_config.go
+?? backend/internal/agents/configtools/
+?? backend/internal/agents/gatewayclient/
+?? backend/internal/agents/runner/browser_test_helpers_test.go
+?? backend/internal/agents/runner/gateway_tool_test.go
+?? backend/internal/agents/runner/persist_transcript_terminal_reply_test.go
+?? backend/internal/agents/runner/run_test.go
+?? backend/internal/agents/runner/testmain_test.go
+?? backend/internal/agents/skills/frontmatter_test.go
+?? backend/internal/agents/tools/gateway_test.go
+?? backend/internal/browser/nativemsg/install_windows.go
+?? backend/internal/browser/nativemsg/install_windows_stub.go
+?? backend/internal/channels/feishu/handler_test.go
+?? backend/internal/channels/xiaohongshu/login_executor.go
+?? backend/internal/channels/xiaohongshu/login_executor_test.go
+?? backend/internal/config/provider_repairs.go
+?? backend/internal/gateway/config_contract_helpers.go
+?? backend/internal/gateway/config_restart_transaction.go
+?? backend/internal/gateway/orphan_scan.go
+?? backend/internal/gateway/orphan_scan_test.go
+?? backend/internal/gateway/public_usage_http.go
+?? backend/internal/gateway/public_usage_http_test.go
+?? backend/internal/gateway/runtime_restart.go
+?? backend/internal/gateway/runtime_restart_test.go
+?? backend/internal/gateway/security_runtime.go
+?? backend/internal/gateway/security_runtime_test.go
+?? backend/internal/gateway/server_methods_config_contract_test.go
+?? backend/internal/gateway/server_methods_config_restart_test.go
+?? backend/internal/gateway/server_methods_specialized_config_contract_test.go
+?? backend/internal/gateway/server_methods_wizard_v2_paths_test.go
+?? backend/internal/gateway/store_sqlite.go
+?? backend/internal/gateway/store_sqlite_test.go
+?? backend/internal/gateway/task_store.go
+?? backend/internal/gateway/transcript_test.go
+?? backend/internal/gateway/uhms_llm_config.go
+?? backend/internal/gateway/uhms_llm_config_test.go
+?? backend/internal/gateway/ws_server_restart_test.go
+?? backend/internal/goproviders/common/paths_test.go
+?? backend/internal/goproviders/common/provider_normalize_test.go
+?? backend/internal/infra/exec_approvals_ops_test.go
+?? backend/internal/media/trending_source_bocha.go
+?? backend/internal/media/trending_source_bocha_test.go
+?? backend/internal/media/trending_source_custom_openai.go
+?? backend/internal/media/trending_source_custom_openai_test.go
+?? backend/internal/media/trending_sources_registry.go
+?? backend/internal/nodehost/allowlist_resolve_test.go
+?? backend/internal/statepaths/
+?? backups/
+?? browser-extension/content.css
+?? browser-extension/content.js
+?? browser-extension/popup.css
+?? browser-extension/sidepanel-dist/
+?? browser-extension/sidepanel-ui/
+?? browser-extension/sidepanel.css
+?? browser-extension/sidepanel.html
+?? browser-extension/sidepanel.js
+?? docs/skills/media/
+?? docs/skills/tools/system/browser-config/
+?? docs/skills/tools/system/docconv-config/
+?? docs/skills/tools/system/image-config/
+?? docs/skills/tools/system/media-config/
+?? docs/skills/tools/system/remote-approval-config/
+?? docs/skills/tools/system/stt-config/
+?? scripts/desktop/prepare_darwin_runtime.sh
+?? scripts/desktop/sign_darwin_bundle.sh
+?? scripts/desktop/stage_openviking_framework.sh
+?? ui/src/ui/app-chat.test.ts
+?? ui/src/ui/controllers/automation.ts
+?? ui/src/ui/controllers/sessions.test.ts
+?? ui/src/ui/controllers/subagents.test.ts
+?? ui/src/ui/event-store.test.ts
+?? ui/src/ui/event-store.ts
+?? ui/src/ui/storage.test.ts
+?? ui/src/ui/views/automation.browser.test.ts
+?? ui/src/ui/views/automation.email.ts
+?? ui/src/ui/views/automation.ts
+?? ui/src/ui/views/channels.browser.test.ts
+?? ui/src/ui/views/media-manage.test.ts
+?? ui/src/ui/views/skills.browser.test.ts
+?? ui/src/ui/views/usage.test.ts
+?? ui/src/ui/views/wizard-v2.test.ts
+?? "\344\270\200\351\224\256\351\203\250\347\275\262\350\204\232\346\234\254/"

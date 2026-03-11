@@ -53,9 +53,9 @@
 
 目标：
 
-- 配置缺失时，初始 URL 带 `?onboarding=true`
+- 配置缺失时，初始 URL 打开基础 `/ui/` 壳层，不自动附带 `?onboarding=true`
 - 配置存在时，初始 URL 不带 onboarding 参数
-- 托盘“重新配置向导”可强制进入 onboarding 流程
+- 托盘“重新配置向导”可强制进入 onboarding 流程，并切到 `?onboarding=true`
 
 建议记录：
 

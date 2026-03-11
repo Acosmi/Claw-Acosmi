@@ -168,7 +168,15 @@ func BuildAgentSystemPrompt(params BuildParams) string {
 	for _, t := range params.ToolNames {
 		available[strings.ToLower(strings.TrimSpace(t))] = true
 	}
-	hasGateway := available["gateway"]
+	hasSystemConfigTools := available["gateway"]
+	if !hasSystemConfigTools {
+		for _, name := range []string{"browser_config", "remote_approval_config", "image_config", "stt_config", "docconv_config", "media_config"} {
+			if available[name] {
+				hasSystemConfigTools = true
+				break
+			}
+		}
+	}
 	readToolName := "read"
 
 	var sections []string
@@ -186,7 +194,7 @@ func BuildAgentSystemPrompt(params BuildParams) string {
 		"You assist with software engineering, knowledge management, and enterprise workflows using the tools below.")
 
 	// 1a. 核心交互路由（状态机，替代旧 Cold Start + Response Style）
-	add(buildInteractionRouting())
+	add(buildInteractionRouting(available["lookup_skill"]))
 
 	// 1b. 运行准则
 	add("## Operating Principles\n" +
@@ -231,7 +239,7 @@ func BuildAgentSystemPrompt(params BuildParams) string {
 	// 7. Memory Recall
 	add(buildMemorySectionFull(available, params.MemoryCitations))
 	// 8. Self-Update
-	add(buildSelfUpdateSection(hasGateway, isMinimal))
+	add(buildSelfUpdateSection(hasSystemConfigTools, isMinimal))
 	// 9. Model Aliases
 	add(buildModelAliasesSection(params.ModelAliasLines, isMinimal))
 	// 10. Workspace
@@ -343,12 +351,16 @@ func buildSystemContextBlock(state SessionState, timezone string, bootBrief stri
 }
 
 // buildInteractionRouting 构建核心交互路由段落（状态机协议 A/B/C）。
-func buildInteractionRouting() string {
+func buildInteractionRouting(hasLookupSkill bool) string {
+	coldStartInstruction := "直接用已知平台能力做一次专业且有温度的系统推介，禁止输出任何内部工具/技能查找指令（如 `[[lookup_skill]]` / `ToolCall(...)` / `<tool_call>`）。\n"
+	if hasLookupSkill {
+		coldStartInstruction = "使用 `lookup_skill` 查找 `acosmi-intro` 技能获取介绍内容，做一次专业且有温度的系统推介。\n"
+	}
 	return "## Core Interaction Routing\n" +
 		"读取顶部 <System_Context> 中的 [Session_State]，严格执行唯一对应的协议：\n\n" +
 
 		"### 协议 A：COLD_START（全新用户初次见面）\n" +
-		"使用 `lookup_skill` 查找 `acosmi-intro` 技能获取介绍内容，做一次专业且有温度的系统推介。\n" +
+		coldStartInstruction +
 		"约束：总字数 ≤ 300。\n" +
 		"结构：1. 破冰问候 2. 核心定位（1 句） 3. 高光优势（3-4 个列表项） 4. 交互引导（开放式问句）\n" +
 		"非问候消息直接处理任务。\n\n" +

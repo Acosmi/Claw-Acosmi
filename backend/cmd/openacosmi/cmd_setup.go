@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 	"github.com/Acosmi/ClawAcosmi/internal/tui"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
@@ -96,26 +97,22 @@ func resolveConfigPath() string {
 	if env := os.Getenv("OPENACOSMI_CONFIG"); env != "" {
 		return env
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".openacosmi", "config.json")
+	return filepath.Join(config.ResolveStateDir(), "config.json")
 }
 
 func resolveWorkspacePath(workspace string) string {
 	if filepath.IsAbs(workspace) {
 		return workspace
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".openacosmi", workspace)
+	return filepath.Join(config.ResolveStateDir(), workspace)
 }
 
 func resolveSessionsDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".openacosmi", "sessions")
+	return filepath.Join(config.ResolveStateDir(), "sessions")
 }
 
 func resolveAuthStorePath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".openacosmi", "auth.json")
+	return filepath.Join(config.ResolveStateDir(), "auth.json")
 }
 
 func readConfigFileJSON(configPath string) (*types.OpenAcosmiConfig, bool) {

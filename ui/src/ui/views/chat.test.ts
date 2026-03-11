@@ -17,6 +17,7 @@ function createSessions(): SessionsListResult {
 function createProps(overrides: Partial<ChatProps> = {}): ChatProps {
   return {
     sessionKey: "main",
+    gatewayUrl: "ws://127.0.0.1:19001/ws",
     onSessionKeyChange: () => undefined,
     thinkingLevel: null,
     showThinking: false,
@@ -117,6 +118,26 @@ describe("chat view", () => {
 
     expect(container.querySelector(".compaction-indicator")).toBeNull();
     nowSpy.mockRestore();
+  });
+
+  it("renders browser extension guide against gateway url", () => {
+    const container = document.createElement("div");
+    render(
+      renderChat(
+        createProps({
+          gatewayUrl: "ws://10.0.0.8:19001/ws",
+          messages: [
+            {
+              content: [{ type: "text", text: "Browser tool is not available" }],
+            },
+          ],
+        }),
+      ),
+      container,
+    );
+
+    const link = container.querySelector(".browser-ext-banner a") as HTMLAnchorElement | null;
+    expect(link?.getAttribute("href")).toBe("http://10.0.0.8:19001/browser-extension/");
   });
 
   it("shows a stop button when aborting is available", () => {
@@ -292,6 +313,38 @@ describe("chat view", () => {
     expect(timer?.getAttribute("aria-hidden")).toBe("true");
   });
 
+  it("does not keep a failed workflow card visible without a final reply anchor", () => {
+    const container = document.createElement("div");
+    render(
+      renderChat(
+        createProps({
+          uxMode: "codex-readonly",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "帮我执行任务" }],
+              timestamp: 1_000,
+            },
+          ],
+          readonlyRun: {
+            ...createChatReadonlyRunState("main"),
+            phase: "error",
+            startedAt: 1_100,
+            updatedAt: 1_300,
+            completedAt: 1_300,
+            lastError: "model overloaded",
+            activity: [],
+            toolSteps: [],
+          },
+        }),
+      ),
+      container,
+    );
+
+    expect(container.querySelector(".chat-readonly-run")).toBeNull();
+    expect(container.textContent).toContain("帮我执行任务");
+  });
+
   it("keeps the workflow surface before the final assistant reply after completion", () => {
     const container = document.createElement("div");
     render(
@@ -365,6 +418,64 @@ describe("chat view", () => {
     expect(readonlyRun?.textContent).toContain("Read SKILL.md");
     expect(reply?.textContent).toContain("已经修好了。");
     expect(details?.open).toBe(false);
+  });
+
+  it("keeps long tool chips within the workflow card bounds", () => {
+    const container = document.createElement("div");
+    container.style.width = "420px";
+    document.body.appendChild(container);
+
+    try {
+      render(
+        renderChat(
+          createProps({
+            uxMode: "codex-readonly",
+            readonlyRun: {
+              runId: "run-overflow",
+              sessionKey: "main",
+              phase: "working",
+              startedAt: 1_100,
+              updatedAt: 1_500,
+              completedAt: null,
+              latestProgress: "正在检查远程频道配置。",
+              progressPhase: "analysis",
+              draftingText: null,
+              lastToolName: "bash",
+              activity: [],
+              toolSteps: [
+                {
+                  toolCallId: "tool-overflow",
+                  name: "bash",
+                  detail: "security find-generic-password -s \"openacosmi-email\" -w 2>/dev/null && echo \"Email credentials found\" || echo \"Email credentials NOT found\"",
+                  status: "running",
+                  startedAt: 1_200,
+                  updatedAt: 1_500,
+                  outputPreview: null,
+                },
+              ],
+              lastError: null,
+              finalMessageId: null,
+              finalMessageTimestamp: null,
+              finalMessageText: null,
+            },
+          }),
+        ),
+        container,
+      );
+
+      const readonlyRun = container.querySelector(".chat-readonly-run") as HTMLElement | null;
+      const chip = container.querySelector(".chat-readonly-run__tool-chip") as HTMLElement | null;
+      const chipText = container.querySelector(".chat-readonly-run__tool-chip-text") as HTMLElement | null;
+      expect(readonlyRun).not.toBeNull();
+      expect(chip).not.toBeNull();
+      expect(chipText).not.toBeNull();
+
+      const runRect = readonlyRun!.getBoundingClientRect();
+      const chipRect = chip!.getBoundingClientRect();
+      expect(chipRect.right).toBeLessThanOrEqual(runRect.right + 1);
+    } finally {
+      container.remove();
+    }
   });
 
   it("keeps earlier workflow cards attached after newer replies arrive", () => {

@@ -2,6 +2,21 @@
 
 package argus
 
+/*
+#cgo darwin LDFLAGS: -framework ApplicationServices -framework CoreGraphics
+#include <ApplicationServices/ApplicationServices.h>
+#include <CoreGraphics/CoreGraphics.h>
+
+static int crabclaw_ax_is_process_trusted(void) {
+	return AXIsProcessTrusted() ? 1 : 0;
+}
+
+static int crabclaw_cg_preflight_screen_capture_access(void) {
+	return CGPreflightScreenCaptureAccess() ? 1 : 0;
+}
+*/
+import "C"
+
 // tcc_darwin.go — macOS TCC (Transparency, Consent, Control) 权限预检
 //
 // macOS 要求屏幕录制和辅助功能权限，Sequoia (15+) 引入月度重新授权机制。
@@ -33,15 +48,36 @@ type TCCStatus struct {
 	Accessibility           PermissionState `json:"accessibility"`
 	ScreenRecordingDaysLeft int             `json:"screen_recording_days_left,omitempty"` // 距过期剩余天数（-1 = 未知）
 	ScreenRecordingExpiring bool            `json:"screen_recording_expiring,omitempty"`  // 即将过期（<= 5 天）
+	PermissionSubject       string          `json:"permission_subject,omitempty"`         // "main_app" | "helper_process"
+	PermissionPath          string          `json:"permission_path,omitempty"`            // 当前判定对应的二进制路径
+	DetectionMode           string          `json:"detection_mode,omitempty"`             // "native_current_process" | "native_current_process_helper_inference"
 }
 
 // CheckTCCPermissions 检测 macOS TCC 权限状态。
 // 注意: 屏幕录制检测在无窗口服务器环境可能不准确。
 func CheckTCCPermissions() TCCStatus {
+	return CheckTCCPermissionsForBinary("")
+}
+
+// CheckTCCPermissionsForBinary 检测面向指定 Argus 二进制的权限状态。
+// 当实际执行主体是 helper 时，辅助功能状态仅对主进程做原生预检；
+// 若主进程已授权，也不会冒然宣称 helper 一定已授权。
+func CheckTCCPermissionsForBinary(binaryPath string) TCCStatus {
+	permissionSubject, permissionPath := detectPermissionSubject(binaryPath)
+	accessibility := checkAccessibilityCurrentProcess()
+	detectionMode := "native_current_process"
+	if permissionSubject == "helper_process" && accessibility == PermGranted {
+		accessibility = PermUnknown
+		detectionMode = "native_current_process_helper_inference"
+	}
+
 	status := TCCStatus{
 		ScreenRecording:         checkScreenRecording(),
-		Accessibility:           checkAccessibility(),
+		Accessibility:           accessibility,
 		ScreenRecordingDaysLeft: -1,
+		PermissionSubject:       permissionSubject,
+		PermissionPath:          permissionPath,
+		DetectionMode:           detectionMode,
 	}
 
 	// Sequoia 月度过期检测
@@ -65,6 +101,10 @@ func (s TCCStatus) HasRequiredPermissions() bool {
 
 // Recovery 返回面向用户的恢复指引。
 func (s TCCStatus) Recovery() string {
+	if s.PermissionSubject == "helper_process" && s.Accessibility == PermUnknown {
+		return "Crab Claw has native Accessibility preflight, but the active Argus helper must still be validated by macOS. Re-open System Settings > Privacy & Security > Accessibility and verify Crab Claw and its Argus helper entry if it appears."
+	}
+
 	var missing []string
 	if s.ScreenRecording == PermDenied {
 		missing = append(missing, "Screen Recording")
@@ -83,46 +123,38 @@ func (s TCCStatus) Recovery() string {
 		strings.Join(missing, " / "))
 }
 
-// checkScreenRecording 检测屏幕录制权限。
-// 使用 CGWindowListCopyWindowInfo 间接检测：无权限时返回空列表。
-func checkScreenRecording() PermissionState {
-	cmd := exec.Command("osascript", "-e",
-		`use framework "CoreGraphics"
-set wlist to current application's CGWindowListCopyWindowInfo(current application's kCGWindowListOptionOnScreenOnly, current application's kCGNullWindowID)
-if (count of wlist) > 0 then
-    return "granted"
-else
-    return "denied"
-end if`)
-	output, err := cmd.Output()
+func detectPermissionSubject(binaryPath string) (string, string) {
+	execPath, err := os.Executable()
 	if err != nil {
-		slog.Debug("argus: TCC screen recording check failed", "error", err)
-		return PermUnknown
+		if strings.TrimSpace(binaryPath) != "" {
+			return "helper_process", binaryPath
+		}
+		return "main_app", ""
 	}
-	result := strings.TrimSpace(string(output))
-	if result == "granted" {
+	if strings.TrimSpace(binaryPath) == "" {
+		return "main_app", execPath
+	}
+
+	currentAbs, currentErr := filepath.Abs(execPath)
+	targetAbs, targetErr := filepath.Abs(binaryPath)
+	if currentErr == nil && targetErr == nil && currentAbs == targetAbs {
+		return "main_app", currentAbs
+	}
+	return "helper_process", binaryPath
+}
+
+// checkScreenRecording 检测屏幕录制权限。
+// 使用当前进程原生 CGPreflightScreenCaptureAccess 检测。
+func checkScreenRecording() PermissionState {
+	if int(C.crabclaw_cg_preflight_screen_capture_access()) == 1 {
 		return PermGranted
 	}
 	return PermDenied
 }
 
-// checkAccessibility 检测辅助功能权限。
-// 使用 osascript 调用 AXIsProcessTrusted 检测。
-func checkAccessibility() PermissionState {
-	cmd := exec.Command("osascript", "-e",
-		`use framework "ApplicationServices"
-if current application's AXIsProcessTrusted() then
-    return "granted"
-else
-    return "denied"
-end if`)
-	output, err := cmd.Output()
-	if err != nil {
-		slog.Debug("argus: TCC accessibility check failed", "error", err)
-		return PermUnknown
-	}
-	result := strings.TrimSpace(string(output))
-	if result == "granted" {
+// checkAccessibilityCurrentProcess 检测当前进程辅助功能权限。
+func checkAccessibilityCurrentProcess() PermissionState {
+	if int(C.crabclaw_ax_is_process_trusted()) == 1 {
 		return PermGranted
 	}
 	return PermDenied

@@ -18,6 +18,7 @@ export function renderNotificationCenter(state: AppViewState) {
   const handleNotificationClick = (n: any) => {
     // 标记已读
     n.read = true;
+    state.setTab("chat");
     // 如果有 sessionKey，跳转到对应会话
     if (n.sessionKey && n.sessionKey !== state.sessionKey) {
       state.sessionKey = n.sessionKey;

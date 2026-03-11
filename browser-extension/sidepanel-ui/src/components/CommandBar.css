@@ -1,0 +1,64 @@
+.cmd-bar {
+  background: var(--cc-bg-1);
+  border-top: 1px solid var(--cc-border);
+  flex-shrink: 0;
+}
+
+.cmd-presets {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px 2px;
+  flex-wrap: wrap;
+}
+
+.cmd-preset {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: var(--cc-bg-2);
+  border: 1px solid var(--cc-border);
+  color: var(--cc-text-dim);
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: var(--cc-font);
+  transition: all 0.1s;
+}
+
+.cmd-preset:hover {
+  border-color: var(--cc-orange);
+  color: var(--cc-orange);
+}
+
+.cmd-input-row {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px 8px;
+}
+
+.cmd-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--cc-bg-2);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius);
+  color: var(--cc-text);
+  font-family: var(--cc-mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.cmd-input:focus { border-color: var(--cc-orange); }
+.cmd-input::placeholder { color: var(--cc-text-muted); }
+
+.cmd-send {
+  padding: 6px 14px;
+  background: var(--cc-orange);
+  color: white;
+  border: none;
+  border-radius: var(--cc-radius);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--cc-font);
+}
+
+.cmd-send:hover { background: var(--cc-orange-dark); }

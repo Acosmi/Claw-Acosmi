@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Acosmi/ClawAcosmi/internal/agents/capabilities"
 	"github.com/adrg/frontmatter"
 )
 
@@ -46,6 +47,10 @@ type OpenAcosmiSkillMetadata struct {
 	PrimaryEnv string             `json:"primaryEnv,omitempty"`
 	Emoji      string             `json:"emoji,omitempty"`
 	Homepage   string             `json:"homepage,omitempty"`
+	TreeID     string             `json:"treeId,omitempty"`
+	TreeGroup  string             `json:"treeGroup,omitempty"`
+	MinTier    string             `json:"minTier,omitempty"`
+	Approval   string             `json:"approvalType,omitempty"`
 	OS         []string           `json:"os,omitempty"`
 	Requires   *SkillRequirements `json:"requires,omitempty"`
 	Install    []SkillInstallSpec `json:"install,omitempty"`
@@ -212,7 +217,7 @@ func ResolveOpenAcosmiMetadata(fm ParsedSkillFrontmatter) *OpenAcosmiSkillMetada
 		return nil
 	}
 
-	// 查找 manifest key
+	// 查找 manifest key；找不到时回退到 flat metadata，兼容当前能力树格式。
 	var metadataObj map[string]interface{}
 	candidates := append([]string{MANIFEST_KEY}, LEGACY_MANIFEST_KEYS...)
 	for _, key := range candidates {
@@ -222,10 +227,23 @@ func ResolveOpenAcosmiMetadata(fm ParsedSkillFrontmatter) *OpenAcosmiSkillMetada
 		}
 	}
 	if metadataObj == nil {
-		return nil
+		metadataObj = parsed
 	}
 
 	meta := &OpenAcosmiSkillMetadata{}
+
+	if v, ok := parsed["tree_id"].(string); ok {
+		meta.TreeID = strings.TrimSpace(v)
+	}
+	if v, ok := parsed["tree_group"].(string); ok {
+		meta.TreeGroup = strings.TrimSpace(v)
+	}
+	if v, ok := parsed["min_tier"].(string); ok {
+		meta.MinTier = strings.TrimSpace(v)
+	}
+	if v, ok := parsed["approval_type"].(string); ok {
+		meta.Approval = strings.TrimSpace(v)
+	}
 
 	if v, ok := metadataObj["always"].(bool); ok {
 		meta.Always = &v
@@ -268,6 +286,10 @@ func ResolveOpenAcosmiMetadata(fm ParsedSkillFrontmatter) *OpenAcosmiSkillMetada
 	// tools — 绑定的工具名列表
 	if tools := NormalizeStringList(metadataObj["tools"]); len(tools) > 0 {
 		meta.Tools = tools
+	} else if meta.TreeID != "" {
+		if toolName := resolveToolNameFromTreeID(meta.TreeID); toolName != "" {
+			meta.Tools = []string{toolName}
+		}
 	}
 
 	return meta
@@ -309,29 +331,19 @@ func toString(v interface{}) string {
 	case string:
 		return val
 	case float64:
-		return strings.TrimRight(strings.TrimRight(
-			strings.Replace(
-				strings.Replace(
-					strings.Replace(
-						strings.Replace(
-							strings.Replace(
-								strings.Replace(
-									strings.Replace(
-										strings.Replace(
-											strings.Replace(
-												strings.Replace(
-													"%g", "%g", "%g", -1),
-												"%g", "%g", -1),
-											"%g", "%g", -1),
-										"%g", "%g", -1),
-									"%g", "%g", -1),
-								"%g", "%g", -1),
-							"%g", "%g", -1),
-						"%g", "%g", -1),
-					"%g", "%g", -1),
-				"%g", "%g", -1),
-			"0"), ".")
+		return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%g", val), "0"), ".")
 	default:
 		return ""
 	}
+}
+
+func resolveToolNameFromTreeID(treeID string) string {
+	node := capabilities.DefaultTree().Lookup(strings.TrimSpace(treeID))
+	if node == nil {
+		return ""
+	}
+	if node.Kind != capabilities.NodeKindTool && node.Kind != capabilities.NodeKindSubagent {
+		return ""
+	}
+	return strings.TrimSpace(node.Name)
 }

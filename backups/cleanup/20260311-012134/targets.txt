@@ -1,0 +1,9 @@
+backend/internal/browser/chrome.go
+backend/internal/argus/codesign_darwin.go
+backend/internal/gateway/boot.go
+backend/internal/sandbox/docker_runner.go
+backend/internal/agents/browserdef/browser_spec.go
+backend/internal/agents/runner/attempt_runner.go
+ui/src/ui/views/chat.ts
+ui/src/ui/views/chat.test.ts
+ui/src/ui/app-render.ts

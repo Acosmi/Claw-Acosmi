@@ -267,7 +267,8 @@ func executeSpawnCoderAgent(ctx context.Context, inputJSON json.RawMessage, para
 	// Phase 3: 最终交付门控
 	// 质量审核通过后，将结果呈现给用户做最终签收。
 	// 用户 approve → 返回正常结果；reject → 返回 "用户要求修改" 给主智能体。
-	if params.ResultApprovalMgr != nil && outcome != nil && outcome.ThoughtResult != nil &&
+	if params.ResultApprovalMgr != nil && normalizeSecurityLevelValue(deriveMaxSecurityLevel(contract)) != "full" &&
+		outcome != nil && outcome.ThoughtResult != nil &&
 		outcome.ThoughtResult.Status == ThoughtCompleted {
 
 		tr := outcome.ThoughtResult

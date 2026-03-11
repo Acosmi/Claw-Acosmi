@@ -174,15 +174,105 @@ func sipsResizeToJpeg(buffer []byte, maxSide, quality int) ([]byte, error) {
 // ---------- 格式转换 ----------
 
 // ConvertHeicToJpeg 将 HEIC 图像转换为 JPEG。
+// 按优先级尝试多种外部工具：
+//  1. sips（macOS 内置，最高质量）
+//  2. ImageMagick（magick / convert，跨平台，Windows 可通过 winget/choco 安装）
+//  3. ffmpeg（跨平台，许多系统已预装）
+//
 // TS 对照: image-ops.ts L349-355
 func ConvertHeicToJpeg(buffer []byte) ([]byte, error) {
-	if !prefersSips() {
-		return nil, fmt.Errorf("HEIC 转换仅在 macOS 上通过 sips 支持")
+	// 策略 1: macOS sips
+	if prefersSips() {
+		result, err := sipsConvertToJpeg(buffer)
+		if err == nil {
+			return result, nil
+		}
+		// sips 失败时继续尝试其他工具
 	}
-	return sipsConvertToJpeg(buffer)
+
+	// 策略 2: ImageMagick (magick 或 convert)
+	if magickBin := findImageMagick(); magickBin != "" {
+		result, err := magickConvertToJpeg(buffer, magickBin)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	// 策略 3: ffmpeg
+	if _, err := exec.LookPath("ffmpeg"); err == nil {
+		result, err := ffmpegConvertToJpeg(buffer)
+		if err == nil {
+			return result, nil
+		}
+	}
+
+	return nil, fmt.Errorf("HEIC 转换不可用: 请安装 ImageMagick (magick) 或 ffmpeg。" +
+		"Windows: winget install ImageMagick | Linux: apt install imagemagick")
 }
 
-// sipsConvertToJpeg 使用 sips 转换为 JPEG。
+// findImageMagick 查找 ImageMagick 可执行文件。
+// ImageMagick 7 使用 "magick"，ImageMagick 6 使用 "convert"。
+func findImageMagick() string {
+	if _, err := exec.LookPath("magick"); err == nil {
+		return "magick"
+	}
+	if _, err := exec.LookPath("convert"); err == nil {
+		return "convert"
+	}
+	return ""
+}
+
+// magickConvertToJpeg 使用 ImageMagick 将 HEIC 转换为 JPEG。
+func magickConvertToJpeg(buffer []byte, magickBin string) ([]byte, error) {
+	tmpDir, err := os.MkdirTemp("", "magick-convert-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	inPath := filepath.Join(tmpDir, "input.heic")
+	outPath := filepath.Join(tmpDir, "output.jpg")
+	if err := os.WriteFile(inPath, buffer, 0600); err != nil {
+		return nil, err
+	}
+
+	var args []string
+	if magickBin == "magick" {
+		// ImageMagick 7: magick convert input output
+		args = []string{"convert", inPath, "-quality", "90", outPath}
+	} else {
+		// ImageMagick 6: convert input output
+		args = []string{inPath, "-quality", "90", outPath}
+	}
+
+	if err := exec.Command(magickBin, args...).Run(); err != nil {
+		return nil, fmt.Errorf("ImageMagick HEIC 转换失败: %w", err)
+	}
+	return os.ReadFile(outPath)
+}
+
+// ffmpegConvertToJpeg 使用 ffmpeg 将 HEIC 转换为 JPEG。
+func ffmpegConvertToJpeg(buffer []byte) ([]byte, error) {
+	tmpDir, err := os.MkdirTemp("", "ffmpeg-convert-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	inPath := filepath.Join(tmpDir, "input.heic")
+	outPath := filepath.Join(tmpDir, "output.jpg")
+	if err := os.WriteFile(inPath, buffer, 0600); err != nil {
+		return nil, err
+	}
+
+	args := []string{"-i", inPath, "-q:v", "2", "-y", outPath}
+	if err := exec.Command("ffmpeg", args...).Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg HEIC 转换失败: %w", err)
+	}
+	return os.ReadFile(outPath)
+}
+
+// sipsConvertToJpeg 使用 macOS sips 转换为 JPEG。
 // TS 对照: image-ops.ts L195-206
 func sipsConvertToJpeg(buffer []byte) ([]byte, error) {
 	tmpDir, err := os.MkdirTemp("", "sips-convert-")

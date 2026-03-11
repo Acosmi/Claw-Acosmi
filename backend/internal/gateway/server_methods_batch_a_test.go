@@ -86,7 +86,7 @@ func TestConfigHandlers_SetNoLoader(t *testing.T) {
 	r.RegisterAll(ConfigHandlers())
 
 	req := &RequestFrame{Method: "config.set", Params: map[string]interface{}{
-		"config": map[string]interface{}{},
+		"raw": "{}",
 	}}
 	var gotOK bool
 	var gotErr *ErrorShape
@@ -117,7 +117,7 @@ func TestConfigHandlers_SetMissingParam(t *testing.T) {
 	}
 	HandleGatewayRequest(r, req, nil, &GatewayMethodContext{ConfigLoader: loader}, respond)
 	if gotOK {
-		t.Error("should fail without config param")
+		t.Error("should fail without raw param")
 	}
 	if gotErr == nil || gotErr.Code != ErrCodeBadRequest {
 		t.Errorf("expected bad_request, got %v", gotErr)
@@ -140,7 +140,7 @@ func TestConfigHandlers_PatchMissingParam(t *testing.T) {
 	}
 	HandleGatewayRequest(r, req, nil, &GatewayMethodContext{ConfigLoader: loader}, respond)
 	if gotOK {
-		t.Error("should fail without patch param")
+		t.Error("should fail without raw patch")
 	}
 	if gotErr == nil || gotErr.Code != ErrCodeBadRequest {
 		t.Errorf("expected bad_request, got %v", gotErr)

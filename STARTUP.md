@@ -6,9 +6,10 @@
 
 ```
 CrabClaw/
-├── start.command          # ⚡ macOS 双击启动
-├── start.bat              # ⚡ Windows 双击启动
-├── scripts/start.sh       # ⚡ 核心启动脚本 (macOS/Linux)
+├── 一键部署脚本/            # ⚡ 跨平台一键启动脚本
+│   ├── mac-start.command  # macOS 双击启动
+│   ├── win-start.bat      # Windows 双击启动
+│   └── linux-start.sh     # 核心启动脚本 (macOS/Linux)
 ├── Makefile               # 根级构建系统 (make start)
 ├── backend/               # Go Gateway (acosmi)
 ├── cli-rust/              # Rust CLI (openacosmi)
@@ -54,9 +55,9 @@ CrabClaw/
 
 | 平台 | 方式 | 说明 |
 |------|------|------|
-| **macOS** | 双击 `start.command` | Terminal.app 自动打开并执行 |
-| **Windows** | 双击 `start.bat` | CMD 窗口自动打开并执行 |
-| **Linux** | `./scripts/start.sh` | 终端直接运行 |
+| **macOS** | 双击 `一键部署脚本/mac-start.command` | Terminal.app 自动打开并执行 |
+| **Windows** | 双击 `一键部署脚本/win-start.bat` | CMD 窗口自动打开并执行 |
+| **Linux** | `./一键部署脚本/linux-start.sh` | 终端直接运行 |
 | **所有平台** | `make start` | 终端运行（需先安装 make） |
 
 启动流程：
@@ -270,9 +271,25 @@ cd Argus && make clean      # 清理 Argus 构建产物
 
 ## 环境要求
 
-- Go 1.25.7+（`go.mod` 最低要求）
-- Rust 1.85+（`Cargo.toml` MSRV）
-- Node.js 18+ / npm
-- macOS: Xcode Command Line Tools（Argus 代码签名 + Rust FFI 编译需要）
-- macOS: "Argus Dev" 签名证书（首次运行 `create-dev-cert.sh`）
-- Linux: `libseccomp-dev >= 2.5.0`（oa-sandbox seccomp 支持）
+**通用依赖：**
+
+- Go 1.25.7+（`go.mod` 最低要求）— [下载](https://go.dev/dl/)
+- Rust 1.85+（`Cargo.toml` MSRV）— [下载](https://rustup.rs/)（可选，Argus 编译需要）
+- Node.js 18+ / npm — [下载](https://nodejs.org/)
+
+**macOS：**
+
+- Xcode Command Line Tools（Argus 代码签名 + Rust FFI 编译需要）
+- "Argus Dev" 签名证书（首次运行 `create-dev-cert.sh`）
+
+**Linux：**
+
+- `libseccomp-dev >= 2.5.0`（oa-sandbox seccomp 支持）
+- 内核 5.13+（Landlock 沙箱支持）
+
+**Windows：**
+
+- [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) 或完整 Visual Studio（安装时勾选「使用 C++ 的桌面开发」），Rust 编译 oa-sandbox 需要 MSVC 工具链
+- curl（Win10 1803+ 系统自带，`start.bat` 用于探测服务就绪状态）
+- Argus 视觉子智能体当前仅支持 macOS，Windows 上不可用（不影响其他功能）
+- 沙箱使用 Restricted Token + Job Object 方案，无需额外安装

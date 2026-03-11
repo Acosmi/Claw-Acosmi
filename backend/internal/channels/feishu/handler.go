@@ -125,9 +125,10 @@ func ExtractMultimodalMessage(msg *FeishuMessageEvent) *channels.ChannelMessage 
 		}
 
 	case "post":
-		// 富文本：提取纯文本摘要
-		text := parsePostContent(msg.Message.Content)
+		// 富文本：提取纯文本摘要，并保留内嵌图片为附件。
+		text, attachments := parsePostContentWithAttachments(msg.Message.Content)
 		cm.Text = strings.TrimSpace(text)
+		cm.Attachments = append(cm.Attachments, attachments...)
 		cm.MessageType = "text" // 归一化为文本
 
 	default:
@@ -177,29 +178,37 @@ func parseFileContent(content string) (fileKey, fileName string, fileSize int64)
 
 // parsePostContent 从富文本消息中提取纯文本
 func parsePostContent(content string) string {
+	text, _ := parsePostContentWithAttachments(content)
+	return text
+}
+
+func parsePostContentWithAttachments(content string) (string, []channels.ChannelAttachment) {
 	var c struct {
 		ZhCN *postBody `json:"zh_cn"`
 		EnUS *postBody `json:"en_us"`
 	}
 	if err := json.Unmarshal([]byte(content), &c); err != nil {
-		return ""
+		return "", nil
 	}
 	body := c.ZhCN
 	if body == nil {
 		body = c.EnUS
 	}
 	if body == nil {
-		return ""
+		return "", nil
 	}
 	var sb strings.Builder
+	attachments := make([]channels.ChannelAttachment, 0)
 	if body.Title != "" {
 		sb.WriteString(body.Title)
 		sb.WriteString("\n")
 	}
 	for _, line := range body.Content {
+		lineHasText := false
 		for _, elem := range line {
 			if elem.Tag == "text" {
 				sb.WriteString(elem.Text)
+				lineHasText = true
 			} else if elem.Tag == "a" {
 				sb.WriteString(elem.Text)
 				if elem.Href != "" {
@@ -207,11 +216,26 @@ func parsePostContent(content string) string {
 					sb.WriteString(elem.Href)
 					sb.WriteString(")")
 				}
+				lineHasText = true
+			} else if elem.Tag == "img" {
+				imageKey := strings.TrimSpace(elem.ImageKey)
+				if imageKey == "" {
+					imageKey = strings.TrimSpace(elem.ImageKeyCamel)
+				}
+				if imageKey != "" {
+					attachments = append(attachments, channels.ChannelAttachment{
+						Category: "image",
+						FileKey:  imageKey,
+						MimeType: "image/png",
+					})
+				}
 			}
 		}
-		sb.WriteString("\n")
+		if lineHasText {
+			sb.WriteString("\n")
+		}
 	}
-	return sb.String()
+	return strings.TrimSpace(sb.String()), attachments
 }
 
 type postBody struct {
@@ -220,9 +244,11 @@ type postBody struct {
 }
 
 type postElem struct {
-	Tag  string `json:"tag"`
-	Text string `json:"text,omitempty"`
-	Href string `json:"href,omitempty"`
+	Tag           string `json:"tag"`
+	Text          string `json:"text,omitempty"`
+	Href          string `json:"href,omitempty"`
+	ImageKey      string `json:"image_key,omitempty"`
+	ImageKeyCamel string `json:"imageKey,omitempty"`
 }
 
 // inferCategoryFromFileName 根据文件名推断附件类别

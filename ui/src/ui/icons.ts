@@ -125,6 +125,15 @@ export const icons = {
       <circle cx="17.35" cy="9.2" r="0.96" fill="#f59e0b" />
     `,
   ),
+  automationHub: navAccentIcon(
+    svg`
+      <rect x="7.1" y="8.05" width="3.35" height="3.35" rx="0.95" stroke="#0ea5e9" stroke-width="1.3" />
+      <rect x="13.55" y="8.05" width="3.35" height="3.35" rx="0.95" stroke="#22c55e" stroke-width="1.3" />
+      <rect x="10.35" y="13.25" width="3.35" height="3.35" rx="0.95" stroke="#f97316" stroke-width="1.3" />
+      <path d="M10.45 9.7h3.1M12 11.5v1.55" stroke="#64748b" stroke-width="1.3" stroke-linecap="round" />
+      <circle cx="17.35" cy="8.15" r="0.82" fill="#f59e0b" />
+    `,
+  ),
   agentSwarm: navAccentIcon(
     svg`
       <path d="M8.2 9.05 12 11.55M15.8 9.05 12 11.55M12 13.2v2.7" stroke="#64748b" stroke-width="1.4" stroke-linecap="round" />
@@ -570,6 +579,7 @@ export function isAccentIcon(name: IconName): boolean {
   return [
     "chatSpark",
     "taskOrbit",
+    "automationHub",
     "agentSwarm",
     "nodeMesh",
     "navMedia",

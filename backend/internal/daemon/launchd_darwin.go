@@ -214,8 +214,7 @@ func resolveInstallLaunchdLabel(env map[string]string) string {
 func ResolveGatewayLogPathsDarwin(env map[string]string) (stdoutPath, stderrPath string) {
 	stateDir, err := ResolveGatewayStateDir(env)
 	if err != nil {
-		home, _ := os.UserHomeDir()
-		stateDir = filepath.Join(home, ".openacosmi")
+		stateDir = fallbackGatewayStateDir(env)
 	}
 	logDir := filepath.Join(stateDir, "logs")
 	prefix := "gateway"

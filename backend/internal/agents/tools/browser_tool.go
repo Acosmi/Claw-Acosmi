@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/Acosmi/ClawAcosmi/internal/agents/browserdef"
 	"github.com/Acosmi/ClawAcosmi/internal/browser"
 )
 
@@ -46,33 +47,8 @@ func CreateBrowserTool(controller BrowserController) *AgentTool {
 	return &AgentTool{
 		Name:        "browser",
 		Label:       "Browser",
-		Description: "Control a browser: navigate, observe (ARIA tree), click_ref/fill_ref (by ref), screenshot, ai_browse (intent-level), and more. Recommended workflow: observe → click_ref/fill_ref → screenshot. If the browser tool returns 'not available', guide the user to the browser extension setup page at /browser-extension/ on the Gateway.",
-		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"action": map[string]any{
-					"type": "string",
-					"enum": []any{
-						"navigate", "get_content", "observe", "annotate_som",
-						"click", "click_ref", "type", "fill_ref",
-						"screenshot", "evaluate", "wait_for",
-						"go_back", "go_forward", "get_url",
-						"ai_browse",
-						"start_gif_recording", "stop_gif_recording",
-						"list_tabs", "create_tab", "close_tab", "switch_tab",
-					},
-					"description": "Browser action. Recommended: observe → click_ref/fill_ref → screenshot. annotate_som: visual screenshot with numbered interactive elements. start/stop_gif_recording: record multi-step actions as animated GIF. Use ai_browse for multi-step intent-level tasks. Tab management: list_tabs/create_tab/close_tab/switch_tab. IMPORTANT: Do NOT close tabs or browser when a task completes — keep the browser open for subsequent tasks. Only use close_tab when the user explicitly asks to close a specific tab.",
-				},
-				"url":       map[string]any{"type": "string", "description": "URL to navigate to (for navigate action)"},
-				"selector":  map[string]any{"type": "string", "description": "CSS selector (for click/type/wait_for actions)"},
-				"text":      map[string]any{"type": "string", "description": "Text to type (for type/fill_ref actions)"},
-				"script":    map[string]any{"type": "string", "description": "JavaScript to evaluate (for evaluate action)"},
-				"ref":       map[string]any{"type": "string", "description": "ARIA element ref from observe (e.g. \"e1\") for click_ref/fill_ref actions"},
-				"goal":      map[string]any{"type": "string", "description": "Natural language goal for ai_browse (e.g. \"Search for MacBook Pro on jd.com\")"},
-				"target_id": map[string]any{"type": "string", "description": "Tab/target ID for close_tab/switch_tab actions"},
-			},
-			"required": []any{"action"},
-		},
+		Description: browserdef.ToolDescription(),
+		Parameters:  browserdef.ToolInputSchemaMap(),
 		Execute: func(ctx context.Context, toolCallID string, args map[string]any) (*AgentToolResult, error) {
 			// softText returns a text-only tool result (soft error or status).
 			softText := func(text string) *AgentToolResult {
@@ -84,18 +60,7 @@ func CreateBrowserTool(controller BrowserController) *AgentTool {
 				return softText(fmt.Sprintf("[Browser error: %s]", err)), nil
 			}
 			if controller == nil {
-				guideURL := "http://127.0.0.1:26222/browser-extension/"
-				return softText(fmt.Sprintf(
-					"[Browser tool is not available — extension not installed or not connected.\n"+
-						"浏览器工具不可用 — 扩展未安装或未连接。\n\n"+
-						"Setup guide / 安装引导: %s\n\n"+
-						"Steps / 步骤:\n"+
-						"1. Download extension zip from the guide page / 从引导页下载扩展 zip\n"+
-						"2. Open chrome://extensions → Enable Developer Mode → Load Unpacked\n"+
-						"   打开 chrome://extensions → 启用开发者模式 → 加载已解压的扩展\n"+
-						"3. Extension auto-connects to Gateway / 扩展自动连接 Gateway]",
-					guideURL,
-				)), nil
+				return softText(browserdef.UnavailableMessage()), nil
 			}
 
 			// browserErr returns a soft-error result (consistent with tool_executor.go).

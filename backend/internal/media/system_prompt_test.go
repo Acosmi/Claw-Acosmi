@@ -127,6 +127,21 @@ func TestBuildMediaPrompt_HITLWorkflow(t *testing.T) {
 	}
 }
 
+func TestBuildMediaPrompt_SharedToolGuidance(t *testing.T) {
+	prompt := BuildMediaSystemPrompt(MediaPromptParams{Task: "test"})
+
+	must := []string{
+		"`send_email`",
+		"`remote_*` / `mcp_*`",
+		"共享 runner 工具同样可用",
+	}
+	for _, m := range must {
+		if !strings.Contains(prompt, m) {
+			t.Errorf("shared tool guidance missing %q", m)
+		}
+	}
+}
+
 func TestBuildMediaPrompt_NoBashLeakage(t *testing.T) {
 	prompt := BuildMediaSystemPrompt(MediaPromptParams{Task: "test"})
 

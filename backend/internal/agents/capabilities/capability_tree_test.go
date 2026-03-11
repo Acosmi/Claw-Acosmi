@@ -166,15 +166,26 @@ func TestTreeAllowlistForTiers(t *testing.T) {
 
 	// task_write should include write_file, send_media, send_email, spawn_coder_agent
 	taskWrite := tree.AllowlistForTier("task_write")
-	for _, expected := range []string{"write_file", "send_media", "send_email", "spawn_coder_agent", "spawn_media_agent"} {
+	for _, expected := range []string{
+		"write_file", "send_media", "send_email", "spawn_coder_agent", "spawn_media_agent",
+		"browser_config", "remote_approval_config", "image_config", "stt_config", "docconv_config", "media_config",
+	} {
 		if !taskWrite[expected] {
 			t.Errorf("task_write tier missing %q", expected)
+		}
+	}
+	for _, excluded := range []string{"browser_config", "remote_approval_config", "image_config", "stt_config", "docconv_config", "media_config"} {
+		if taskLight[excluded] {
+			t.Errorf("task_light tier should not include %q", excluded)
 		}
 	}
 
 	// task_delete should NOT include memory_search, browser, web_search, write_file
 	taskDelete := tree.AllowlistForTier("task_delete")
-	for _, excluded := range []string{"memory_search", "browser", "web_search", "write_file", "send_media"} {
+	for _, excluded := range []string{
+		"memory_search", "browser", "web_search", "write_file", "send_media",
+		"browser_config", "remote_approval_config", "image_config", "stt_config", "docconv_config", "media_config",
+	} {
 		if taskDelete[excluded] {
 			t.Errorf("task_delete tier should not include %q", excluded)
 		}
@@ -423,7 +434,7 @@ func TestTreeLookupByToolHint(t *testing.T) {
 	tree := GenerateTreeFromRegistry()
 
 	// Known tools should be found
-	for _, name := range []string{"bash", "read_file", "send_media", "send_email", "spawn_coder_agent"} {
+	for _, name := range []string{"bash", "read_file", "send_media", "send_email", "spawn_coder_agent", "browser_config"} {
 		node := tree.LookupByToolHint(name)
 		if node == nil {
 			t.Errorf("LookupByToolHint(%q) = nil, want non-nil", name)

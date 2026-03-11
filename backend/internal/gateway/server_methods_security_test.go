@@ -57,6 +57,42 @@ func TestSecurityHandlers_GetDefault(t *testing.T) {
 	if result["hash"] == "" {
 		t.Error("expected non-empty hash")
 	}
+
+	if _, err := os.Stat(filepath.Join(tmpHome, ".openacosmi", "exec-approvals.json")); !os.IsNotExist(err) {
+		t.Fatalf("security.get should not create exec-approvals.json, err=%v", err)
+	}
+}
+
+func TestExecApprovalsHandlers_GetDoesNotCreateFile(t *testing.T) {
+	tmpHome := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpHome)
+	defer os.Setenv("HOME", origHome)
+
+	r := NewMethodRegistry()
+	r.RegisterAll(ExecApprovalsHandlers())
+
+	req := &RequestFrame{Method: "exec.approvals.get", Params: map[string]interface{}{}}
+	var gotOK bool
+	var gotPayload interface{}
+	respond := func(ok bool, payload interface{}, _ *ErrorShape) {
+		gotOK = ok
+		gotPayload = payload
+	}
+	HandleGatewayRequest(r, req, nil, &GatewayMethodContext{}, respond)
+	if !gotOK {
+		t.Fatal("exec.approvals.get should succeed")
+	}
+	result, ok := gotPayload.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map, got %T", gotPayload)
+	}
+	if result["exists"] != false {
+		t.Fatalf("expected exists=false, got %v", result["exists"])
+	}
+	if _, err := os.Stat(filepath.Join(tmpHome, ".openacosmi", "exec-approvals.json")); !os.IsNotExist(err) {
+		t.Fatalf("exec.approvals.get should not create exec-approvals.json, err=%v", err)
+	}
 }
 
 func TestSecurityHandlers_GetWithFullSecurity(t *testing.T) {

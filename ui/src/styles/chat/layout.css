@@ -653,7 +653,7 @@
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 
 /* Generic action button used in left & right areas */
@@ -736,11 +736,12 @@
 
 /* Model selector dropdown in compose left area */
 .chat-compose__model-shell {
-  min-width: 0;
+  min-width: min(320px, 100%);
   max-width: min(640px, 100%);
   flex: 1 1 420px;
   display: flex;
   align-items: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
   position: relative;
 }
@@ -847,7 +848,8 @@
 
 .chat-compose__model-selectbox {
   position: relative;
-  min-width: 0;
+  flex: 1 1 260px;
+  min-width: min(260px, 100%);
   width: 100%;
 }
 
@@ -879,6 +881,41 @@
   appearance: none;
   text-align: left;
   box-shadow: none;
+}
+
+@media (max-width: 960px) {
+  .chat-compose__bottom-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chat-compose__left,
+  .chat-compose__right {
+    width: 100%;
+  }
+
+  .chat-compose__right {
+    justify-content: flex-end;
+  }
+
+  .chat-compose__model-shell {
+    max-width: 100%;
+  }
+
+  .chat-compose__model-groups {
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .chat-compose__model-groups::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chat-compose__model-selectbox {
+    flex-basis: 100%;
+    min-width: 0;
+  }
 }
 
 .chat-compose__model-select:hover {

@@ -47,12 +47,14 @@ func ResolveBundledSkillsContext(customDir string) BundledSkillsContext {
 
 	ctx.Dir = dir
 
-	// 加载技能目录中的技能名称
-	skills := LoadSkillsFromDir(dir, "openacosmi-bundled")
-	for _, skill := range skills {
-		name := strings.TrimSpace(skill)
-		if name != "" {
-			ctx.Names[name] = true
+	// 加载技能目录中的技能名称（兼容分类根目录）
+	for _, root := range loadSkillSearchRoots(dir) {
+		skills := LoadSkillsFromDir(root, "openacosmi-bundled")
+		for _, skill := range skills {
+			name := strings.TrimSpace(skill)
+			if name != "" {
+				ctx.Names[name] = true
+			}
 		}
 	}
 

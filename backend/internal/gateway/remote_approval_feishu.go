@@ -139,7 +139,9 @@ func (p *feishuProvider) buildApprovalCard(req ApprovalCardRequest) map[string]i
 	}
 
 	durationText := fmt.Sprintf("%d 分钟", req.TTLMinutes)
-	if isPermanentApprovalLevel(req.RequestedLevel) {
+	if req.TaskScoped {
+		durationText = "本任务有效 / Current task only"
+	} else if isPermanentApprovalLevel(req.RequestedLevel) {
 		durationText = "永久授权 / Permanent"
 	}
 
@@ -147,7 +149,7 @@ func (p *feishuProvider) buildApprovalCard(req ApprovalCardRequest) map[string]i
 		"action": "approve",
 		"id":     req.EscalationID,
 	}
-	if !isPermanentApprovalLevel(req.RequestedLevel) {
+	if !req.TaskScoped && !isPermanentApprovalLevel(req.RequestedLevel) {
 		approveValue["ttl"] = req.TTLMinutes
 	}
 
@@ -1085,7 +1087,7 @@ func (p *feishuProvider) buildTypedExecEscalationCard(req TypedApprovalRequest) 
 	}
 }
 
-// P6-5: buildTypedMountAccessCard 构建挂载访问卡片（橙色主题，展示路径 + 读写权限 + TTL）。
+// P6-5: buildTypedMountAccessCard 构建挂载访问卡片（橙色主题，展示路径 + 读写权限 + 任务范围）。
 func (p *feishuProvider) buildTypedMountAccessCard(req TypedApprovalRequest) map[string]interface{} {
 	modeLabel := map[string]string{
 		"ro": "🔒 只读 / Read-Only",
@@ -1095,8 +1097,12 @@ func (p *feishuProvider) buildTypedMountAccessCard(req TypedApprovalRequest) map
 		modeLabel = "🔒 只读 / Read-Only"
 	}
 
-	bodyContent := fmt.Sprintf("**挂载路径**: `%s`\n**访问模式**: %s\n**授权时长**: %d 分钟",
-		req.MountPath, modeLabel, req.TTLMinutes)
+	scopeLine := fmt.Sprintf("**授权时长**: %d 分钟", req.TTLMinutes)
+	if req.TaskScoped {
+		scopeLine = "**授权范围**: 当前任务（任务结束自动回收）"
+	}
+	bodyContent := fmt.Sprintf("**挂载路径**: `%s`\n**访问模式**: %s\n%s",
+		req.MountPath, modeLabel, scopeLine)
 	bodyContent += fmt.Sprintf("\n\n**原因**: %s", req.Reason)
 
 	elements := []interface{}{
@@ -1115,10 +1121,16 @@ func (p *feishuProvider) buildTypedMountAccessCard(req TypedApprovalRequest) map
 					"tag":  "button",
 					"text": map[string]interface{}{"tag": "plain_text", "content": "✅ 批准 / Approve"},
 					"type": "primary",
-					"value": map[string]interface{}{
-						"type": "typed_approval", "action": "approve",
-						"id": req.ID, "approval_type": req.Type, "ttl": req.TTLMinutes,
-					},
+					"value": func() map[string]interface{} {
+						value := map[string]interface{}{
+							"type": "typed_approval", "action": "approve",
+							"id": req.ID, "approval_type": req.Type,
+						}
+						if !req.TaskScoped {
+							value["ttl"] = req.TTLMinutes
+						}
+						return value
+					}(),
 				},
 				map[string]interface{}{
 					"tag":  "button",
@@ -1134,7 +1146,12 @@ func (p *feishuProvider) buildTypedMountAccessCard(req TypedApprovalRequest) map
 		map[string]interface{}{
 			"tag": "note",
 			"elements": []interface{}{
-				map[string]interface{}{"tag": "plain_text", "content": fmt.Sprintf("ID: %s | 类型: %s | 超时: %d 分钟", req.ID, req.Type, req.TTLMinutes)},
+				map[string]interface{}{"tag": "plain_text", "content": func() string {
+					if req.TaskScoped {
+						return fmt.Sprintf("ID: %s | 类型: %s | 范围: 当前任务", req.ID, req.Type)
+					}
+					return fmt.Sprintf("ID: %s | 类型: %s | 超时: %d 分钟", req.ID, req.Type, req.TTLMinutes)
+				}()},
 			},
 		},
 	)
@@ -1374,7 +1391,11 @@ func (p *feishuProvider) buildTypedMountAccessResultCard(result TypedApprovalRes
 	if result.Approved {
 		headerTitle = "✅ 挂载访问已生效 / Mount Access Granted"
 		headerTemplate = "green"
-		bodyText = fmt.Sprintf("挂载访问请求已批准。\n\n**挂载路径**: `%s`\n**访问模式**: %s\n**有效时长**: %d 分钟", result.MountPath, modeLabel, result.TTLMinutes)
+		scopeLine := fmt.Sprintf("**有效时长**: %d 分钟", result.TTLMinutes)
+		if result.TaskScoped {
+			scopeLine = "**生效范围**: 当前任务（任务结束自动回收）"
+		}
+		bodyText = fmt.Sprintf("挂载访问请求已批准。\n\n**挂载路径**: `%s`\n**访问模式**: %s\n%s", result.MountPath, modeLabel, scopeLine)
 	} else if result.Reason != "" {
 		bodyText += fmt.Sprintf("\n**原因**: %s", result.Reason)
 	}

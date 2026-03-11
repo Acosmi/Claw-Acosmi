@@ -179,34 +179,19 @@ func handleUHMSLLMGet(ctx *MethodHandlerContext) {
 		loadedCfg = &types.OpenAcosmiConfig{}
 	}
 
-	// 当前 LLM 信息 (直接从配置读取，无 fallback)
-	currentProvider := ""
-	currentModel := ""
-
-	if loadedCfg.Memory != nil && loadedCfg.Memory.UHMS != nil && loadedCfg.Memory.UHMS.LLMProvider != "" {
-		currentProvider = loadedCfg.Memory.UHMS.LLMProvider
-		currentModel = loadedCfg.Memory.UHMS.LLMModel
-		if currentModel == "" {
-			currentModel = defaultModelForProvider(currentProvider)
-		}
+	var uhmsCfg *types.MemoryUHMSConfig
+	if loadedCfg.Memory != nil {
+		uhmsCfg = loadedCfg.Memory.UHMS
 	}
-
-	baseURL := ""
-	if loadedCfg.Memory != nil && loadedCfg.Memory.UHMS != nil {
-		baseURL = loadedCfg.Memory.UHMS.LLMBaseURL
-	}
+	resolved := resolveEffectiveUHMSLLMConfig(uhmsCfg, loadedCfg)
+	currentProvider := resolved.Provider
+	currentModel := resolved.Model
+	baseURL := resolved.BaseURL
 
 	// 收集可用 provider 列表
 	providers := collectUHMSLLMProviders(loadedCfg)
 
-	// 检查当前 provider 是否有 API key
-	hasAPIKey := false
-	for _, p := range providers {
-		if strings.EqualFold(p.ID, currentProvider) {
-			hasAPIKey = p.HasAPIKey
-			break
-		}
-	}
+	hasAPIKey := resolved.APIKey != ""
 
 	hasOwnApiKey := false
 	if loadedCfg.Memory != nil && loadedCfg.Memory.UHMS != nil {
@@ -220,6 +205,7 @@ func handleUHMSLLMGet(ctx *MethodHandlerContext) {
 		"hasApiKey":    hasAPIKey,
 		"providers":    providers,
 		"hasOwnApiKey": hasOwnApiKey,
+		"inherited":    resolved.Inherited,
 	}, nil)
 }
 

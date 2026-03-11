@@ -227,9 +227,14 @@ data: [DONE]
 
 `
 
+	var requestBody map[string]interface{}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			t.Error("missing Bearer auth")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
@@ -256,6 +261,57 @@ data: [DONE]
 	}
 	if result.AssistantMessage.Content[0].Text != "Hello there" {
 		t.Errorf("expected 'Hello there', got %q", result.AssistantMessage.Content[0].Text)
+	}
+	if result.Usage.InputTokens != 10 || result.Usage.OutputTokens != 5 || result.Usage.TotalTokens != 15 {
+		t.Errorf("unexpected usage: %+v", result.Usage)
+	}
+	streamOptions, ok := requestBody["stream_options"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected stream_options in request, got %T", requestBody["stream_options"])
+	}
+	if includeUsage, _ := streamOptions["include_usage"].(bool); !includeUsage {
+		t.Fatalf("expected stream_options.include_usage=true, got %+v", streamOptions)
+	}
+}
+
+func TestOpenAICompatibleStreamChat_ParsesCacheUsage(t *testing.T) {
+	sseData := `data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":120,"completion_tokens":45,"total_tokens":195,"prompt_tokens_details":{"cached_tokens":30}}}
+
+data: [DONE]
+
+`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, sseData)
+	}))
+	defer server.Close()
+
+	result, err := StreamChat(context.Background(), ChatRequest{
+		Provider: "deepseek",
+		Model:    "deepseek-chat",
+		Messages: []ChatMessage{TextMessage("user", "hello")},
+		APIKey:   "test-key",
+		BaseURL:  server.URL,
+	}, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Usage.InputTokens != 120 {
+		t.Fatalf("expected input_tokens=120, got %d", result.Usage.InputTokens)
+	}
+	if result.Usage.OutputTokens != 45 {
+		t.Fatalf("expected output_tokens=45, got %d", result.Usage.OutputTokens)
+	}
+	if result.Usage.CacheReadTokens != 30 {
+		t.Fatalf("expected cache_read_input_tokens=30, got %d", result.Usage.CacheReadTokens)
+	}
+	if result.Usage.TotalTokens != 195 {
+		t.Fatalf("expected total_tokens=195, got %d", result.Usage.TotalTokens)
 	}
 }
 

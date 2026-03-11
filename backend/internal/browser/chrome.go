@@ -13,6 +13,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ChromeInstance manages a running Chrome process.
@@ -51,11 +53,7 @@ func StartChrome(ctx context.Context, cfg ChromeStartConfig) (*ChromeInstance, e
 		dataDir = cfg.Profile.DataDir
 	}
 	if dataDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("cannot determine home directory: %w", err)
-		}
-		dataDir = filepath.Join(home, ".openacosmi", "browser-profiles", cfg.Profile.Name)
+		dataDir = defaultChromeDataDir(cfg.Profile.Name)
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("cannot create data dir: %w", err)
@@ -120,6 +118,10 @@ func StartChrome(ctx context.Context, cfg ChromeStartConfig) (*ChromeInstance, e
 	}()
 
 	return instance, nil
+}
+
+func defaultChromeDataDir(profileName string) string {
+	return filepath.Join(config.ResolveStateDir(), "browser-profiles", profileName)
 }
 
 func buildChromeArgs(profile *ResolvedBrowserProfile, dataDir string) []string {
@@ -338,11 +340,7 @@ func LaunchOpenAcosmiChrome(ctx context.Context, cfg ChromeStartConfig) (*Chrome
 		dataDir = cfg.Profile.DataDir
 	}
 	if dataDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("cannot determine home directory: %w", err)
-		}
-		dataDir = filepath.Join(home, ".openacosmi", "browser-profiles", cfg.Profile.Name)
+		dataDir = defaultChromeDataDir(cfg.Profile.Name)
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("cannot create data dir: %w", err)

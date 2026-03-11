@@ -18,7 +18,7 @@ func TestNormalizeProviderId(t *testing.T) {
 		{"z.ai", "zai"},
 		{"z-ai", "zai"},
 		{"openacosmi-zen", "openacosmi"},
-		{"qwen", "qwen-portal"},
+		{"qwen", "qwen"},
 		{"kimi-code", "kimi-coding"},
 		{"OpenAI", "openai"},
 	}
@@ -43,6 +43,7 @@ func TestParseModelRef(t *testing.T) {
 		{"claude-3", "anthropic", "anthropic", "claude-3", false},
 		{"anthropic/claude-3", "openai", "anthropic", "claude-3", false},
 		{"openai/gpt-4", "anthropic", "openai", "gpt-4", false},
+		{"qwen/qwen3.5-plus", "anthropic", "qwen", "qwen3.5-plus", false},
 		{"", "anthropic", "", "", true},
 		{"  /model", "anthropic", "", "", true},                          // empty provider
 		{"opus-4.6", "anthropic", "anthropic", "claude-opus-4-6", false}, // alias

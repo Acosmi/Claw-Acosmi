@@ -18,7 +18,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Acosmi/ClawAcosmi/internal/agents/browserdef"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/capabilities"
+	"github.com/Acosmi/ClawAcosmi/internal/agents/configtools"
+	"github.com/Acosmi/ClawAcosmi/internal/agents/gatewayclient"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/llmclient"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/models"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/prompt"
@@ -167,6 +170,8 @@ type EmbeddedAttemptRunner struct {
 	BrowserEvaluateEnabled bool
 	// BrowserController 浏览器自动化控制器（可选，nil = browser 工具不可用）
 	BrowserController browser.BrowserController
+	// GatewayOpts gateway 工具运行时配置（可选，未设置则不向 LLM 暴露 gateway）。
+	GatewayOpts gatewayclient.GatewayOptions
 	// WebSearchProvider 网页搜索 provider（可选，nil = web_search 工具不可用）
 	WebSearchProvider interface {
 		Search(ctx context.Context, query string, maxResults int) ([]WebSearchResult, error)
@@ -201,6 +206,8 @@ type EmbeddedAttemptRunner struct {
 	// toolBindings 工具绑定: tool name → skill description
 	// 在 buildSystemPrompt 中从技能 entries 构建，在 buildToolDefinitions 中注入到工具 Description
 	toolBindings map[string]string
+	// toolBindingNames 工具绑定: tool name → 绑定技能名列表（保留所有有效绑定）
+	toolBindingNames map[string][]string
 }
 
 // WebSearchResult 搜索结果（与 tools.WebSearchResult 对齐，避免循环依赖）。
@@ -262,6 +269,7 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 	// P5-7: analyzeIntent 替代 classifyIntent，增强返回 IntentAnalysis IR
 	// 提前到 buildSystemPrompt 之前，使 intent guidance 能注入提示词
 	intentAnalysis := analyzeIntent(params.Prompt)
+	intentAnalysis = promoteBrowserContinuation(intentAnalysis, params.Prompt, priorMessages)
 	tier := intentAnalysis.Tier
 
 	// 4. 构建工具定义（必须在构建系统提示词之前，以便传入真实工具名列表）
@@ -298,9 +306,14 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 	// P3-3: 只传入过滤后工具对应的 summary（不再传全量 summary）
 	// F-02: 使用 TreeToolSummaries（与 P1+ 迁移方向一致）
 	allSummaries := capabilities.TreeToolSummaries()
+	runtimeSummaries := configtools.ToolSummaries()
 	toolSummaries := make(map[string]string, len(toolNames))
 	for _, name := range toolNames {
 		if s, ok := allSummaries[name]; ok {
+			toolSummaries[name] = s
+			continue
+		}
+		if s, ok := runtimeSummaries[name]; ok {
 			toolSummaries[name] = s
 		}
 	}
@@ -318,12 +331,15 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 		userMsg = &fallback
 	}
 	messages := append(priorMessages, *userMsg)
+	var mediaBlocks []MediaBlock
+	var totalUsage llmclient.UsageInfo
+	toolCallCounts := map[string]int{}
 
 	// 5b.1 Transcript 持久化保障: 使用 defer 确保即使 LLM 失败/超时也能持久化用户消息。
 	transcriptPersisted := params.SuppressTranscript
 	defer func() {
 		if !transcriptPersisted {
-			r.persistToTranscript(params, messages, log)
+			r.persistToTranscript(params, messages, mediaBlocks, totalUsage, toolCallCounts, log)
 		}
 	}()
 
@@ -379,9 +395,12 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 			decision, planErr := r.PlanConfirmation.RequestPlanConfirmationWithSessionKey(planCtx, planReq, params.SessionKey)
 			if planErr != nil {
 				log.Warn("plan confirmation error, aborting", "error", planErr)
+				errMsg := fmt.Sprintf("方案确认出错: %v", planErr)
+				// S1: 注入 messages 确保 defer persist 写出正确终端回复
+				messages = append(messages, llmclient.TextMessage("assistant", errMsg))
 				return &AttemptResult{
 					Aborted:        true,
-					AssistantTexts: []string{fmt.Sprintf("方案确认出错: %v", planErr)},
+					AssistantTexts: []string{errMsg},
 					SessionIDUsed:  params.SessionID,
 				}, nil
 			}
@@ -389,9 +408,12 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 			switch decision.Action {
 			case "reject":
 				log.Info("plan rejected by user", "feedback", decision.Feedback)
+				rejectMsg := fmt.Sprintf("方案已被拒绝。%s", decision.Feedback)
+				// S1: 注入 messages 确保 defer persist 写出正确终端回复
+				messages = append(messages, llmclient.TextMessage("assistant", rejectMsg))
 				return &AttemptResult{
 					Aborted:        true,
-					AssistantTexts: []string{fmt.Sprintf("方案已被拒绝。%s", decision.Feedback)},
+					AssistantTexts: []string{rejectMsg},
 					SessionIDUsed:  params.SessionID,
 				}, nil
 			case "edit":
@@ -422,10 +444,8 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 	// 6. Tool Loop: 调用 LLM → 执行工具 → 回传结果 → 再调用 LLM
 	var (
 		assistantTexts []string
-		mediaBlocks    []MediaBlock
 		toolMetas      []interface{}
 		lastResult     *llmclient.ChatResult
-		totalUsage     llmclient.UsageInfo
 		lastToolError  string
 	)
 
@@ -525,9 +545,18 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 			}, nil
 		}
 
+		result.AssistantMessage = normalizeAssistantMessageForToolCalls(
+			result.AssistantMessage,
+			allowedToolNames,
+			log,
+		)
+
 		lastResult = result
 		totalUsage.InputTokens += result.Usage.InputTokens
 		totalUsage.OutputTokens += result.Usage.OutputTokens
+		totalUsage.CacheReadTokens += result.Usage.CacheReadTokens
+		totalUsage.CacheWriteTokens += result.Usage.CacheWriteTokens
+		totalUsage.TotalTokens += usageTotalTokens(result.Usage)
 
 		// 收集 assistant 文本
 		for _, block := range result.AssistantMessage.Content {
@@ -576,11 +605,13 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 			if len(assistantTexts) > 0 {
 				assistantTexts = assistantTexts[:len(assistantTexts)-1]
 			}
-			assistantTexts = append(assistantTexts,
-				fmt.Sprintf("⚠️ 工具 %s 已连续调用 %d 次未取得进展，自动终止循环。请换一种方式尝试或直接咨询用户。\n"+
-					"Tool %s was called %d times consecutively without progress. Loop terminated. Try a different approach or ask the user.",
-					lastSingleToolName, consecutiveSameToolCount+1,
-					lastSingleToolName, consecutiveSameToolCount+1))
+			breakerMsg := fmt.Sprintf("⚠️ 工具 %s 已连续调用 %d 次未取得进展，自动终止循环。请换一种方式尝试或直接咨询用户。\n"+
+				"Tool %s was called %d times consecutively without progress. Loop terminated. Try a different approach or ask the user.",
+				lastSingleToolName, consecutiveSameToolCount+1,
+				lastSingleToolName, consecutiveSameToolCount+1)
+			assistantTexts = append(assistantTexts, breakerMsg)
+			// S1: 注入 messages 确保 persistToTranscript 和 UHMS 读到正确终端回复
+			messages = append(messages, llmclient.TextMessage("assistant", breakerMsg))
 			break
 		}
 
@@ -607,6 +638,9 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 				continue
 			}
 
+			if tc.Name != "" {
+				toolCallCounts[tc.Name]++
+			}
 			toolMetas = append(toolMetas, map[string]string{
 				"toolName": tc.Name,
 			})
@@ -757,9 +791,12 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 				"failCount", toolFailureCounts[hardStopTool],
 				"iteration", iteration,
 			)
-			assistantTexts = append(assistantTexts, fmt.Sprintf(
+			hardStopMsg := fmt.Sprintf(
 				"⚠️ Tool %s failed %d times. Forced loop termination to avoid resource waste.",
-				hardStopTool, toolFailureCounts[hardStopTool]))
+				hardStopTool, toolFailureCounts[hardStopTool])
+			assistantTexts = append(assistantTexts, hardStopMsg)
+			// S1: 注入 messages 确保 persistToTranscript 和 UHMS 读到正确终端回复
+			messages = append(messages, llmclient.TextMessage("assistant", hardStopMsg))
 			break
 		}
 
@@ -783,18 +820,35 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 				totalToolFailures, worstTool, worstCount)
 			// 保留已有的 assistantTexts（可能包含有用的部分回答），将警告追加在末尾
 			assistantTexts = append(assistantTexts, warningMsg)
+			// S1: 注入 messages 确保 persistToTranscript 和 UHMS 读到正确终端回复
+			messages = append(messages, llmclient.TextMessage("assistant", warningMsg))
 			break
 		}
 
 		// --- 权限拒绝: 等待审批或断路 ---
 		allDenied := len(toolResults) > 0
+		allApprovalDenied := len(toolResults) > 0
 		for _, tr := range toolResults {
-			if !IsPermissionDeniedOutput(tr.ResultText) {
+			if !IsBlockingDeniedOutput(tr.ResultText) {
 				allDenied = false
-				break
+			}
+			if !IsApprovalDeniedOutput(tr.ResultText) {
+				allApprovalDenied = false
 			}
 		}
 		if allDenied {
+			if allApprovalDenied {
+				log.Warn("approval explicitly denied by user, stopping without retry",
+					"iteration", iteration,
+				)
+				approvalDeniedMsg := "⚠️ 用户刚刚拒绝了当前高风险操作的授权，本轮已停止，不会继续重复发起授权。\n" +
+					"The user rejected this authorization request. This run has stopped and will not retry the same action automatically."
+				assistantTexts = append(assistantTexts, approvalDeniedMsg)
+				// S1: 注入 messages 确保 persistToTranscript 和 UHMS 读到正确终端回复
+				messages = append(messages, llmclient.TextMessage("assistant", approvalDeniedMsg))
+				break
+			}
+
 			permDeniedRounds++
 
 			// 首次全部拒绝时等待审批（如果有回调）
@@ -884,9 +938,11 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 					log.Warn("approval denied/timed out, stopping",
 						"iteration", iteration,
 					)
-					assistantTexts = append(assistantTexts,
-						"⚠️ 权限审批被拒绝或超时。如需执行此操作，请调整安全设置后重试。\n"+
-							"Permission approval denied or timed out. Adjust security settings and try again.")
+					approvalTimeoutMsg := "⚠️ 权限审批被拒绝或超时。如需执行此操作，请调整安全设置后重试。\n" +
+						"Permission approval denied or timed out. Adjust security settings and try again."
+					assistantTexts = append(assistantTexts, approvalTimeoutMsg)
+					// S1: 注入 messages 确保 persistToTranscript 和 UHMS 读到正确终端回复
+					messages = append(messages, llmclient.TextMessage("assistant", approvalTimeoutMsg))
 					break
 				}
 			} else if permDeniedRounds >= maxConsecutivePermDeniedRounds {
@@ -895,10 +951,12 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 					"rounds", permDeniedRounds,
 					"iteration", iteration,
 				)
-				assistantTexts = append(assistantTexts,
-					"⚠️ 权限不足，无法执行请求的操作。请在聊天窗口的权限弹窗中点击「临时授权」放行，"+
-						"或前往 安全设置 → 执行安全级别 调整权限。\n"+
-						"Permission denied. Please authorize via the permission popup or adjust security settings.")
+				permDeniedMsg := "⚠️ 权限不足，无法执行请求的操作。请在聊天窗口的权限弹窗中批准该操作，" +
+					"或前往 安全设置 → 执行安全级别 调整权限。\n" +
+					"Permission denied. Please authorize via the permission popup or adjust security settings."
+				assistantTexts = append(assistantTexts, permDeniedMsg)
+				// S1: 注入 messages 确保 persistToTranscript 和 UHMS 读到正确终端回复
+				messages = append(messages, llmclient.TextMessage("assistant", permDeniedMsg))
 				break
 			}
 		} else {
@@ -943,7 +1001,7 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 
 	// 6.6 Transcript: 持久化当前轮次消息到 transcript 文件（供下次对话加载历史）
 	// 在正常完成路径显式调用（messages 包含完整 user+assistant），标记已完成以避免 defer 重复执行。
-	r.persistToTranscript(params, messages, log)
+	r.persistToTranscript(params, messages, mediaBlocks, totalUsage, toolCallCounts, log)
 	transcriptPersisted = true
 
 	// 7. 构建最终结果
@@ -977,6 +1035,9 @@ func (r *EmbeddedAttemptRunner) RunAttempt(ctx context.Context, params AttemptPa
 		"model", params.ModelID,
 		"inputTokens", totalUsage.InputTokens,
 		"outputTokens", totalUsage.OutputTokens,
+		"cacheReadTokens", totalUsage.CacheReadTokens,
+		"cacheWriteTokens", totalUsage.CacheWriteTokens,
+		"totalTokens", usageTotalTokens(totalUsage),
 	)
 
 	return result, nil
@@ -1105,6 +1166,8 @@ func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams, sessionS
 	// 使用 prompt 包的 BuildAgentSystemPrompt 构建完整系统提示
 	rt := prompt.DefaultRuntimeInfo()
 	rt.Model = params.Provider + "/" + params.ModelID
+	r.toolBindings = nil
+	r.toolBindingNames = nil
 
 	// 构建技能快照 — Boot 模式 vs 文件扫描模式
 	skillsPrompt := ""
@@ -1118,8 +1181,10 @@ func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams, sessionS
 		// 工具绑定即使在 Boot 模式也从文件加载（绑定是静态的，<5ms）
 		bundledDir := skills.ResolveBundledSkillsDir("")
 		bindingEntries := skills.LoadSkillEntries(params.WorkspaceDir, "", bundledDir, r.Config)
-		r.toolBindings = skills.ResolveToolSkillBindings(bindingEntries)
-		slog.Debug("buildSystemPrompt: boot mode (VFS skills)", "toolBindings", len(r.toolBindings))
+		bindingSet := skills.ResolvePromptToolSkillBindingSet(bindingEntries, r.Config, params.SkillFilter)
+		r.toolBindings = skills.ToolSkillGuidanceMap(bindingSet)
+		r.toolBindingNames = skills.ToolSkillNameMap(bindingSet)
+		slog.Debug("buildSystemPrompt: boot mode (VFS skills)", "toolBindings", len(r.toolBindings), "toolBindingNames", len(r.toolBindingNames))
 	} else if params.WorkspaceDir != "" {
 		// 文件扫描模式（向后兼容）
 		bundledDir := skills.ResolveBundledSkillsDir("")
@@ -1128,6 +1193,7 @@ func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams, sessionS
 			WorkspaceDir: params.WorkspaceDir,
 			BundledDir:   bundledDir,
 			Config:       r.Config,
+			SkillFilter:  params.SkillFilter,
 			Entries:      entries, // 传入预加载 entries，避免重复扫描
 		})
 
@@ -1139,8 +1205,10 @@ func (r *EmbeddedAttemptRunner) buildSystemPrompt(params AttemptParams, sessionS
 			}
 		}
 
-		// 复用已加载的 entries 构建工具绑定
-		r.toolBindings = skills.ResolveToolSkillBindings(entries)
+		// 复用已加载的 entries 构建工具绑定与运行时能力树
+		bindingSet := skills.ResolvePromptToolSkillBindingSet(entries, r.Config, params.SkillFilter)
+		r.toolBindings = skills.ToolSkillGuidanceMap(bindingSet)
+		r.toolBindingNames = skills.ToolSkillNameMap(bindingSet)
 
 		// 所有技能统一走按需加载: prompt 只放紧凑索引，LLM 通过 lookup_skill 获取完整内容
 		if idx := skills.FormatSkillIndex(snap.ResolvedSkills); idx != "" {
@@ -1312,14 +1380,9 @@ func (r *EmbeddedAttemptRunner) buildToolDefinitions() []llmclient.ToolDef {
 	// browser: 浏览器自动化工具（ARIA ref + CSS selector 双模式，比 Argus 屏幕坐标更精准高效）
 	if r.BrowserController != nil {
 		tools = append(tools, llmclient.ToolDef{
-			Name: "browser",
-			Description: `Control a browser with structured page understanding. Recommended workflow:
-1. Use "observe" to get ARIA accessibility tree + screenshot (understand page structure)
-2. Use "click_ref"/"fill_ref" with element refs (e.g. "e1") from observe results
-3. Fall back to CSS selectors with "click"/"type" only when refs are unavailable.
-For complex multi-step tasks, use "ai_browse" with a goal description to auto-execute.
-Also supports: navigate, screenshot, evaluate JS, wait_for, go_back/forward, get_url, get_content.`,
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string","enum":["navigate","get_content","click","type","screenshot","evaluate","wait_for","go_back","go_forward","get_url","observe","click_ref","fill_ref","ai_browse"],"description":"Browser action. Use 'observe' first, then 'click_ref'/'fill_ref' with refs. Use 'ai_browse' for complex multi-step goals."},"url":{"type":"string","description":"URL for navigate action"},"selector":{"type":"string","description":"CSS selector for click/type/wait_for actions"},"text":{"type":"string","description":"Text for type/fill_ref actions"},"script":{"type":"string","description":"JavaScript for evaluate action"},"ref":{"type":"string","description":"Element ref from observe results (e.g. 'e1') for click_ref/fill_ref actions"},"goal":{"type":"string","description":"Goal description for ai_browse action (e.g. 'Search for MacBook Pro and get the price')"}},"required":["action"]}`),
+			Name:        "browser",
+			Description: browserdef.ToolDescription(),
+			InputSchema: browserdef.ToolInputSchemaJSON(),
 		})
 	}
 
@@ -1332,14 +1395,39 @@ Also supports: navigate, screenshot, evaluate JS, wait_for, go_back/forward, get
 				"Only set 'target' when explicitly asked to send to a DIFFERENT channel.\n" +
 				"Use 'file_path' with an ABSOLUTE path (e.g. '/tmp/screenshot.png'). " +
 				"MIME type is auto-detected from the file extension.\n" +
-				"Only use 'media_base64' if data is already in base64 form. For screenshots, save to a file first then use file_path.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"file_path":{"type":"string","description":"ABSOLUTE path to a local file (e.g. '/tmp/screenshot.png'). Preferred method. MIME type is auto-detected from extension."},"message":{"type":"string","description":"Optional text message to accompany the file."},"target":{"type":"string","description":"DO NOT SET unless sending to a different channel. Defaults to current conversation channel."},"media_base64":{"type":"string","description":"Base64-encoded media data. Only use when data is already in base64 form; otherwise save to file and use file_path."},"mime_type":{"type":"string","description":"MIME type. Auto-detected from file extension when using file_path, only needed for media_base64."}}}`),
+				"If the user refers to the latest image already attached in this chat, you may omit both file_path and media_base64 and the tool will reuse that attachment automatically.\n" +
+				"Only use 'media_base64' if data is already in base64 form. For screenshots, save to a file first then use file_path.\n" +
+				"Security model: L0-L2 require explicit data_export approval. In L2 sandbox mode, if the path is outside the current accessible scope, a separate mount/path approval may occur first. Permanent full/L3 host access bypasses these approvals.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"file_path":{"type":"string","description":"ABSOLUTE path to a local file (e.g. '/tmp/screenshot.png'). Preferred method. MIME type is auto-detected from extension."},"file_name":{"type":"string","description":"Optional original filename. Recommended when using media_base64 so the receiving channel preserves the attachment name."},"message":{"type":"string","description":"Optional text message to accompany the file."},"target":{"type":"string","description":"DO NOT SET unless sending to a different channel. Defaults to current conversation channel."},"media_base64":{"type":"string","description":"Base64-encoded media data. Only use when data is already in base64 form; otherwise save to file and use file_path."},"mime_type":{"type":"string","description":"MIME type. Auto-detected from file extension when using file_path, only needed for media_base64."}}}`),
 		})
 	}
 
 	// Phase 7: send_email 工具
 	if r.EmailSender != nil {
 		tools = append(tools, SendEmailToolDef())
+	}
+
+	if r.GatewayOpts.Enabled() {
+		schema, err := json.Marshal(gatewayclient.GatewayToolParameters())
+		if err != nil {
+			schema = json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}},"required":["action"]}`)
+		}
+		tools = append(tools, llmclient.ToolDef{
+			Name:        "gateway",
+			Description: gatewayclient.GatewayToolDescription(),
+			InputSchema: schema,
+		})
+		for _, spec := range configtools.ToolSpecs() {
+			specializedSchema, err := json.Marshal(configtools.ToolParameters(spec))
+			if err != nil {
+				specializedSchema = json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}},"required":["action"]}`)
+			}
+			tools = append(tools, llmclient.ToolDef{
+				Name:        spec.ToolName,
+				Description: configtools.ToolDescription(spec),
+				InputSchema: specializedSchema,
+			})
+		}
 	}
 
 	// 追加 Argus 视觉工具（前缀 argus_ 以区分）
@@ -1382,6 +1470,17 @@ Also supports: navigate, screenshot, evaluate JS, wait_for, go_back/forward, get
 		}
 	}
 
+	// 追加本地 MCP 工具（前缀 mcp_）
+	if r.LocalMCPBridge != nil {
+		for _, t := range r.LocalMCPBridge.AgentLocalMcpTools() {
+			tools = append(tools, llmclient.ToolDef{
+				Name:        t.Name,
+				Description: "[本地 MCP] " + t.Description,
+				InputSchema: t.InputSchema,
+			})
+		}
+	}
+
 	// Bug#11: memory_search / memory_get 记忆工具注入（仅在 UHMS Bridge 可用时）
 	if r.UHMSBridge != nil {
 		tools = append(tools,
@@ -1409,8 +1508,11 @@ Also supports: navigate, screenshot, evaluate JS, wait_for, go_back/forward, get
 	}
 
 	// 注入工具绑定的技能描述
-	if len(r.toolBindings) > 0 {
+	if len(r.toolBindings) > 0 || len(r.toolBindingNames) > 0 {
 		for i := range tools {
+			if names := r.toolBindingNames[tools[i].Name]; len(names) > 0 {
+				tools[i].Description += " [Bound skills: " + strings.Join(names, ", ") + "]"
+			}
 			if guidance, ok := r.toolBindings[tools[i].Name]; ok {
 				tools[i].Description += " [Skill: " + guidance + "]"
 			}
@@ -1443,6 +1545,7 @@ func (r *EmbeddedAttemptRunner) buildToolExecParams(params AttemptParams, secLvl
 	tep := ToolExecParams{
 		WorkspaceDir:                  params.WorkspaceDir,
 		SessionID:                     params.SessionID,
+		SessionFile:                   params.SessionFile,
 		RunID:                         params.RunID,
 		SessionKey:                    params.SessionKey,
 		TimeoutMs:                     params.TimeoutMs,
@@ -1457,6 +1560,7 @@ func (r *EmbeddedAttemptRunner) buildToolExecParams(params AttemptParams, secLvl
 		ArgusBridge:                   r.ArgusBridge,
 		CoderConfirmation:             r.CoderConfirmation,
 		RemoteMCPBridge:               r.RemoteMCPBridge,
+		LocalMCPBridge:                r.LocalMCPBridge,
 		NativeSandbox:                 r.NativeSandbox,
 		SkillsCache:                   r.skillsCache,
 		UHMSBridge:                    r.UHMSBridge,
@@ -1465,6 +1569,7 @@ func (r *EmbeddedAttemptRunner) buildToolExecParams(params AttemptParams, secLvl
 		ArgusApprovalMode:             r.ArgusApprovalMode,
 		BrowserEvaluateEnabled:        r.BrowserEvaluateEnabled,
 		BrowserController:             r.BrowserController,
+		GatewayOpts:                   r.GatewayOpts,
 		ContractStore:                 r.ContractStore,
 		MediaSender:                   r.MediaSender,
 		EmailSender:                   r.EmailSender,
@@ -1474,11 +1579,12 @@ func (r *EmbeddedAttemptRunner) buildToolExecParams(params AttemptParams, secLvl
 		OnProgress:                    params.OnProgress,
 		AgentChannel:                  params.AgentChannel, // Phase 4: 从 AttemptParams 获取（每次调用独立）
 		MediaSubsystem:                r.MediaSubsystem,    // 媒体工具 dispatch
+		CurrentAttachments:            params.Attachments,
 	}
 
 	// Phase 3.4: 临时挂载请求注入（从 escalation grant）
 	if params.MountRequestsFunc != nil {
-		tep.MountRequests = params.MountRequestsFunc()
+		tep.MountRequests = params.MountRequestsFunc(params.RunID)
 	}
 
 	// Phase 3: 合约约束注入 — 只收窄不扩展
@@ -1565,7 +1671,7 @@ func toolFailureGuidance(toolName string, failCount int) string {
 			"3. If the error is about authentication, the user needs to check their email credentials.\n"+
 			"If you cannot send the email, respond with text to inform the user of the issue.", failCount)
 	case "browser":
-		guideURL := "http://127.0.0.1:26222/browser-extension/"
+		guideURL := "/browser-extension/"
 		return fmt.Sprintf("⚠️ TOOL FAILURE LOOP DETECTED (%d failures). STOP retrying browser with the same approach.\n"+
 			"REMEDIATION:\n"+
 			"1. If the error says 'not available': the browser extension is not installed. Guide the user to: %s\n"+
@@ -1667,8 +1773,27 @@ func extractToolArgsSummary(toolName string, args map[string]interface{}) string
 	case "browser":
 		if action, ok := args["action"].(string); ok {
 			summary = action
-			if url, ok := args["url"].(string); ok && url != "" {
-				summary += " " + url
+			switch action {
+			case "navigate", "create_tab":
+				if url, ok := args["url"].(string); ok && url != "" {
+					summary += " " + url
+				}
+			case "click", "type", "wait_for":
+				if selector, ok := args["selector"].(string); ok && selector != "" {
+					summary += " " + selector
+				}
+			case "click_ref", "fill_ref":
+				if ref, ok := args["ref"].(string); ok && ref != "" {
+					summary += " " + ref
+				}
+			case "ai_browse":
+				if goal, ok := args["goal"].(string); ok && goal != "" {
+					summary += " " + goal
+				}
+			case "close_tab", "switch_tab":
+				if targetID, ok := args["target_id"].(string); ok && targetID != "" {
+					summary += " " + targetID
+				}
 			}
 		}
 	default:
@@ -1687,6 +1812,110 @@ func extractToolCalls(msg llmclient.ChatMessage) []llmclient.ContentBlock {
 	return calls
 }
 
+func normalizeAssistantMessageForToolCalls(
+	msg llmclient.ChatMessage,
+	allowedToolNames map[string]bool,
+	log *slog.Logger,
+) llmclient.ChatMessage {
+	if len(extractToolCalls(msg)) > 0 {
+		return msg
+	}
+	if len(msg.Content) != 1 || msg.Content[0].Type != "text" {
+		return msg
+	}
+	toolUse, ok := parseDowngradedToolDirective(msg.Content[0].Text, allowedToolNames)
+	if !ok {
+		return msg
+	}
+	if log != nil {
+		log.Warn("llm emitted downgraded tool directive text; normalized to tool_use",
+			"tool", toolUse.Name,
+		)
+	}
+	msg.Content = []llmclient.ContentBlock{toolUse}
+	return msg
+}
+
+func parseDowngradedToolDirective(
+	text string,
+	allowedToolNames map[string]bool,
+) (llmclient.ContentBlock, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, "[[") {
+		return llmclient.ContentBlock{}, false
+	}
+	closeIdx := strings.Index(trimmed, "]]")
+	if closeIdx <= 2 {
+		return llmclient.ContentBlock{}, false
+	}
+	name := strings.TrimSpace(trimmed[2:closeIdx])
+	if !isSimpleToolDirectiveName(name) {
+		return llmclient.ContentBlock{}, false
+	}
+	if len(allowedToolNames) > 0 && !allowedToolNames[name] {
+		return llmclient.ContentBlock{}, false
+	}
+
+	remainder := strings.TrimSpace(trimmed[closeIdx+2:])
+	inputJSON := json.RawMessage(`{}`)
+	if remainder != "" {
+		if strings.HasPrefix(remainder, "{") {
+			var parsed map[string]interface{}
+			if err := json.Unmarshal([]byte(remainder), &parsed); err != nil {
+				return llmclient.ContentBlock{}, false
+			}
+			data, err := json.Marshal(parsed)
+			if err != nil {
+				return llmclient.ContentBlock{}, false
+			}
+			inputJSON = data
+		} else {
+			parsed := make(map[string]string)
+			for _, line := range strings.Split(remainder, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) != 2 {
+					return llmclient.ContentBlock{}, false
+				}
+				key := strings.TrimSpace(parts[0])
+				if key == "" {
+					return llmclient.ContentBlock{}, false
+				}
+				value := strings.TrimSpace(parts[1])
+				value = strings.Trim(value, `"'`)
+				parsed[key] = value
+			}
+			data, err := json.Marshal(parsed)
+			if err != nil {
+				return llmclient.ContentBlock{}, false
+			}
+			inputJSON = data
+		}
+	}
+
+	return llmclient.ContentBlock{
+		Type:  "tool_use",
+		ID:    "downgraded_" + uuid.NewString(),
+		Name:  name,
+		Input: inputJSON,
+	}, true
+}
+
+func isSimpleToolDirectiveName(name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
+}
+
 func usageToNormalized(usage llmclient.UsageInfo) *NormalizedUsage {
 	n := &NormalizedUsage{}
 	if usage.InputTokens > 0 {
@@ -1697,7 +1926,26 @@ func usageToNormalized(usage llmclient.UsageInfo) *NormalizedUsage {
 		output := usage.OutputTokens
 		n.Output = &output
 	}
+	if usage.CacheReadTokens > 0 {
+		cacheRead := usage.CacheReadTokens
+		n.CacheRead = &cacheRead
+	}
+	if usage.CacheWriteTokens > 0 {
+		cacheWrite := usage.CacheWriteTokens
+		n.CacheWrite = &cacheWrite
+	}
+	if total := usageTotalTokens(usage); total > 0 {
+		totalCopy := total
+		n.Total = &totalCopy
+	}
 	return n
+}
+
+func usageTotalTokens(usage llmclient.UsageInfo) int {
+	if usage.TotalTokens > 0 {
+		return usage.TotalTokens
+	}
+	return usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
 }
 
 func getMaxTokens(params AttemptParams) int {
@@ -1794,10 +2042,11 @@ func resolveEffectiveSecurityLevel(params AttemptParams, cfg *types.OpenAcosmiCo
 // 返回规范化的安全级别字符串: "deny", "allowlist", "sandboxed", "full"。
 // 兼容 "sandbox" 作为 "allowlist" 的别名，"off" 作为 "deny" 的别名。
 func resolveSecurityLevel(cfg *types.OpenAcosmiConfig) string {
-	if cfg == nil || cfg.Tools == nil || cfg.Tools.Exec == nil {
-		return "deny"
+	configSecurity := ""
+	if cfg != nil && cfg.Tools != nil && cfg.Tools.Exec != nil {
+		configSecurity = cfg.Tools.Exec.Security
 	}
-	return normalizeSecurityLevelValue(cfg.Tools.Exec.Security)
+	return string(infra.ResolveBaseExecSecurity(configSecurity))
 }
 
 // (Phase 2A: resolveCoderTimeoutSeconds 已删除 — Coder MCP 模式不再使用)
@@ -1900,7 +2149,78 @@ func transcriptEntryToChatMessage(raw map[string]interface{}) *llmclient.ChatMes
 // 设计要点: 用户消息直接从 params.Prompt 提取，而非反向扫描 messages 数组。
 // 原因: 工具循环中，tool_result 也以 role:"user" 加入 messages，
 // 反向扫描会在 tool_result 处误停，导致原始用户提问永远不被持久化。
-func (r *EmbeddedAttemptRunner) persistToTranscript(params AttemptParams, messages []llmclient.ChatMessage, log *slog.Logger) {
+func mergeAssistantTranscriptBlocks(
+	msg llmclient.ChatMessage,
+	mediaBlocks []MediaBlock,
+) []session.ContentBlock {
+	blocks := make([]session.ContentBlock, 0, len(msg.Content)+len(mediaBlocks))
+	seenImages := make(map[string]struct{}, len(msg.Content)+len(mediaBlocks))
+
+	for _, block := range msg.Content {
+		switch block.Type {
+		case "text":
+			if block.Text != "" {
+				blocks = append(blocks, session.ContentBlock{
+					Type: "text",
+					Text: block.Text,
+				})
+			}
+		case "image":
+			if block.Source == nil || block.Source.Data == "" {
+				continue
+			}
+			mimeType := strings.TrimSpace(block.Source.MediaType)
+			if mimeType == "" {
+				mimeType = "image/png"
+			}
+			blocks = append(blocks, session.ContentBlock{
+				Type:     "image",
+				MimeType: mimeType,
+				Source: &session.MediaSource{
+					Type:      block.Source.Type,
+					MediaType: mimeType,
+					Data:      block.Source.Data,
+				},
+			})
+			seenImages[mimeType+":"+block.Source.Data] = struct{}{}
+		}
+	}
+
+	for _, media := range mediaBlocks {
+		if strings.TrimSpace(media.Base64) == "" {
+			continue
+		}
+		mimeType := strings.TrimSpace(media.MimeType)
+		if mimeType == "" {
+			mimeType = "image/png"
+		}
+		key := mimeType + ":" + media.Base64
+		if _, exists := seenImages[key]; exists {
+			continue
+		}
+		blocks = append(blocks, session.ContentBlock{
+			Type:     "image",
+			MimeType: mimeType,
+			Source: &session.MediaSource{
+				Type:      "base64",
+				MediaType: mimeType,
+				Data:      media.Base64,
+			},
+		})
+		seenImages[key] = struct{}{}
+	}
+
+	return blocks
+}
+
+func (r *EmbeddedAttemptRunner) persistToTranscript(
+	params AttemptParams,
+	messages []llmclient.ChatMessage,
+	mediaBlocks []MediaBlock,
+	totalUsage llmclient.UsageInfo,
+	toolCallCounts map[string]int,
+	log *slog.Logger,
+) {
 	if params.SessionFile == "" && params.SessionID == "" {
 		return
 	}
@@ -1914,6 +2234,13 @@ func (r *EmbeddedAttemptRunner) persistToTranscript(params AttemptParams, messag
 	}
 
 	savedCount := 0
+	transcriptToolCalls := make(map[string]int, len(toolCallCounts))
+	for name, count := range toolCallCounts {
+		if strings.TrimSpace(name) == "" || count <= 0 {
+			continue
+		}
+		transcriptToolCalls[name] = count
+	}
 
 	// 1. 保存用户消息: 直接使用 params.Prompt，确保原始用户提问不被 tool_result 遮蔽。
 	// 去重: model fallback 场景下，前一次 RunAttempt 的 defer 可能已写入同一 user 消息。
@@ -1950,49 +2277,64 @@ func (r *EmbeddedAttemptRunner) persistToTranscript(params AttemptParams, messag
 		}
 	}
 
-	// 2. 保存最后一个有效内容的 assistant 消息（跳过纯 tool_call assistant 消息）
+	// 2. 保存最后一个有效内容的 assistant 消息；如果本轮只有媒体结果，也创建媒体-only assistant 消息。
+	savedAssistant := false
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
 		if msg.Role != "assistant" {
 			continue
 		}
-		var blocks []session.ContentBlock
-		for _, block := range msg.Content {
-			switch block.Type {
-			case "text":
-				if block.Text != "" {
-					blocks = append(blocks, session.ContentBlock{
-						Type: "text",
-						Text: block.Text,
-					})
-				}
-			case "image":
-				if block.Source != nil && block.Source.Data != "" {
-					blocks = append(blocks, session.ContentBlock{
-						Type: "image",
-						Source: &session.MediaSource{
-							Type:      block.Source.Type,
-							MediaType: block.Source.MediaType,
-							Data:      block.Source.Data,
-						},
-					})
-				}
-			}
-		}
+		blocks := mergeAssistantTranscriptBlocks(msg, mediaBlocks)
 		if len(blocks) == 0 {
 			continue // 跳过纯 tool_call 的 assistant 消息（无文本/图片）
 		}
 		asstEntry := session.TranscriptEntry{
-			Role:      "assistant",
-			Content:   blocks,
+			Role:     "assistant",
+			Content:  blocks,
+			Provider: params.Provider,
+			Model:    params.ModelID,
+			Usage: map[string]interface{}{
+				"input_tokens":                totalUsage.InputTokens,
+				"output_tokens":               totalUsage.OutputTokens,
+				"cache_read_input_tokens":     totalUsage.CacheReadTokens,
+				"cache_creation_input_tokens": totalUsage.CacheWriteTokens,
+				"total_tokens":                usageTotalTokens(totalUsage),
+			},
+			ToolCalls: transcriptToolCalls,
 			Timestamp: time.Now().UnixMilli(),
 		}
 		if err := mgr.AppendMessage(params.SessionID, params.SessionFile, asstEntry); err != nil {
 			log.Warn("transcript append assistant failed (non-fatal)", "error", err)
 		} else {
 			savedCount++
+			savedAssistant = true
 		}
 		break // 只保存最后一个有效 assistant 消息
+	}
+	if !savedAssistant && len(mediaBlocks) > 0 {
+		blocks := mergeAssistantTranscriptBlocks(llmclient.ChatMessage{Role: "assistant"}, mediaBlocks)
+		if len(blocks) > 0 {
+			asstEntry := session.TranscriptEntry{
+				Role:     "assistant",
+				Content:  blocks,
+				Provider: params.Provider,
+				Model:    params.ModelID,
+				Usage: map[string]interface{}{
+					"input_tokens":                totalUsage.InputTokens,
+					"output_tokens":               totalUsage.OutputTokens,
+					"cache_read_input_tokens":     totalUsage.CacheReadTokens,
+					"cache_creation_input_tokens": totalUsage.CacheWriteTokens,
+					"total_tokens":                usageTotalTokens(totalUsage),
+				},
+				ToolCalls: transcriptToolCalls,
+				Timestamp: time.Now().UnixMilli(),
+			}
+			if err := mgr.AppendMessage(params.SessionID, params.SessionFile, asstEntry); err != nil {
+				log.Warn("transcript append assistant media-only failed (non-fatal)", "error", err)
+			} else {
+				savedCount++
+			}
+		}
 	}
 
 	log.Debug("transcript persisted", "savedCount", savedCount)

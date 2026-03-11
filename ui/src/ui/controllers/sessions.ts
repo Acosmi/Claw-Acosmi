@@ -16,19 +16,27 @@ export type SessionsState = {
   sessionsIncludeUnknown: boolean;
 };
 
+type SessionLoadOverrides = {
+  activeMinutes?: number;
+  limit?: number;
+  includeGlobal?: boolean;
+  includeUnknown?: boolean;
+};
+
+type QueuedSessionsReloadState = SessionsState & {
+  _queuedSessionsReload?: SessionLoadOverrides | null;
+};
+
 export async function loadSessions(
   state: SessionsState,
-  overrides?: {
-    activeMinutes?: number;
-    limit?: number;
-    includeGlobal?: boolean;
-    includeUnknown?: boolean;
-  },
+  overrides?: SessionLoadOverrides,
 ) {
   if (!state.client || !state.connected) {
     return;
   }
+  const queuedState = state as QueuedSessionsReloadState;
   if (state.sessionsLoading) {
+    queuedState._queuedSessionsReload = overrides ?? {};
     return;
   }
   state.sessionsLoading = true;
@@ -50,12 +58,24 @@ export async function loadSessions(
     }
     const res = await state.client.request<SessionsListResult | undefined>("sessions.list", params);
     if (res) {
+      // P1 域隔离: 过滤遗留 task: 前缀条目（后端已过滤，此处为防御层）
+      if (res.sessions) {
+        res.sessions = res.sessions.filter(
+          (s) => !s.key?.startsWith("task:"),
+        );
+        res.count = res.sessions.length;
+      }
       state.sessionsResult = res;
     }
   } catch (err) {
     state.sessionsError = String(err);
   } finally {
     state.sessionsLoading = false;
+    const queuedReload = queuedState._queuedSessionsReload;
+    queuedState._queuedSessionsReload = null;
+    if (queuedReload) {
+      void loadSessions(state, queuedReload);
+    }
   }
 }
 

@@ -4,7 +4,10 @@ package infra
 // 对应 TS: exec-approvals.ts normalizeExecApprovals, addAllowlistEntry,
 //   recordAllowlistUse, requiresExecApproval
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // NormalizeExecApprovals 填充默认值、确保 agents map 存在。
 func NormalizeExecApprovals(file *ExecApprovalsFile) {
@@ -20,6 +23,37 @@ func NormalizeExecApprovals(file *ExecApprovalsFile) {
 	if file.Defaults == nil {
 		file.Defaults = &ExecApprovalsDefaults{}
 	}
+}
+
+// NormalizeExecSecurityValue 规范化安全级别别名和值。
+func NormalizeExecSecurityValue(value ExecSecurity) ExecSecurity {
+	switch strings.ToLower(strings.TrimSpace(string(value))) {
+	case "deny", "off":
+		return ExecSecurityDeny
+	case "allowlist":
+		return ExecSecurityAllowlist
+	case "sandbox", "sandboxed":
+		return ExecSecuritySandboxed
+	case "full":
+		return ExecSecurityFull
+	default:
+		return ""
+	}
+}
+
+// ResolveBaseExecSecurity 优先从 exec-approvals 读取持久化基础安全级别，
+// 文件未设置时回落到调用方提供的配置值。
+func ResolveBaseExecSecurity(configFallback string) ExecSecurity {
+	snapshot := ReadExecApprovalsSnapshot()
+	if snapshot != nil && snapshot.File != nil && snapshot.File.Defaults != nil {
+		if level := NormalizeExecSecurityValue(snapshot.File.Defaults.Security); level != "" {
+			return level
+		}
+	}
+	if level := NormalizeExecSecurityValue(ExecSecurity(configFallback)); level != "" {
+		return level
+	}
+	return ExecSecurityDeny
 }
 
 // AddAllowlistEntry 为指定 agent 添加白名单条目。
@@ -73,7 +107,10 @@ func RequiresExecApproval(ask ExecAsk, security ExecSecurity, analysisOk, allowl
 	if security == ExecSecurityDeny {
 		return true
 	}
-	// security == allowlist
+	if security == ExecSecuritySandboxed {
+		return false // L2: 沙箱内全权限，不需要逐次审批
+	}
+	// security == allowlist (L1)
 	if allowlistSatisfied {
 		return false
 	}

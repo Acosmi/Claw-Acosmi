@@ -17,6 +17,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Acosmi/ClawAcosmi/internal/statepaths"
 )
 
 const (
@@ -51,6 +53,11 @@ func FindAppBundleBinary() string {
 func buildAppBundleCandidates() []string {
 	var candidates []string
 
+	// 0. 当前主 App bundle 内置的 Argus 资源
+	if execPath, err := os.Executable(); err == nil {
+		candidates = append(candidates, buildEmbeddedAppCandidates(execPath)...)
+	}
+
 	// 1. 项目构建产物目录（make app 产出）
 	// 相对于 backend 的 Argus 构建目录
 	if wd, err := os.Getwd(); err == nil {
@@ -72,13 +79,49 @@ func buildAppBundleCandidates() []string {
 
 	// 3. 用户级安装路径
 	if home, err := os.UserHomeDir(); err == nil {
+		stateDir := statepaths.ResolveStateDir()
 		candidates = append(candidates,
 			filepath.Join(home, "Applications", "Argus.app", "Contents", "MacOS", appBundleExecutable),
-			filepath.Join(home, ".openacosmi", "Argus.app", "Contents", "MacOS", appBundleExecutable),
+			filepath.Join(stateDir, "Argus.app", "Contents", "MacOS", appBundleExecutable),
 		)
 	}
 
 	return candidates
+}
+
+func buildEmbeddedAppCandidates(execPath string) []string {
+	appBundle := enclosingAppBundle(execPath)
+	if appBundle == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(appBundle, "Contents", "Helpers", "Argus.app", "Contents", "MacOS", appBundleExecutable),
+		filepath.Join(appBundle, "Contents", "Resources", "Argus.app", "Contents", "MacOS", appBundleExecutable),
+		filepath.Join(appBundle, "Contents", "Resources", "Argus", appBundleExecutable),
+		filepath.Join(appBundle, "Contents", "Helpers", appBundleExecutable),
+	}
+}
+
+func enclosingAppBundle(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+
+	current := absPath
+	for {
+		if strings.HasSuffix(filepath.Base(current), ".app") {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+		current = parent
+	}
 }
 
 // ensureCodeSigned 检查裸二进制的签名状态，必要时用 "Argus Dev" 证书签名。
@@ -135,21 +178,33 @@ func EnsureCodeSigned(binaryPath string) error {
 
 // isInsideAppBundle 判断路径是否在 .app bundle 内。
 func isInsideAppBundle(path string) bool {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	// 向上查找 .app/Contents/MacOS 结构
-	dir := filepath.Dir(absPath)
-	return filepath.Base(dir) == "MacOS" &&
-		filepath.Base(filepath.Dir(dir)) == "Contents" &&
-		strings.HasSuffix(filepath.Dir(filepath.Dir(dir)), ".app")
+	return enclosingAppBundle(path) != ""
 }
 
 // IsValidlySigned 检查二进制是否有有效签名。
 func IsValidlySigned(path string) bool {
 	cmd := exec.Command("codesign", "--verify", "--verbose=0", path)
 	return cmd.Run() == nil
+}
+
+// CodeSignIdentifier 返回 codesign 标识符；读取失败时返回空字符串。
+func CodeSignIdentifier(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	cmd := exec.Command("codesign", "-dvv", path)
+	output, err := cmd.CombinedOutput()
+	if err != nil && len(output) == 0 {
+		return ""
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Identifier=") {
+			continue
+		}
+		return strings.TrimSpace(strings.TrimPrefix(line, "Identifier="))
+	}
+	return ""
 }
 
 // hasSigningIdentity 检查 Keychain 中是否存在指定签名身份。

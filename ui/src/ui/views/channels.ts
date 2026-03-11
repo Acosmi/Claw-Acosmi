@@ -18,7 +18,6 @@ import type { ChannelKey, ChannelsChannelData, ChannelsProps } from "./channels.
 import { formatRelativeTimestamp } from "../format.ts";
 import { renderDingTalkCard } from "./channels.dingtalk.ts";
 import { renderDiscordCard } from "./channels.discord.ts";
-import { renderEmailCard } from "./channels.email.ts";
 import { renderFeishuCard } from "./channels.feishu.ts";
 import { renderGoogleChatCard } from "./channels.googlechat.ts";
 import { renderIMessageCard } from "./channels.imessage.ts";
@@ -35,6 +34,8 @@ import {
   CHANNEL_CONFIG_MODAL_INITIAL,
 } from "./channel-config-modal.ts";
 import { channelIcon } from "./channels.icons.ts";
+
+const HIDDEN_CHANNELS = new Set<ChannelKey>(["email"]);
 
 // ─── Config Modal State (module-level) ───
 
@@ -66,7 +67,7 @@ export function renderChannels(props: ChannelsProps) {
   const signal = (channels?.signal ?? null) as SignalStatus | null;
   const imessage = (channels?.imessage ?? null) as IMessageStatus | null;
   const nostr = (channels?.nostr ?? null) as NostrStatus | null;
-  const channelOrder = resolveChannelOrder(props.snapshot);
+  const channelOrder = resolveChannelOrder(props.snapshot).filter((key) => !HIDDEN_CHANNELS.has(key));
   const orderedChannels = channelOrder
     .map((key, index) => ({
       key,
@@ -99,27 +100,34 @@ export function renderChannels(props: ChannelsProps) {
   return html`
     <section class="channels-grid">
       ${orderedChannels.map((channel) =>
-    renderChannelCard(channel.key, props, data, requestUpdate, () => props.onConfigReload()),
-  )}
+        renderChannelCard(channel.key, props, data, requestUpdate, () => props.onConfigReload()),
+      )}
     </section>
 
     ${renderChannelConfigModal(_configModalState, props, closeConfigModal)}
 
-    <details class="channel-card" style="height: auto; min-height: unset; cursor: pointer;">
-      <summary style="display: flex; justify-content: space-between; align-items: center;">
-        <div>
-          <div class="channel-card__name">${t("channels.healthTitle")}</div>
-          <div class="channel-card__desc">${t("channels.healthSub")}</div>
+    <details class="card channel-card channel-card--health">
+      <summary class="channel-card__summary">
+        <div class="channel-card__summary-content">
+          <div>
+            <div class="channel-card__keyline">
+              <code class="channel-card__key">health</code>
+            </div>
+            <div class="channel-card__name">${t("channels.healthTitle")}</div>
+            <div class="channel-card__desc">${t("channels.healthSub")}</div>
+          </div>
+          <div class="channel-card__summary-time">
+            ${props.lastSuccessAt ? formatRelativeTimestamp(props.lastSuccessAt) : "n/a"}
+          </div>
         </div>
-        <div class="muted" style="font-size: 12px;">${props.lastSuccessAt ? formatRelativeTimestamp(props.lastSuccessAt) : "n/a"}</div>
       </summary>
       ${props.lastError
-      ? html`<div class="callout danger" style="margin-top: 12px;">
+      ? html`<div class="callout danger channel-card__debug-callout">
             ${props.lastError}
           </div>`
       : nothing
     }
-      <pre class="code-block" style="margin-top: 12px; max-height: 300px; overflow: auto; font-size: 11px;">
+      <pre class="code-block channel-card__debug">
 ${props.snapshot ? JSON.stringify(props.snapshot, null, 2) : t("channels.noSnapshot")}
       </pre>
     </details>
@@ -144,25 +152,28 @@ function renderChannelCard(
 
   return html`
     <div
-      class="channel-card ${stateClass}"
-      style="cursor: pointer;"
+      class="card channel-card ${stateClass}"
       @click=${(e: Event) => {
-      // Don't trigger if clicking a button or link inside
-      const target = e.target as HTMLElement;
-      if (target.closest("button") || target.closest("a")) return;
-      openConfigModal(key, requestUpdate, onReload);
-    }}
+        // Don't trigger if clicking a button or link inside.
+        const target = e.target as HTMLElement;
+        if (target.closest("button") || target.closest("a")) return;
+        openConfigModal(key, requestUpdate, onReload);
+      }}
     >
-      <div class="channel-card__header">
-        <div class="channel-card__icon">${icon}</div>
-        <div class="channel-card__info">
-          <div class="channel-card__name">${label}</div>
-          <div class="channel-card__desc">${desc}</div>
+      <div class="channel-card__top">
+        <div class="channel-card__keyline">
+          <span class="channel-card__icon">${icon}</span>
+          <code class="channel-card__key">${key}</code>
         </div>
-        <div class="channel-card__badge ${isEnabled ? "channel-card__badge--ok" : "channel-card__badge--pending"}">
+        <div
+          class="chip channel-card__badge ${isEnabled ? "chip-ok" : "channel-card__badge--pending"}"
+        >
           ${isEnabled ? t("channels.badge.configured") : t("channels.badge.notConfigured")}
         </div>
       </div>
+
+      <div class="channel-card__name">${label}</div>
+      <div class="channel-card__desc">${desc}</div>
 
       <div class="channel-card__body">
         ${renderChannelBody(key, props, data)}
@@ -262,17 +273,6 @@ function renderChannelBody(key: ChannelKey, props: ChannelsProps, data: Channels
       const feishuStatus = props.snapshot?.channels?.["feishu"] as Record<string, unknown> | null;
       return renderFeishuCard({ props, feishu: feishuStatus, accountCountLabel });
     }
-    case "email": {
-      const emailAccounts = data.channelAccounts?.email ?? [];
-      return renderEmailCard({
-        props,
-        emailAccounts,
-        accountCountLabel,
-        onTestConnection: props.onEmailTest,
-        emailTestLoading: props.emailTestLoading,
-        emailTestResult: props.emailTestResult,
-      });
-    }
     default:
       return renderGenericChannelBody(key, props, data.channelAccounts ?? {});
   }
@@ -340,7 +340,7 @@ function renderGenericChannelBody(
             </div>
           `
       : html`
-            <div class="status-list" style="margin-top: 8px;">
+            <div class="status-list">
               <div>
                 <span class="label">${t("channels.configured")}</span>
                 <span>${configured == null ? "n/a" : configured ? t("channels.yes") : t("channels.no")}</span>
@@ -358,7 +358,7 @@ function renderGenericChannelBody(
     }
 
     ${lastError
-      ? html`<div class="callout danger" style="margin-top: 12px;">
+      ? html`<div class="callout danger">
             ${lastError}
           </div>`
       : nothing
@@ -375,7 +375,7 @@ function resolveChannelOrder(snapshot: ChannelsStatusSnapshot | null): ChannelKe
   if (snapshot?.channelOrder?.length) {
     return snapshot.channelOrder;
   }
-  return ["email", "wecom", "dingtalk", "feishu", "whatsapp", "telegram", "discord", "googlechat", "slack", "signal", "imessage", "nostr"];
+  return ["wecom", "dingtalk", "feishu", "whatsapp", "telegram", "discord", "googlechat", "slack", "signal", "imessage", "nostr"];
 }
 
 function resolveChannelMetaMap(
@@ -429,37 +429,37 @@ function renderGenericAccount(account: ChannelAccountSnapshot) {
   const connectedStatus = deriveConnectedStatus(account);
 
   return html`
-    < div class="account-card" >
-      <div class="account-card-header" >
-        <div class="account-card-title" > ${account.name || account.accountId} </div>
-          < div class="account-card-id" > ${account.accountId} </div>
-            </div>
-            < div class="status-list account-card-status" >
-              <div>
-              <span class="label" > ${t("channels.running")} </span>
-                < span > ${runningStatus} </span>
-                  </div>
-                  < div >
-                  <span class="label" > ${t("channels.configured")} </span>
-                    < span > ${account.configured ? t("channels.yes") : t("channels.no")} </span>
-                      </div>
-                      < div >
-                      <span class="label" > ${t("channels.connected")} </span>
-                        < span > ${connectedStatus} </span>
-                          </div>
-                          < div >
-                          <span class="label" > ${t("channels.lastInbound")} </span>
-                            < span > ${account.lastInboundAt ? formatRelativeTimestamp(account.lastInboundAt) : "n/a"} </span>
-                              </div>
+    <div class="account-card">
+      <div class="account-card-header">
+        <div class="account-card-title">${account.name || account.accountId}</div>
+        <div class="account-card-id">${account.accountId}</div>
+      </div>
+      <div class="status-list account-card-status">
+        <div>
+          <span class="label">${t("channels.running")}</span>
+          <span>${runningStatus}</span>
+        </div>
+        <div>
+          <span class="label">${t("channels.configured")}</span>
+          <span>${account.configured ? t("channels.yes") : t("channels.no")}</span>
+        </div>
+        <div>
+          <span class="label">${t("channels.connected")}</span>
+          <span>${connectedStatus}</span>
+        </div>
+        <div>
+          <span class="label">${t("channels.lastInbound")}</span>
+          <span>${account.lastInboundAt ? formatRelativeTimestamp(account.lastInboundAt) : "n/a"}</span>
+        </div>
         ${account.lastError
       ? html`
-              <div class="account-card-error">
-                ${account.lastError}
-              </div>
+            <div class="account-card-error">
+              ${account.lastError}
+            </div>
             `
       : nothing
     }
-  </div>
+      </div>
     </div>
-      `;
+  `;
 }

@@ -197,8 +197,19 @@ func safeAclReset(targetPath, require string) SecurityFixIcaclsAction {
 		return result
 	}
 
+	// /reset 后授予当前用户完全控制权，避免 ACL 重置后用户自身丢失访问权
+	grantArgs := []string{targetPath, "/grant", username + ":(F)"}
+	if info.IsDir() {
+		grantArgs = append(grantArgs, "/T")
+	}
+	grantCmd := exec.Command("icacls", grantArgs...)
+	if grantOut, grantErr := grantCmd.CombinedOutput(); grantErr != nil {
+		result.Error = fmt.Sprintf("icacls grant: %s — %s", grantErr, strings.TrimSpace(string(grantOut)))
+		return result
+	}
+
 	result.OK = true
-	result.Command = display
+	result.Command = display + fmt.Sprintf(" && icacls %q /grant %s:(F)", targetPath, username)
 	return result
 }
 

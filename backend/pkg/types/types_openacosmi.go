@@ -102,18 +102,47 @@ type SubAgentConfig struct {
 	MediaAgent     *MediaAgentSettings     `json:"mediaAgent,omitempty"`
 }
 
+// MediaTrendingSourceProfiles 媒体热点源账号配置。
+type MediaTrendingSourceProfiles struct {
+	Bocha        *MediaTrendingBochaConfig        `json:"bocha,omitempty"`
+	CustomOpenAI *MediaTrendingCustomOpenAIConfig `json:"customOpenAI,omitempty"`
+}
+
+// MediaTrendingBochaConfig Bocha 官方 Web Search API 热点发现配置。
+// 官方文档:
+// - 概览: https://open.bochaai.com/overview
+// - API Key: https://open.bochaai.com/api-key
+// - Search API: https://open.bochaai.com/api-search/introduction
+type MediaTrendingBochaConfig struct {
+	APIKey    string `json:"apiKey,omitempty"`
+	BaseURL   string `json:"baseUrl,omitempty"`
+	Freshness string `json:"freshness,omitempty"` // "noLimit"|"oneDay"|"oneWeek"|"oneMonth"|"oneYear"
+}
+
+// MediaTrendingCustomOpenAIConfig 自定义 OpenAI 兼容热点源配置。
+// 适配任意实现了 POST /chat/completions 的 OpenAI-compatible provider。
+// 是否具备实时性，取决于上游是否支持联网/搜索；可通过 RequestExtras 透传 provider 特定开关。
+type MediaTrendingCustomOpenAIConfig struct {
+	APIKey        string `json:"apiKey,omitempty"`
+	BaseURL       string `json:"baseUrl,omitempty"`
+	Model         string `json:"model,omitempty"`
+	SystemPrompt  string `json:"systemPrompt,omitempty"`
+	RequestExtras string `json:"requestExtras,omitempty"` // JSON object string, merged into request body
+}
+
 // MediaAgentSettings 媒体子智能体配置。
 type MediaAgentSettings struct {
-	AutoSpawnEnabled    bool     `json:"autoSpawnEnabled,omitempty"`    // 自动 spawn 开关（默认 false）
-	MaxAutoSpawnsPerDay int      `json:"maxAutoSpawnsPerDay,omitempty"` // 每日最大自动 spawn 次数（默认 5）
-	Provider            string   `json:"provider,omitempty"`            // LLM provider: "deepseek"/"anthropic" 等
-	Model               string   `json:"model,omitempty"`               // LLM model: "deepseek-chat" 等
-	APIKey              string   `json:"apiKey,omitempty"`              // 独立 API key（自动脱敏）
-	BaseURL             string   `json:"baseUrl,omitempty"`             // OpenAI 兼容端点
-	EnabledSources      []string `json:"enabledSources,omitempty"`      // 启用的热点源（nil=全部启用，[]=全部禁用）
-	EnablePublish       *bool    `json:"enablePublish,omitempty"`       // 是否启用发布工具（nil=默认true）
-	EnableInteract      *bool    `json:"enableInteract,omitempty"`      // 是否启用互动工具（nil=默认false）
-	WizardCompleted     bool     `json:"wizardCompleted,omitempty"`     // 向导是否已完成
+	AutoSpawnEnabled    bool                         `json:"autoSpawnEnabled,omitempty"`    // 自动 spawn 开关（默认 false）
+	MaxAutoSpawnsPerDay int                          `json:"maxAutoSpawnsPerDay,omitempty"` // 每日最大自动 spawn 次数（默认 5）
+	Provider            string                       `json:"provider,omitempty"`            // LLM provider: "deepseek"/"anthropic" 等
+	Model               string                       `json:"model,omitempty"`               // LLM model: "deepseek-chat" 等
+	APIKey              string                       `json:"apiKey,omitempty"`              // 独立 API key（自动脱敏）
+	BaseURL             string                       `json:"baseUrl,omitempty"`             // OpenAI 兼容端点
+	EnabledSources      []string                     `json:"enabledSources,omitempty"`      // 启用的热点源（nil=全部启用，[]=全部禁用）
+	EnablePublish       *bool                        `json:"enablePublish,omitempty"`       // 是否启用发布工具（nil=默认true）
+	EnableInteract      *bool                        `json:"enableInteract,omitempty"`      // 是否启用互动工具（nil=默认false）
+	WizardCompleted     bool                         `json:"wizardCompleted,omitempty"`     // 向导是否已完成
+	TrendingProfiles    *MediaTrendingSourceProfiles `json:"trendingProfiles,omitempty"`    // API 型热点源账号配置
 
 	// 高级热点策略配置
 	HotKeywords        []string `json:"hotKeywords,omitempty"`        // 自定义热点关键词过滤

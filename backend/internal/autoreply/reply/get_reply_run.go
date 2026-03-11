@@ -137,6 +137,7 @@ func RunPreparedReply(ctx context.Context, params PreparedReplyParams) ([]autore
 			AgentAccountID:    msgCtx.AccountID,
 			Provider:          params.Provider,
 			Model:             params.Model,
+			SkillFilter:       cloneSkillFilter(params.Opts),
 			ThinkLevel:        params.ResolvedThinkLevel,
 			VerboseLevel:      params.ResolvedVerboseLevel,
 			ReasoningLevel:    params.ResolvedReasoningLevel,
@@ -189,6 +190,13 @@ func resolveRunID(opts *autoreply.GetReplyOptions) string {
 		return opts.RunID
 	}
 	return ""
+}
+
+func cloneSkillFilter(opts *autoreply.GetReplyOptions) []string {
+	if opts == nil || len(opts.SkillFilter) == 0 {
+		return nil
+	}
+	return append([]string(nil), opts.SkillFilter...)
 }
 
 func generateSessionID() string {

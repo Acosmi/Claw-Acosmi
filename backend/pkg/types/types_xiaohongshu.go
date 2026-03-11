@@ -4,6 +4,8 @@ package types
 
 // XiaohongshuConfig 小红书频道配置。
 type XiaohongshuConfig struct {
+	AccountName          string `json:"accountName,omitempty"`
+	AccountID            string `json:"accountId,omitempty"`
 	Enabled              bool   `json:"enabled,omitempty"`
 	CookiePath           string `json:"cookiePath,omitempty"`
 	AutoInteractInterval int    `json:"autoInteractInterval,omitempty"` // 分钟，0 = 禁用

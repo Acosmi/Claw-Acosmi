@@ -21,7 +21,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Acosmi/ClawAcosmi/internal/agents/browserdef"
 	"github.com/Acosmi/ClawAcosmi/internal/agents/capabilities"
+	"github.com/Acosmi/ClawAcosmi/internal/agents/configtools"
+	"github.com/Acosmi/ClawAcosmi/internal/agents/gatewayclient"
+	"github.com/Acosmi/ClawAcosmi/internal/agents/session"
 	"github.com/Acosmi/ClawAcosmi/internal/browser"
 	"github.com/Acosmi/ClawAcosmi/internal/infra"
 	"github.com/Acosmi/ClawAcosmi/internal/sandbox"
@@ -73,6 +77,7 @@ type MediaSubsystemForAgent interface {
 type ToolExecParams struct {
 	WorkspaceDir string
 	SessionID    string // 当前 session 标识（用于合约 issuedBy 等）
+	SessionFile  string // 当前 session transcript 路径（send_media 附件回退复用）
 	RunID        string // 当前运行标识（用于 agent event 广播）
 	TimeoutMs    int64
 	// 权限守卫
@@ -126,6 +131,8 @@ type ToolExecParams struct {
 	ContractStore ContractPersistence
 	// BrowserController 浏览器控制器（可选，nil = browser 工具不可用）
 	BrowserController browser.BrowserController
+	// GatewayOpts gateway 工具运行时配置（可选，未设置则 gateway 不可用）。
+	GatewayOpts gatewayclient.GatewayOptions
 	// MediaSender 媒体文件发送器（可选，nil = send_media 工具不可用）
 	MediaSender interface {
 		SendMedia(ctx context.Context, channelID, to string, data []byte, fileName, mimeType, message string) error
@@ -148,6 +155,8 @@ type ToolExecParams struct {
 	MediaSubsystem MediaSubsystemForAgent
 	// OnProgress 中间进度回调（可选，nil = 仅本地实时事件）。
 	OnProgress func(ctx context.Context, update ProgressUpdate) ProgressReportStatus
+	// CurrentAttachments 当前轮用户附件（用于 send_media 复用当前聊天媒体）。
+	CurrentAttachments []session.ContentBlock
 	// ApprovalWorkflow 当前 Attempt 的审批工作流快照。
 	ApprovalWorkflow ApprovalWorkflow
 }
@@ -171,6 +180,10 @@ func emitPermissionDenied(params ToolExecParams, tool, detail string) {
 // 当前支持: bash, read_file, write_file, list_dir, search, glob
 // 延迟: message, notebook_edit 等高级工具
 func ExecuteToolCall(ctx context.Context, name string, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
+	if spec, ok := configtools.ToolSpecByName(name); ok {
+		return executeSpecializedConfigTool(ctx, spec, inputJSON, params)
+	}
+
 	switch name {
 	case "bash":
 		if !params.AllowExec {
@@ -205,6 +218,15 @@ func ExecuteToolCall(ctx context.Context, name string, inputJSON json.RawMessage
 						)
 						return fmt.Sprintf("[Command blocked by security rule: %s] %s", ruleResult.Rule.Pattern, ruleResult.Reason), nil
 					case infra.RuleActionAsk:
+						if hasGlobalApprovalBypass(params.SecurityLevel, params.ScopePaths) {
+							slog.Info("command ask-rule auto-approved",
+								"command", bi.Command,
+								"rule", ruleResult.Rule.Pattern,
+								"ruleId", ruleResult.Rule.ID,
+								"security", params.SecurityLevel,
+							)
+							break
+						}
 						slog.Info("command requires approval",
 							"command", bi.Command,
 							"rule", ruleResult.Rule.Pattern,
@@ -308,6 +330,8 @@ func ExecuteToolCall(ctx context.Context, name string, inputJSON json.RawMessage
 		return executeWebSearch(ctx, inputJSON, params)
 	case "browser":
 		return executeBrowserTool(ctx, inputJSON, params)
+	case "gateway":
+		return executeGatewayTool(ctx, inputJSON, params)
 	case "send_media":
 		return executeSendMedia(ctx, inputJSON, params)
 	case "send_email":
@@ -496,30 +520,37 @@ func executeBashSandboxed(ctx context.Context, inputJSON json.RawMessage, params
 	// 在 L1 (allowlist) 安全级别下，write_file 被 AllowWrite 门控，
 	// 但 bash redirect (>, >>, tee, sed -i) 可绕过。此处是对等防线。
 	if params.NativeSandbox != nil && looksLikeBashWrite(input.Command) {
-		slog.Info("native sandbox write detection triggered",
-			"command", input.Command,
-			"security", params.SecurityLevel,
-		)
-		if params.CoderConfirmation != nil {
-			approved, err := params.CoderConfirmation.RequestConfirmation(ctx, "bash (write detected)", inputJSON, params.SessionKey)
-			if err != nil {
-				return fmt.Sprintf("[Write operation approval error: %v]", err), nil
-			}
-			if !approved {
-				return "[Command blocked: bash write operation requires approval in native sandbox mode]", nil
-			}
-			// approved: fall through to execution
-		} else if isNonWebChannel(params.SessionKey) {
-			// 非 Web 渠道无审批门控: fail-closed
-			slog.Warn("native sandbox write blocked (no approval gate on non-web channel)",
+		if hasGlobalApprovalBypass(params.SecurityLevel, params.ScopePaths) {
+			slog.Info("native sandbox write auto-approved",
 				"command", input.Command,
 				"security", params.SecurityLevel,
-				"sessionKey", params.SessionKey,
 			)
-			return "[Command blocked: bash write operation in native sandbox requires approval (non-web channel)]", nil
 		} else {
-			// Web 渠道无审批门控: fail-closed
-			return "[Command blocked: bash write operation in native sandbox requires approval]", nil
+			slog.Info("native sandbox write detection triggered",
+				"command", input.Command,
+				"security", params.SecurityLevel,
+			)
+			if params.CoderConfirmation != nil {
+				approved, err := params.CoderConfirmation.RequestConfirmation(ctx, "bash (write detected)", inputJSON, params.SessionKey)
+				if err != nil {
+					return fmt.Sprintf("[Write operation approval error: %v]", err), nil
+				}
+				if !approved {
+					return "[Command blocked: bash write operation requires approval in native sandbox mode]", nil
+				}
+				// approved: fall through to execution
+			} else if isNonWebChannel(params.SessionKey) {
+				// 非 Web 渠道无审批门控: fail-closed
+				slog.Warn("native sandbox write blocked (no approval gate on non-web channel)",
+					"command", input.Command,
+					"security", params.SecurityLevel,
+					"sessionKey", params.SessionKey,
+				)
+				return "[Command blocked: bash write operation in native sandbox requires approval (non-web channel)]", nil
+			} else {
+				// Web 渠道无审批门控: fail-closed
+				return "[Command blocked: bash write operation in native sandbox requires approval]", nil
+			}
 		}
 	}
 
@@ -799,10 +830,13 @@ func executeWriteFile(inputJSON json.RawMessage, params ToolExecParams) (string,
 
 	path := resolveToolPath(input.Path, params.WorkspaceDir)
 
-	// 路径安全验证（合约 scope 优先，fallback 到 workspace 单根）
-	if err := validateToolPathScoped(path, params.ScopePaths, params.WorkspaceDir, params.MountRequests, true); err != nil {
-		emitPermissionDenied(params, "write_file", path)
-		return formatPermissionDenied("write_file", input.Path, params.SecurityLevel), nil
+	// L3/full 顶层会话允许宿主机任意路径；子智能体仍受 contract scope 约束。
+	if !hasGlobalPathAccess(params.SecurityLevel, params.ScopePaths) {
+		// 路径安全验证（合约 scope 优先，fallback 到 workspace 单根）
+		if err := validateToolPathScoped(path, params.ScopePaths, params.WorkspaceDir, params.MountRequests, true); err != nil {
+			emitPermissionDenied(params, "write_file", path)
+			return formatPermissionDenied("write_file", input.Path, params.SecurityLevel), nil
+		}
 	}
 
 	// 确保目录存在
@@ -1228,18 +1262,7 @@ func classifyBrowserError(err error) string {
 // 通过 CDP 直连浏览器，比 Argus 屏幕坐标操控更高效精准。
 func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
 	if params.BrowserController == nil {
-		guideURL := "http://127.0.0.1:26222/browser-extension/"
-		return fmt.Sprintf(
-			"[Browser tool is not available — extension not installed or not connected.\n"+
-				"浏览器工具不可用 — 扩展未安装或未连接。\n\n"+
-				"Setup guide / 安装引导: %s\n\n"+
-				"Steps / 步骤:\n"+
-				"1. Download extension zip from the guide page / 从引导页下载扩展 zip\n"+
-				"2. Open chrome://extensions → Enable Developer Mode → Load Unpacked\n"+
-				"   打开 chrome://extensions → 启用开发者模式 → 加载已解压的扩展\n"+
-				"3. Extension auto-connects to Gateway / 扩展自动连接 Gateway]",
-			guideURL,
-		), nil
+		return browserdef.UnavailableMessage(), nil
 	}
 
 	var input struct {
@@ -1266,8 +1289,7 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 		if err := bc.Navigate(ctx, input.URL); err != nil {
 			return fmt.Sprintf("[Browser navigate error: %s]", err), nil
 		}
-		// Phase 3: 操作后截图验证
-		return browserResultWithScreenshot(ctx, bc, fmt.Sprintf("Navigated to %s", input.URL)), nil
+		return browserResultForAction(ctx, input.Action, bc, fmt.Sprintf("Navigated to %s", input.URL)), nil
 
 	case "get_content":
 		// Phase 1: 优先返回 ARIA 快照（语义结构 + ref 标注，token 消耗降低 ~80%）。
@@ -1313,8 +1335,7 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 			}
 			return fmt.Sprintf("[Browser click error (structural — use observe to check page state): %s]", err), nil
 		}
-		// Phase 3: 操作后截图验证
-		return browserResultWithScreenshot(ctx, bc, fmt.Sprintf("Clicked element: %s", input.Selector)), nil
+		return browserResultForAction(ctx, input.Action, bc, fmt.Sprintf("Clicked element: %s", input.Selector)), nil
 
 	case "type":
 		if input.Selector == "" || input.Text == "" {
@@ -1330,8 +1351,7 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 			}
 			return fmt.Sprintf("[Browser type error (structural — use observe to check page state): %s]", err), nil
 		}
-		// Phase 3: 操作后截图验证
-		return browserResultWithScreenshot(ctx, bc, fmt.Sprintf("Typed text into: %s", input.Selector)), nil
+		return browserResultForAction(ctx, input.Action, bc, fmt.Sprintf("Typed text into: %s", input.Selector)), nil
 
 	case "screenshot":
 		data, mimeType, err := bc.Screenshot(ctx)
@@ -1495,8 +1515,7 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 			}
 			return fmt.Sprintf("[Browser click_ref error (structural — ref may be stale, run observe again): %s]", err), nil
 		}
-		// Phase 3: 操作后截图验证
-		return browserResultWithScreenshot(ctx, bc, fmt.Sprintf("Clicked element ref: %s", input.Ref)), nil
+		return browserResultForAction(ctx, input.Action, bc, fmt.Sprintf("Clicked element ref: %s", input.Ref)), nil
 
 	case "fill_ref":
 		// 通过 ARIA ref 填入文本。
@@ -1513,8 +1532,7 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 			}
 			return fmt.Sprintf("[Browser fill_ref error (structural — ref may be stale, run observe again): %s]", err), nil
 		}
-		// Phase 3: 操作后截图验证
-		return browserResultWithScreenshot(ctx, bc, fmt.Sprintf("Filled text into element ref: %s", input.Ref)), nil
+		return browserResultForAction(ctx, input.Action, bc, fmt.Sprintf("Filled text into element ref: %s", input.Ref)), nil
 
 	case "ai_browse":
 		// Phase 4: Mariner 风格意图级浏览任务。
@@ -1531,8 +1549,7 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 			}
 			return fmt.Sprintf("[Browser ai_browse error: %s]", err), nil
 		}
-		// 附带最终截图
-		return browserResultWithScreenshot(ctx, bc, fmt.Sprintf("AI Browse completed.\n\n%s", result)), nil
+		return browserResultForAction(ctx, input.Action, bc, fmt.Sprintf("AI Browse completed.\n\n%s", result)), nil
 
 	// ---------- Phase 4.4: GIF Recording ----------
 
@@ -1597,16 +1614,78 @@ func executeBrowserTool(ctx context.Context, inputJSON json.RawMessage, params T
 		if err := bc.SwitchTab(ctx, input.TargetID); err != nil {
 			return fmt.Sprintf("[Browser switch_tab error: %s]", err), nil
 		}
-		return browserResultWithScreenshot(ctx, bc, fmt.Sprintf("Switched to tab: %s", input.TargetID)), nil
+		return browserResultForAction(ctx, input.Action, bc, fmt.Sprintf("Switched to tab: %s", input.TargetID)), nil
 
 	default:
 		return fmt.Sprintf("[Unknown browser action: %s]", input.Action), nil
 	}
 }
 
-// browserResultWithScreenshot 在操作结果中附带截图，让 LLM 验证操作效果。
-// Phase 3: Anthropic CU 核心推荐 — 每个改变页面状态的操作后自动截图。
-// 如果截图失败，仅返回纯文本结果（不影响操作本身）。
+func executeGatewayTool(ctx context.Context, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
+	if !params.GatewayOpts.Enabled() {
+		return "", fmt.Errorf("gateway tool is not available")
+	}
+
+	var args map[string]any
+	if err := json.Unmarshal(inputJSON, &args); err != nil {
+		return "", fmt.Errorf("parse gateway input: %w", err)
+	}
+
+	result, err := gatewayclient.ExecuteToolAction(ctx, params.GatewayOpts, args)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal gateway result: %w", err)
+	}
+	return string(data), nil
+}
+
+func executeSpecializedConfigTool(ctx context.Context, spec configtools.DomainToolSpec, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
+	if !params.GatewayOpts.Enabled() {
+		return "", fmt.Errorf("%s tool is not available", spec.ToolName)
+	}
+
+	var args map[string]any
+	if err := json.Unmarshal(inputJSON, &args); err != nil {
+		return "", fmt.Errorf("parse %s input: %w", spec.ToolName, err)
+	}
+
+	call := params.GatewayOpts.Caller
+	if call == nil {
+		call = gatewayclient.CallGateway
+	}
+
+	result, err := configtools.ExecuteToolAction(ctx, spec, args, func(ctx context.Context, method string, callParams interface{}) (map[string]interface{}, error) {
+		return call(ctx, params.GatewayOpts, method, callParams)
+	})
+	if err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal %s result: %w", spec.ToolName, err)
+	}
+	return string(data), nil
+}
+
+// browserResultForAction applies the browser action return policy.
+// Explicit visual actions such as observe/screenshot/annotate_som have their own
+// multimodal paths. State-changing actions return text by default unless the
+// shared browser spec opts them into an automatic verification image.
+func browserResultForAction(ctx context.Context, action string, bc interface {
+	Screenshot(ctx context.Context) ([]byte, string, error)
+}, textResult string) string {
+	if !browserdef.ActionAutoVerificationImage(action) {
+		return textResult
+	}
+	return browserResultWithScreenshot(ctx, bc, textResult)
+}
+
+// browserResultWithScreenshot attaches a screenshot to a result when the action
+// policy explicitly requests visual verification. If screenshot capture fails,
+// the original text result is returned unchanged.
 // maxBrowserScreenshotBytes caps embedded screenshots at 512 KB raw (~680 KB base64).
 // Larger screenshots are silently dropped to avoid bloating LLM context.
 const maxBrowserScreenshotBytes = 512 * 1024
@@ -1672,7 +1751,7 @@ func executeArgusTool(ctx context.Context, name string, inputJSON json.RawMessag
 		"approvalMode", approvalMode,
 	)
 
-	if ShouldRequireApproval(risk, approvalMode) {
+	if ShouldRequireApproval(risk, approvalMode) && !hasGlobalApprovalBypass(params.SecurityLevel, params.ScopePaths) {
 		if isNonWebChannel(params.SessionKey) {
 			// Fix 1: 非 Web 渠道 — RiskHigh 走 escalation（飞书审批卡片），不静默放行
 			if risk >= RiskHigh {
@@ -1682,7 +1761,7 @@ func executeArgusTool(ctx context.Context, name string, inputJSON json.RawMessag
 						return fmt.Sprintf("[Argus approval error: %s]", err), nil
 					}
 					if !approved {
-						return "[User denied argus operation]", nil
+						return formatApprovalDenied(name, "User denied the Argus authorization request."), nil
 					}
 				} else {
 					// Fix 3: Fail-closed: 无审批门控 + 高风险 → 拒绝
@@ -1703,7 +1782,7 @@ func executeArgusTool(ctx context.Context, name string, inputJSON json.RawMessag
 				return fmt.Sprintf("[Argus approval error: %s]", err), nil
 			}
 			if !approved {
-				return "[User denied argus operation]", nil
+				return formatApprovalDenied(name, "User denied the Argus authorization request."), nil
 			}
 		} else {
 			// Fix 3: Fail-closed: CoderConfirmation==nil + Web 频道 → 拒绝
@@ -1817,6 +1896,17 @@ func validateToolPath(path, workspaceDir string) error {
 	return fmt.Errorf("path %q is outside workspace %q — access denied", path, workspaceDir)
 }
 
+func hasGlobalPathAccess(level string, scopePaths []string) bool {
+	if len(scopePaths) > 0 {
+		return false
+	}
+	return infra.NormalizeExecSecurityValue(infra.ExecSecurity(level)) == infra.ExecSecurityFull
+}
+
+func hasGlobalApprovalBypass(level string, scopePaths []string) bool {
+	return hasGlobalPathAccess(level, scopePaths)
+}
+
 func pathAllowedByMountRequests(path string, mountRequests []MountRequestForSandbox, requireWrite bool) bool {
 	if len(mountRequests) == 0 {
 		return false
@@ -1879,10 +1969,21 @@ func validateToolPathScoped(path string, scopePaths []string, workspaceDir strin
 
 // permissionDeniedPrefix 权限拒绝提示的固定前缀，用于检测。
 const permissionDeniedPrefix = "🚫 权限不足 | Permission Denied"
+const approvalDeniedPrefix = "🚫 授权已拒绝 | Approval Denied"
 
 // IsPermissionDeniedOutput 检测工具输出是否为权限拒绝消息。
 func IsPermissionDeniedOutput(output string) bool {
 	return strings.Contains(output, permissionDeniedPrefix)
+}
+
+// IsApprovalDeniedOutput 检测工具输出是否为用户显式拒绝授权消息。
+func IsApprovalDeniedOutput(output string) bool {
+	return strings.Contains(output, approvalDeniedPrefix)
+}
+
+// IsBlockingDeniedOutput 检测工具输出是否为需要立即停止重试的拒绝结果。
+func IsBlockingDeniedOutput(output string) bool {
+	return IsPermissionDeniedOutput(output) || IsApprovalDeniedOutput(output)
 }
 
 // formatPermissionDenied 格式化权限拒绝提示。
@@ -1894,7 +1995,8 @@ func formatPermissionDenied(tool, detail, level string) string {
 	levelDesc := map[string]string{
 		"deny":      "L0 (只读/Read Only) — 不允许写入和执行",
 		"allowlist": "L1 (允许列表/Allowlist) — 仅允许预批准命令",
-		"full":      "L2 (完全/Full Access)",
+		"sandboxed": "L2 (沙箱全权限/Sandboxed Full) — 沙箱内全权限执行",
+		"full":      "L3 (完全/Full Access) — 宿主机全权限",
 	}
 	desc := levelDesc[level]
 	if desc == "" {
@@ -1923,6 +2025,24 @@ func formatPermissionDenied(tool, detail, level string) string {
    or change your security level in Settings → Security.`, toolDesc, detail, desc)
 }
 
+func formatApprovalDenied(tool, detail string) string {
+	toolDesc := tool
+	if strings.HasPrefix(tool, "argus_") {
+		toolDesc = fmt.Sprintf("%s (Argus)", strings.TrimPrefix(tool, "argus_"))
+	}
+	if detail == "" {
+		detail = "The user rejected this authorization request."
+	}
+	return fmt.Sprintf(`%s
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+工具 Tool:   %s
+原因 Reason: %s
+
+🛑 本轮已停止该高风险操作。
+   Do NOT retry the same action automatically in this run.
+   Ask the user before attempting it again.`, approvalDeniedPrefix, toolDesc, detail)
+}
+
 // ---------- send_media 工具 ----------
 
 // sendMediaInput send_media 工具参数。
@@ -1937,6 +2057,12 @@ type sendMediaInput struct {
 
 // maxMediaFileSize 最大媒体文件大小（30MB，匹配飞书 UploadFile 限制）。
 const maxMediaFileSize = 30 * 1024 * 1024
+
+type resolvedSendMediaAttachment struct {
+	Data     []byte
+	FileName string
+	MimeType string
+}
 
 // executeSendMedia 执行 send_media 工具调用。
 func executeSendMedia(ctx context.Context, inputJSON json.RawMessage, params ToolExecParams) (string, error) {
@@ -1956,6 +2082,9 @@ func executeSendMedia(ctx context.Context, inputJSON json.RawMessage, params Too
 	}
 
 	requestConfirmation := func() (string, bool) {
+		if hasGlobalApprovalBypass(params.SecurityLevel, params.ScopePaths) {
+			return "", true
+		}
 		if params.CoderConfirmation == nil {
 			return "", true
 		}
@@ -1975,14 +2104,16 @@ func executeSendMedia(ctx context.Context, inputJSON json.RawMessage, params Too
 
 	switch {
 	case input.FilePath != "":
-		// 路径安全校验：workspace/scope 边界（与 read_file/write_file 一致）
-		if err := validateToolPathScoped(input.FilePath, params.ScopePaths, params.WorkspaceDir, params.MountRequests, false); err != nil {
-			detail := strings.TrimSpace(input.FilePath)
-			if absPath, absErr := filepath.Abs(detail); absErr == nil {
-				detail = absPath
+		if !hasGlobalPathAccess(params.SecurityLevel, params.ScopePaths) {
+			// 路径安全校验：workspace/scope 边界（与 write_file 一致）
+			if err := validateToolPathScoped(input.FilePath, params.ScopePaths, params.WorkspaceDir, params.MountRequests, false); err != nil {
+				detail := strings.TrimSpace(input.FilePath)
+				if absPath, absErr := filepath.Abs(detail); absErr == nil {
+					detail = absPath
+				}
+				emitPermissionDenied(params, "send_media", detail)
+				return formatPermissionDenied("send_media", input.FilePath, params.SecurityLevel), nil
 			}
-			emitPermissionDenied(params, "send_media", detail)
-			return formatPermissionDenied("send_media", input.FilePath, params.SecurityLevel), nil
 		}
 
 		// 先检查文件大小，避免大文件 OOM
@@ -2026,7 +2157,23 @@ func executeSendMedia(ctx context.Context, inputJSON json.RawMessage, params Too
 		data = decoded
 
 	default:
-		return "[send_media] Either file_path or media_base64 is required. Use file_path with an absolute path (e.g. '/tmp/image.png'). To send a screenshot: first run 'screencapture -x /tmp/screenshot.png' via bash, then call send_media with file_path='/tmp/screenshot.png'.", nil
+		attachment, err := resolveImplicitSendMediaAttachment(params)
+		if err != nil {
+			return fmt.Sprintf("[send_media] Failed to reuse the latest chat attachment: %v", err), nil
+		}
+		if attachment == nil {
+			return "[send_media] Either file_path or media_base64 is required. If the user refers to the latest image already attached in this chat, you may omit both and the tool will reuse that attachment automatically. Otherwise use file_path with an absolute path (e.g. '/tmp/image.png'). To send a screenshot: first run 'screencapture -x /tmp/screenshot.png' via bash, then call send_media with file_path='/tmp/screenshot.png'.", nil
+		}
+		if result, ok := requestConfirmation(); !ok {
+			return result, nil
+		}
+		data = attachment.Data
+		if fileName == "" {
+			fileName = attachment.FileName
+		}
+		if mimeType == "" {
+			mimeType = attachment.MimeType
+		}
 	}
 
 	if mimeType == "" {
@@ -2197,6 +2344,107 @@ func defaultSendMediaFileName(mimeType string) string {
 		return "upload" + exts[0]
 	}
 	return "upload.bin"
+}
+
+func resolveImplicitSendMediaAttachment(params ToolExecParams) (*resolvedSendMediaAttachment, error) {
+	if attachment := latestReusableSendMediaAttachment(params.CurrentAttachments); attachment != nil {
+		return decodeSendMediaAttachment(*attachment)
+	}
+	if params.SessionID == "" && params.SessionFile == "" {
+		return nil, nil
+	}
+
+	mgr := session.NewSessionManager("")
+	rawMessages, err := mgr.LoadSessionMessages(params.SessionID, params.SessionFile)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(rawMessages) - 1; i >= 0; i-- {
+		attachment := latestReusableSendMediaAttachmentFromMessage(rawMessages[i])
+		if attachment == nil {
+			continue
+		}
+		return decodeSendMediaAttachment(*attachment)
+	}
+	return nil, nil
+}
+
+func latestReusableSendMediaAttachment(blocks []session.ContentBlock) *session.ContentBlock {
+	for i := len(blocks) - 1; i >= 0; i-- {
+		block := blocks[i]
+		if !canReuseSendMediaAttachment(block) {
+			continue
+		}
+		return &blocks[i]
+	}
+	return nil
+}
+
+func latestReusableSendMediaAttachmentFromMessage(message map[string]interface{}) *session.ContentBlock {
+	content, ok := message["content"].([]interface{})
+	if !ok || len(content) == 0 {
+		return nil
+	}
+
+	raw, err := json.Marshal(content)
+	if err != nil {
+		return nil
+	}
+	var blocks []session.ContentBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return nil
+	}
+	return latestReusableSendMediaAttachment(blocks)
+}
+
+func canReuseSendMediaAttachment(block session.ContentBlock) bool {
+	switch block.Type {
+	case "image", "audio", "video":
+		return block.Source != nil && strings.TrimSpace(block.Source.Data) != ""
+	default:
+		return false
+	}
+}
+
+func decodeSendMediaAttachment(block session.ContentBlock) (*resolvedSendMediaAttachment, error) {
+	if !canReuseSendMediaAttachment(block) {
+		return nil, nil
+	}
+	data, err := base64.StdEncoding.DecodeString(block.Source.Data)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s attachment: %w", block.Type, err)
+	}
+	if len(data) > maxMediaFileSize {
+		return nil, fmt.Errorf("latest %s attachment is %d bytes (max %d bytes / 30MB)", block.Type, len(data), maxMediaFileSize)
+	}
+
+	mimeType := strings.TrimSpace(block.MimeType)
+	if mimeType == "" && block.Source != nil {
+		mimeType = strings.TrimSpace(block.Source.MediaType)
+	}
+	if mimeType == "" {
+		switch block.Type {
+		case "image":
+			mimeType = "image/png"
+		case "audio":
+			mimeType = "audio/webm"
+		case "video":
+			mimeType = "video/mp4"
+		default:
+			mimeType = "application/octet-stream"
+		}
+	}
+
+	fileName := strings.TrimSpace(block.FileName)
+	if fileName == "" {
+		fileName = defaultSendMediaFileName(mimeType)
+	}
+
+	return &resolvedSendMediaAttachment{
+		Data:     data,
+		FileName: fileName,
+		MimeType: mimeType,
+	}, nil
 }
 
 // ---------- memory tools (UHMS 记忆系统) ----------

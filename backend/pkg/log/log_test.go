@@ -126,6 +126,13 @@ func TestFileWriter_CurrentPath(t *testing.T) {
 	}
 }
 
+func TestDefaultRollingPath_UsesSystemTempDir(t *testing.T) {
+	path := DefaultRollingPath()
+	if !strings.HasPrefix(path, filepath.Join(os.TempDir(), "openacosmi")) {
+		t.Fatalf("DefaultRollingPath() = %q", path)
+	}
+}
+
 func TestIsRollingLogName(t *testing.T) {
 	tests := []struct {
 		name string

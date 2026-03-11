@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ---------- Auth 类型定义 ----------
@@ -52,6 +54,10 @@ type GatewayAuthConfig struct {
 	AllowTailscale *bool    `json:"allowTailscale,omitempty"`
 }
 
+type GatewayAuthResolveOptions struct {
+	PersistGeneratedToken bool
+}
+
 // TailscaleUser Tailscale 用户信息。
 type TailscaleUser struct {
 	Login      string `json:"login"`
@@ -89,6 +95,17 @@ func SafeEqual(a, b string) bool {
 
 // ResolveGatewayAuth 从配置和环境变量解析网关认证。
 func ResolveGatewayAuth(authConfig *GatewayAuthConfig, tailscaleMode string) ResolvedGatewayAuth {
+	return ResolveGatewayAuthWithOptions(authConfig, tailscaleMode, GatewayAuthResolveOptions{
+		PersistGeneratedToken: true,
+	})
+}
+
+// ResolveGatewayAuthWithOptions 从配置和环境变量解析网关认证，并允许切换生成 token 的持久化策略。
+func ResolveGatewayAuthWithOptions(
+	authConfig *GatewayAuthConfig,
+	tailscaleMode string,
+	opts GatewayAuthResolveOptions,
+) ResolvedGatewayAuth {
 	cfg := GatewayAuthConfig{}
 	if authConfig != nil {
 		cfg = *authConfig
@@ -102,7 +119,7 @@ func ResolveGatewayAuth(authConfig *GatewayAuthConfig, tailscaleMode string) Res
 		token = os.Getenv("CLAWDBOT_GATEWAY_TOKEN")
 	}
 	if token == "" {
-		token = ReadOrGenerateGatewayToken()
+		token = ReadOrGenerateGatewayTokenWithPersistence(opts.PersistGeneratedToken)
 	}
 
 	password := cfg.Password
@@ -141,11 +158,7 @@ func ResolveGatewayAuth(authConfig *GatewayAuthConfig, tailscaleMode string) Res
 
 // gatewayTokenFilePath 返回持久化 token 文件路径: ~/.openacosmi/gateway-token
 func gatewayTokenFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".openacosmi", "gateway-token")
+	return filepath.Join(config.ResolveStateDir(), "gateway-token")
 }
 
 // ReadOrGenerateGatewayToken 读取或自动生成网关 token。
@@ -154,6 +167,14 @@ func gatewayTokenFilePath() string {
 //   - 首次启动: crypto/rand 生成 32 字节 hex token → 写入 ~/.openacosmi/gateway-token (0600)
 //   - 后续启动: 直接读取文件
 func ReadOrGenerateGatewayToken() string {
+	return ReadOrGenerateGatewayTokenWithPersistence(true)
+}
+
+func ReadOrGenerateGatewayTokenWithPersistence(persist bool) string {
+	if !persist {
+		return generateRandomToken()
+	}
+
 	tokenFile := gatewayTokenFilePath()
 	if tokenFile == "" {
 		return generateRandomToken()

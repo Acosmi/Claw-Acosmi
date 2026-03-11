@@ -25,11 +25,6 @@ func ExecApprovalsHandlers() map[string]GatewayMethodHandler {
 // ---------- exec.approvals.get ----------
 
 func handleExecApprovalsGet(ctx *MethodHandlerContext) {
-	if _, err := infra.EnsureExecApprovals(); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to ensure exec-approvals: "+err.Error()))
-		return
-	}
-
 	snapshot := infra.ReadExecApprovalsSnapshot()
 	ctx.Respond(true, map[string]interface{}{
 		"path":   snapshot.Path,
@@ -42,10 +37,22 @@ func handleExecApprovalsGet(ctx *MethodHandlerContext) {
 // ---------- exec.approvals.set ----------
 
 func handleExecApprovalsSet(ctx *MethodHandlerContext) {
-	if _, err := infra.EnsureExecApprovals(); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to ensure exec-approvals: "+err.Error()))
+	// 提取 file 参数（在获取锁之前做参数校验，减少持锁时间）
+	fileParam, ok := ctx.Params["file"]
+	if !ok || fileParam == nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "exec approvals file is required"))
 		return
 	}
+	fileMap, ok := fileParam.(map[string]interface{})
+	if !ok {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "exec approvals file must be an object"))
+		return
+	}
+	incoming := parseExecApprovalsFromMap(fileMap)
+
+	// 获取 exec-approvals 锁保护整个 read-validate-write 过程
+	unlock := infra.AcquireExecApprovalsLock()
+	defer unlock()
 
 	snapshot := infra.ReadExecApprovalsSnapshot()
 
@@ -71,22 +78,14 @@ func handleExecApprovalsSet(ctx *MethodHandlerContext) {
 		}
 	}
 
-	// 提取 file 参数
-	fileParam, ok := ctx.Params["file"]
-	if !ok || fileParam == nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "exec approvals file is required"))
+	if _, err := infra.EnsureExecApprovalsLocked(); err != nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to ensure exec-approvals: "+err.Error()))
 		return
 	}
-	fileMap, ok := fileParam.(map[string]interface{})
-	if !ok {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeBadRequest, "exec approvals file must be an object"))
-		return
-	}
+	snapshot = infra.ReadExecApprovalsSnapshot()
 
 	// 构建更新后的 ExecApprovalsFile
 	// 保留当前 socket path/token 作为回退
-	incoming := parseExecApprovalsFromMap(fileMap)
-
 	currentSocketPath := ""
 	currentToken := ""
 	if snapshot.File != nil && snapshot.File.Socket != nil {

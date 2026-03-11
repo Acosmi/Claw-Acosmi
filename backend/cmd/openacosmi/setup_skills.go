@@ -230,6 +230,22 @@ func SetupSkills(
 		}
 	}
 
+	// Windows 包管理器检测（winget / Scoop）
+	needsWinPkgPrompt := false
+	if runtime.GOOS == "windows" {
+		for _, s := range summaries {
+			if len(s.InstallOpts) > 0 && len(s.MissingBins) > 0 {
+				needsWinPkgPrompt = true
+				break
+			}
+		}
+		if needsWinPkgPrompt {
+			if DetectBinary("winget") || DetectBinary("scoop") {
+				needsWinPkgPrompt = false
+			}
+		}
+	}
+
 	// 展示技能状态概览
 	prompter.Note(strings.Join([]string{
 		fmt.Sprintf("Eligible: %d", len(eligible)),
@@ -256,6 +272,19 @@ func SetupSkills(
 		}
 		if showBrewInstall {
 			prompter.Note(i18n.Tp("onboard.skill.brew_hint"), i18n.Tp("onboard.skill.title"))
+		}
+	}
+
+	// Windows 包管理器提醒
+	if needsWinPkgPrompt {
+		prompter.Note(i18n.Tp("onboard.skill.win_pkg_missing"), i18n.Tp("onboard.skill.title"))
+
+		showWinPkgInstall, err := prompter.Confirm(i18n.Tp("onboard.skill.win_pkg_confirm"), true)
+		if err != nil {
+			return cfg, fmt.Errorf("confirm win pkg: %w", err)
+		}
+		if showWinPkgInstall {
+			prompter.Note(i18n.Tp("onboard.skill.win_pkg_hint"), i18n.Tp("onboard.skill.title"))
 		}
 	}
 

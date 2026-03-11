@@ -71,6 +71,46 @@ func TestSaveAndLoadRegistry(t *testing.T) {
 	}
 }
 
+func TestDefaultRegistryPath_UsesResolvedStateDir(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	t.Setenv("CRABCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENACOSMI_STATE_DIR", "")
+
+	path, err := DefaultRegistryPath()
+	if err != nil {
+		t.Fatalf("DefaultRegistryPath() error = %v", err)
+	}
+	if path != filepath.Join(stateDir, "mcp-servers", "registry.json") {
+		t.Fatalf("DefaultRegistryPath() = %q", path)
+	}
+}
+
+func TestValidateBinaryPath_UsesResolvedStateDir(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	t.Setenv("CRABCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENACOSMI_STATE_DIR", "")
+
+	managedDir := filepath.Join(stateDir, "mcp-servers")
+	if err := os.MkdirAll(managedDir, 0o755); err != nil {
+		t.Fatalf("mkdir managed dir: %v", err)
+	}
+	managedBinary := filepath.Join(managedDir, "test-server")
+	if err := os.WriteFile(managedBinary, []byte("binary"), 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	if err := validateBinaryPath(managedBinary); err != nil {
+		t.Fatalf("validateBinaryPath(managed) error = %v", err)
+	}
+
+	outsideBinary := filepath.Join(t.TempDir(), "outside-server")
+	if err := os.WriteFile(outsideBinary, []byte("binary"), 0o755); err != nil {
+		t.Fatalf("write outside binary: %v", err)
+	}
+	if err := validateBinaryPath(outsideBinary); err == nil {
+		t.Fatal("validateBinaryPath(outside) expected error")
+	}
+}
+
 func TestManagerParsePrefixedToolName(t *testing.T) {
 	tests := []struct {
 		input      string

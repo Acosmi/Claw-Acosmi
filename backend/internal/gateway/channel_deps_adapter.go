@@ -89,6 +89,7 @@ func buildDiscordDispatcher(dctx *ChannelDepsContext) func(ctx context.Context, 
 					SessionId:  newId,
 					Label:      sessionKey,
 					Channel:    params.Ctx.ChannelType,
+					CreatedAt:  time.Now().UnixMilli(),
 				}
 				dctx.SessionStore.Save(entry)
 			}
@@ -124,15 +125,7 @@ func buildDiscordDispatcher(dctx *ChannelDepsContext) func(ctx context.Context, 
 		replyText := CombineReplyPayloads(result.Replies)
 		mb64, mmime := ExtractMediaFromReplies(result.Replies)
 
-		// 持久化 AI 回复到 transcript
-		if resolvedSessionId != "" && replyText != "" {
-			AppendAssistantTranscriptMessage(AppendTranscriptParams{
-				Message:         replyText,
-				SessionID:       resolvedSessionId,
-				StorePath:       dctx.StorePath,
-				CreateIfMissing: true,
-			})
-		}
+		// AI 回复 transcript 由 attempt_runner.persistToTranscript 写入，此处不再双写
 
 		if replyText != "" || mb64 != "" {
 			broadcastChatReply(dctx.State, params.Ctx, replyText, mb64, mmime)
@@ -236,6 +229,7 @@ func buildTelegramDispatcher(dctx *ChannelDepsContext) func(ctx context.Context,
 					SessionId:  newId,
 					Label:      sessionKey,
 					Channel:    params.Ctx.ChannelType,
+					CreatedAt:  time.Now().UnixMilli(),
 				}
 				dctx.SessionStore.Save(entry)
 			}
@@ -268,15 +262,7 @@ func buildTelegramDispatcher(dctx *ChannelDepsContext) func(ctx context.Context,
 		replyText := CombineReplyPayloads(result.Replies)
 		tgMb64, tgMmime := ExtractMediaFromReplies(result.Replies)
 
-		// 持久化 AI 回复到 transcript
-		if resolvedSessionId != "" && replyText != "" {
-			AppendAssistantTranscriptMessage(AppendTranscriptParams{
-				Message:         replyText,
-				SessionID:       resolvedSessionId,
-				StorePath:       dctx.StorePath,
-				CreateIfMissing: true,
-			})
-		}
+		// AI 回复 transcript 由 attempt_runner.persistToTranscript 写入，此处不再双写
 
 		if replyText != "" || tgMb64 != "" {
 			broadcastChatReply(dctx.State, params.Ctx, replyText, tgMb64, tgMmime)
@@ -418,6 +404,7 @@ func buildSlackDispatcher(dctx *ChannelDepsContext) func(ctx context.Context, pa
 					SessionId:  newId,
 					Label:      sessionKey,
 					Channel:    params.Ctx.ChannelType,
+					CreatedAt:  time.Now().UnixMilli(),
 				}
 				dctx.SessionStore.Save(entry)
 			}
@@ -450,15 +437,7 @@ func buildSlackDispatcher(dctx *ChannelDepsContext) func(ctx context.Context, pa
 		replyText := CombineReplyPayloads(result.Replies)
 		slMb64, slMmime := ExtractMediaFromReplies(result.Replies)
 
-		// 持久化 AI 回复到 transcript
-		if resolvedSessionId != "" && replyText != "" {
-			AppendAssistantTranscriptMessage(AppendTranscriptParams{
-				Message:         replyText,
-				SessionID:       resolvedSessionId,
-				StorePath:       dctx.StorePath,
-				CreateIfMissing: true,
-			})
-		}
+		// AI 回复 transcript 由 attempt_runner.persistToTranscript 写入，此处不再双写
 
 		if replyText != "" || slMb64 != "" {
 			broadcastChatReply(dctx.State, params.Ctx, replyText, slMb64, slMmime)

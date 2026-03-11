@@ -12,15 +12,15 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/auth"
+	caps "github.com/Acosmi/ClawAcosmi/internal/agents/capabilities"
 	"github.com/Acosmi/ClawAcosmi/internal/config"
 	"github.com/Acosmi/ClawAcosmi/internal/goproviders/bridge"
 	"github.com/Acosmi/ClawAcosmi/internal/goproviders/common"
@@ -30,6 +30,7 @@ import (
 	"github.com/Acosmi/ClawAcosmi/internal/goproviders/oauth/qwen"
 	"github.com/Acosmi/ClawAcosmi/internal/goproviders/onboard"
 	"github.com/Acosmi/ClawAcosmi/internal/goproviders/providers/copilot"
+	"github.com/Acosmi/ClawAcosmi/internal/infra"
 	"github.com/Acosmi/ClawAcosmi/pkg/log"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
@@ -184,6 +185,18 @@ func handleWizardV2ProvidersList(ctx *MethodHandlerContext) {
 	}, nil)
 }
 
+// WizardV2SkillGroupsListHandler 返回 wizard.v2.skill-groups.list 方法处理器。
+// 从后端 capability tree 导出向导技能组，避免前端手写分组漂移。
+func WizardV2SkillGroupsListHandler() GatewayMethodHandler {
+	return handleWizardV2SkillGroupsList
+}
+
+func handleWizardV2SkillGroupsList(ctx *MethodHandlerContext) {
+	ctx.Respond(true, map[string]interface{}{
+		"groups": caps.GenerateWizardSkillGroups(caps.DefaultTree()),
+	}, nil)
+}
+
 // WizardV2ApplyHandler 返回 wizard.v2.apply 方法处理器。
 func WizardV2ApplyHandler() GatewayMethodHandler {
 	return handleWizardV2Apply
@@ -251,8 +264,7 @@ func handleWizardV2OAuth(ctx *MethodHandlerContext) {
 	wizardV2Logger.Info("Starting OAuth flow", "provider", providerID)
 
 	// 创建 AuthStore 用于持久化 OAuth 凭据（refresh token + expires）
-	home, _ := os.UserHomeDir()
-	authStorePath := filepath.Join(home, ".openacosmi", "auth.json")
+	authStorePath := config.ResolveOAuthPath()
 	authStore := auth.NewAuthStore(authStorePath)
 	if _, loadErr := authStore.Load(); loadErr != nil {
 		wizardV2Logger.Warn("Failed to load auth store (will create new)", "error", loadErr)
@@ -699,14 +711,8 @@ func handleWizardV2OAuthDevicePoll(ctx *MethodHandlerContext) {
 
 // persistOAuthToken 持久化 OAuth token 到 auth-profiles.json。
 func persistOAuthToken(providerID, accessToken, refreshToken string, expiresMs int64) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		wizardV2Logger.Warn("Failed to get home dir for OAuth persistence", "error", err)
-		return
-	}
-
 	// 使用 go-providers 的 authprofile 写入（而非 auth.AuthStore）
-	agentDir := filepath.Join(home, ".openacosmi", "state", "agents", "main", "agent")
+	agentDir := common.ResolveDefaultAgentDir()
 	creds := map[string]interface{}{
 		"access": accessToken,
 	}
@@ -730,13 +736,7 @@ func persistOAuthToken(providerID, accessToken, refreshToken string, expiresMs i
 
 // persistGeminiCliOAuthToken 持久化 Gemini CLI OAuth 凭据（含 projectId）。
 func persistGeminiCliOAuthToken(providerID string, creds *gemini.GeminiCliOAuthCredentials) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		wizardV2Logger.Warn("Failed to get home dir for Gemini CLI OAuth persistence", "error", err)
-		return
-	}
-
-	agentDir := filepath.Join(home, ".openacosmi", "state", "agents", "main", "agent")
+	agentDir := common.ResolveDefaultAgentDir()
 	credsMap := map[string]interface{}{
 		"access": creds.Access,
 	}
@@ -774,6 +774,11 @@ func handleWizardV2Apply(ctx *MethodHandlerContext) {
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "config loader not available"))
 		return
 	}
+	rollback, rollbackErr := captureGatewayConfigRollback(loader)
+	if rollbackErr != nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to snapshot config rollback: "+rollbackErr.Error()))
+		return
+	}
 
 	// 1. 解析 WizardV2Payload
 	payload, err := parseWizardV2Payload(ctx.Params)
@@ -807,6 +812,16 @@ func handleWizardV2Apply(ctx *MethodHandlerContext) {
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to write config: "+err.Error()))
 		return
 	}
+	if err := common.EnsureRuntimeScaffold(""); err != nil {
+		err = rollbackGatewayConfigOnError(loader, rollback, err)
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to initialize runtime scaffold: "+err.Error()))
+		return
+	}
+	if err := syncWizardV2ExecSecurity(payload.SecurityLevelConfig); err != nil {
+		err = rollbackGatewayConfigOnError(loader, rollback, err)
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to sync security level: "+err.Error()))
+		return
+	}
 	loader.ClearCache()
 
 	wizardV2Logger.Info("Wizard V2 config applied successfully", "path", loader.ConfigPath())
@@ -831,7 +846,10 @@ func handleWizardV2Apply(ctx *MethodHandlerContext) {
 	// 8. 调度网关重启（热重载）
 	var restartResult *GatewayRestartResult
 	if gr := ctx.Context.GatewayRestarter; gr != nil {
-		restartResult = gr.ScheduleRestart(nil, "wizard.v2.apply")
+		restartResult = gr.ScheduleRestart(GatewayRestartPlan{
+			Reason:   "wizard.v2.apply",
+			Rollback: rollback,
+		})
 	}
 
 	// 9. 构建响应
@@ -1107,6 +1125,56 @@ func applySecurityLevelConfig(p *WizardV2Payload, cfg *types.OpenAcosmiConfig) {
 	}
 }
 
+func syncWizardV2ExecSecurity(level string) error {
+	desired, ok := mapWizardV2ExecSecurity(level)
+	if !ok {
+		return nil
+	}
+
+	// 整个 ensure+modify+save 必须在同一个锁内，防止并发丢失
+	unlock := infra.AcquireExecApprovalsLock()
+	defer unlock()
+
+	file, err := infra.EnsureExecApprovalsLocked()
+	if err != nil {
+		return err
+	}
+	if file == nil {
+		file = &infra.ExecApprovalsFile{}
+	}
+	if file.Version == 0 {
+		file.Version = 1
+	}
+	if file.Agents == nil {
+		file.Agents = make(map[string]*infra.ExecApprovalsAgent)
+	}
+	if file.Defaults == nil {
+		file.Defaults = &infra.ExecApprovalsDefaults{}
+	}
+
+	file.Defaults.Security = desired
+	if file.Defaults.EscalationFallback == "" {
+		file.Defaults.EscalationFallback = infra.ExecEscalationFallbackBase
+	}
+
+	return infra.SaveExecApprovals(file)
+}
+
+func mapWizardV2ExecSecurity(level string) (infra.ExecSecurity, bool) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "", "allowlist":
+		return infra.ExecSecurityAllowlist, true
+	case "deny":
+		return infra.ExecSecurityDeny, true
+	case "sandboxed":
+		return infra.ExecSecuritySandboxed, true
+	case "full":
+		return infra.ExecSecurityFull, true
+	default:
+		return "", false
+	}
+}
+
 // applySkillsConfig 将技能选择映射到 ToolsConfig.Allow。
 // key 匹配 scope.ToolGroups 的分组名（fs, runtime, ui, web, memory, sessions, automation, messaging, nodes）。
 func applySkillsConfig(p *WizardV2Payload, cfg *types.OpenAcosmiConfig) {
@@ -1137,58 +1205,138 @@ func applySkillsConfig(p *WizardV2Payload, cfg *types.OpenAcosmiConfig) {
 
 // ---------- Primary Model Selection ----------
 
-// normalizeProviderID 规范化前端 provider ID 到后端存储 ID。
-// 委托到 bridge.NormalizeProviderID（处理 zhipu→zai, doubao→volcengine 等映射）。
+// normalizeProviderID 规范化前端 provider ID 到运行时 provider ID。
+// 这里保留 qwen/minimax 这样的运行时 provider，不提前切到 portal auth provider。
+// 否则会绕过 bridge 的完整 provider 注入，写出 models/baseUrl 不完整的残配置。
 func normalizeProviderID(frontendID string) string {
-	return bridge.NormalizeProviderID(frontendID)
+	id := strings.TrimSpace(strings.ToLower(frontendID))
+	switch id {
+	case "zhipu":
+		return "zai"
+	case "doubao":
+		return "volcengine"
+	case "gemini-cli":
+		return "google-gemini-cli"
+	default:
+		return id
+	}
 }
 
-// applyPrimaryModelSelection 从 Wizard payload 推导主模型并写入 agents.defaults.model.primary。
-// 优先级: primaryConfig 中第一个有 API key + 有模型选择的 provider。
-// 使用 bridge.GetDefaultModelRef 获取默认模型（替代 models.GetProviderDefaults）。
-func applyPrimaryModelSelection(p *WizardV2Payload, cfg *types.OpenAcosmiConfig) {
-	var primaryProvider, primaryModel string
+type wizardConfiguredProvider struct {
+	ProviderID string
+	ModelRef   string
+}
 
-	// 从 primaryConfig 中找第一个有 API key 的 provider
-	for rawProviderID, apiKey := range p.PrimaryConfig {
+func orderedWizardProviderIDs(p *WizardV2Payload) []string {
+	seen := make(map[string]struct{})
+	ids := make([]string, 0)
+	add := func(raw string) {
+		providerID := normalizeProviderID(strings.TrimSpace(raw))
+		if providerID == "" {
+			return
+		}
+		if _, ok := seen[providerID]; ok {
+			return
+		}
+		seen[providerID] = struct{}{}
+		ids = append(ids, providerID)
+	}
+
+	for _, entry := range bridge.BuildWizardProviderCatalog() {
+		add(entry.ID)
+	}
+
+	var extras []string
+	appendExtra := func(configs map[string]string) {
+		for rawProviderID := range configs {
+			providerID := normalizeProviderID(strings.TrimSpace(rawProviderID))
+			if providerID == "" {
+				continue
+			}
+			if _, ok := seen[providerID]; ok {
+				continue
+			}
+			seen[providerID] = struct{}{}
+			extras = append(extras, providerID)
+		}
+	}
+	appendExtra(p.PrimaryConfig)
+	appendExtra(p.FallbackConfig)
+	sort.Strings(extras)
+
+	return append(ids, extras...)
+}
+
+func resolveWizardProviderModelRef(p *WizardV2Payload, providerID, rawProviderID string) string {
+	model := ""
+	if sel, ok := p.ProviderSelections[providerID]; ok && strings.TrimSpace(sel.Model) != "" {
+		model = strings.TrimSpace(sel.Model)
+	}
+	if model == "" {
+		if sel, ok := p.ProviderSelections[rawProviderID]; ok && strings.TrimSpace(sel.Model) != "" {
+			model = strings.TrimSpace(sel.Model)
+		}
+	}
+	if model == "" {
+		defaultRef := bridge.GetDefaultModelRef(providerID)
+		if defaultRef != "" && defaultRef != providerID+"/" {
+			model = defaultRef
+		}
+	}
+	if model == "" {
+		return providerID + "/"
+	}
+	if strings.Contains(model, "/") {
+		return model
+	}
+	return providerID + "/" + model
+}
+
+func collectWizardConfiguredProviders(p *WizardV2Payload, configs map[string]string) []wizardConfiguredProvider {
+	if len(configs) == 0 {
+		return nil
+	}
+
+	byID := make(map[string]wizardConfiguredProvider)
+	for rawProviderID, apiKey := range configs {
 		if strings.TrimSpace(apiKey) == "" {
 			continue
 		}
 		providerID := normalizeProviderID(strings.TrimSpace(rawProviderID))
-
-		// 从 providerSelections 获取模型（尝试规范化 ID 和原始 ID）
-		model := ""
-		if sel, ok := p.ProviderSelections[providerID]; ok && sel.Model != "" {
-			model = sel.Model
+		if providerID == "" {
+			continue
 		}
-		if model == "" {
-			if sel, ok := p.ProviderSelections[rawProviderID]; ok && sel.Model != "" {
-				model = sel.Model
-			}
-		}
-
-		// 如果没有指定模型，从 bridge 获取默认模型
-		if model == "" {
-			defaultRef := bridge.GetDefaultModelRef(providerID)
-			if defaultRef != "" && defaultRef != providerID+"/" {
-				model = defaultRef
-			}
-		}
-
-		if model != "" {
-			primaryProvider = providerID
-			primaryModel = model
-			break
-		}
-		// 即使没有 model 也记录第一个有 key 的 provider
-		if primaryProvider == "" {
-			primaryProvider = providerID
+		byID[providerID] = wizardConfiguredProvider{
+			ProviderID: providerID,
+			ModelRef:   resolveWizardProviderModelRef(p, providerID, rawProviderID),
 		}
 	}
 
-	if primaryProvider == "" {
+	ordered := make([]wizardConfiguredProvider, 0, len(byID))
+	for _, providerID := range orderedWizardProviderIDs(p) {
+		cfg, ok := byID[providerID]
+		if !ok {
+			continue
+		}
+		ordered = append(ordered, cfg)
+	}
+	return ordered
+}
+
+// applyPrimaryModelSelection 从 Wizard payload 推导主模型并写入 agents.defaults.model.primary。
+// 规则:
+// 1. primaryConfig 中首个已配置 provider（按 wizard 目录顺序）作为 primary。
+// 2. primaryConfig 中剩余 provider 自动进入 fallback，避免多填一个就被静默丢弃。
+// 3. fallbackConfig 中 provider 继续追加到 fallback 列表。
+func applyPrimaryModelSelection(p *WizardV2Payload, cfg *types.OpenAcosmiConfig) {
+	primaryCandidates := collectWizardConfiguredProviders(p, p.PrimaryConfig)
+	fallbackCandidates := collectWizardConfiguredProviders(p, p.FallbackConfig)
+	allCandidates := append([]wizardConfiguredProvider{}, primaryCandidates...)
+	allCandidates = append(allCandidates, fallbackCandidates...)
+	if len(allCandidates) == 0 {
 		return // 没有配置任何 provider
 	}
+	primary := allCandidates[0]
 
 	// 确保 agents.defaults 链路完整
 	if cfg.Agents == nil {
@@ -1201,54 +1349,29 @@ func applyPrimaryModelSelection(p *WizardV2Payload, cfg *types.OpenAcosmiConfig)
 		cfg.Agents.Defaults.Model = &types.AgentModelListConfig{}
 	}
 
-	// 写入 "provider/model" 格式
-	if primaryModel != "" {
-		if strings.Contains(primaryModel, "/") {
-			// 已经是 provider/model 格式（来自 bridge.GetDefaultModelRef）
-			cfg.Agents.Defaults.Model.Primary = primaryModel
-		} else {
-			cfg.Agents.Defaults.Model.Primary = primaryProvider + "/" + primaryModel
-		}
-	} else {
-		// 没有模型但有 provider — 至少写入 provider，让系统回退到 DefaultModel
-		cfg.Agents.Defaults.Model.Primary = primaryProvider + "/"
-	}
+	cfg.Agents.Defaults.Model.Primary = primary.ModelRef
 
-	// 构建 fallback 列表（fallbackConfig 中其他 provider 的模型）
+	// 构建 fallback 列表：
+	// - 主模型页中除 primary 外的已配置 provider
+	// - 备用模型页中已配置 provider
 	var fallbacks []string
-	for rawProviderID, apiKey := range p.FallbackConfig {
-		if strings.TrimSpace(apiKey) == "" {
+	seen := map[string]struct{}{
+		primary.ModelRef: {},
+	}
+	for _, candidate := range allCandidates[1:] {
+		if candidate.ProviderID == primary.ProviderID {
 			continue
 		}
-		providerID := normalizeProviderID(strings.TrimSpace(rawProviderID))
-		if providerID == primaryProvider {
+		if _, ok := seen[candidate.ModelRef]; ok {
 			continue
 		}
-		model := ""
-		if sel, ok := p.ProviderSelections[providerID]; ok && sel.Model != "" {
-			model = sel.Model
-		}
-		if model == "" {
-			if sel, ok := p.ProviderSelections[rawProviderID]; ok && sel.Model != "" {
-				model = sel.Model
-			}
-		}
-		if model == "" {
-			defaultRef := bridge.GetDefaultModelRef(providerID)
-			if defaultRef != "" && defaultRef != providerID+"/" {
-				model = defaultRef
-			}
-		}
-		if model != "" {
-			if strings.Contains(model, "/") {
-				fallbacks = append(fallbacks, model)
-			} else {
-				fallbacks = append(fallbacks, providerID+"/"+model)
-			}
-		}
+		seen[candidate.ModelRef] = struct{}{}
+		fallbacks = append(fallbacks, candidate.ModelRef)
 	}
 	if len(fallbacks) > 0 {
 		cfg.Agents.Defaults.Model.Fallbacks = &fallbacks
+	} else {
+		cfg.Agents.Defaults.Model.Fallbacks = nil
 	}
 
 	wizardV2Logger.Info("Primary model set", "model", cfg.Agents.Defaults.Model.Primary)

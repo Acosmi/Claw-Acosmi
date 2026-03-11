@@ -44,12 +44,22 @@ describe("control UI routing", () => {
   });
 
   it("respects /ui base paths", async () => {
-    const app = mountApp("/ui/cron");
+    const app = mountApp("/ui/automation");
     await app.updateComplete;
 
     expect(app.basePath).toBe("/ui");
-    expect(app.tab).toBe("cron");
-    expect(window.location.pathname).toBe("/ui/cron");
+    expect(app.tab).toBe("automation");
+    expect(window.location.pathname).toBe("/ui/automation");
+  });
+
+  it("hydrates automation detail routes from the location", async () => {
+    const app = mountApp("/ui/automation/email");
+    await app.updateComplete;
+
+    expect(app.basePath).toBe("/ui");
+    expect(app.tab).toBe("automation");
+    expect(app.automationPanel).toBe("email");
+    expect(window.location.pathname).toBe("/ui/automation/email");
   });
 
   it("infers nested base paths", async () => {
@@ -75,13 +85,40 @@ describe("control UI routing", () => {
     const app = mountApp("/chat");
     await app.updateComplete;
 
-    const link = app.querySelector<HTMLAnchorElement>('a.nav-item[href="/channels"]');
+    const link = app.querySelector<HTMLAnchorElement>('a.nav-item[href="/automation"]');
     expect(link).not.toBeNull();
     link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
 
     await app.updateComplete;
-    expect(app.tab).toBe("channels");
-    expect(window.location.pathname).toBe("/channels");
+    expect(app.tab).toBe("automation");
+    expect(window.location.pathname).toBe("/automation");
+  });
+
+  it("uses the automation hub path when clicking the top-level nav item", async () => {
+    const app = mountApp("/automation/email");
+    await app.updateComplete;
+
+    expect(app.automationPanel).toBe("email");
+    app.setTab("chat");
+    await app.updateComplete;
+
+    const link = app.querySelector<HTMLAnchorElement>('a.nav-item[href="/automation"]');
+    expect(link).not.toBeNull();
+    link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+
+    await app.updateComplete;
+    expect(app.tab).toBe("automation");
+    expect(app.automationPanel).toBe("hub");
+    expect(window.location.pathname).toBe("/automation");
+  });
+
+  it("keeps automation highlighted while viewing the media detail page", async () => {
+    const app = mountApp("/media");
+    await app.updateComplete;
+
+    expect(app.tab).toBe("media");
+    const link = app.querySelector<HTMLAnchorElement>('a.nav-item[href="/automation"]');
+    expect(link?.classList.contains("active")).toBe(true);
   });
 
   it("keeps chat and nav usable on narrow viewports", async () => {

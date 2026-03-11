@@ -3,7 +3,10 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
 func TestBuildWorkspaceSkillSnapshot_Empty(t *testing.T) {
@@ -170,6 +173,77 @@ func TestResolveToolSkillBindings_FirstWins(t *testing.T) {
 	}
 }
 
+func TestResolveToolSkillBindingSet_TracksAllSkillNames(t *testing.T) {
+	entries := []SkillEntry{
+		{
+			Skill:    Skill{Name: "first", Description: "First skill"},
+			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"bash"}},
+		},
+		{
+			Skill:    Skill{Name: "second", Description: "Second skill"},
+			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"bash"}},
+		},
+	}
+
+	bindingSet := ResolveToolSkillBindingSet(entries)
+	binding, ok := bindingSet["bash"]
+	if !ok {
+		t.Fatal("missing bash binding")
+	}
+	if binding.PrimarySkill != "first" {
+		t.Fatalf("PrimarySkill = %q, want first", binding.PrimarySkill)
+	}
+	if binding.Guidance != "First skill" {
+		t.Fatalf("Guidance = %q, want First skill", binding.Guidance)
+	}
+	if !reflect.DeepEqual(binding.SkillNames, []string{"first", "second"}) {
+		t.Fatalf("SkillNames = %v, want [first second]", binding.SkillNames)
+	}
+
+	nameMap := ResolveToolSkillNames(entries)
+	if !reflect.DeepEqual(nameMap["bash"], []string{"first", "second"}) {
+		t.Fatalf("ResolveToolSkillNames(bash) = %v, want [first second]", nameMap["bash"])
+	}
+}
+
+func TestResolvePromptToolSkillBindingSet_FiltersManualOnlyAndDisabled(t *testing.T) {
+	disabled := false
+	cfg := &types.OpenAcosmiConfig{
+		Skills: &types.SkillsConfig{
+			Entries: map[string]*types.SkillConfig{
+				"disabled": {Enabled: &disabled},
+			},
+		},
+	}
+	entries := []SkillEntry{
+		{
+			Skill:    Skill{Name: "active", Description: "Active skill"},
+			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"bash"}},
+			Enabled:  true,
+		},
+		{
+			Skill:                  Skill{Name: "manual-only", Description: "Manual only"},
+			Metadata:               &OpenAcosmiSkillMetadata{Tools: []string{"bash"}},
+			Enabled:                true,
+			DisableModelInvocation: true,
+		},
+		{
+			Skill:    Skill{Name: "disabled", Description: "Disabled skill"},
+			Metadata: &OpenAcosmiSkillMetadata{Tools: []string{"bash"}},
+			Enabled:  true,
+		},
+	}
+
+	bindingSet := ResolvePromptToolSkillBindingSet(entries, cfg, nil)
+	binding, ok := bindingSet["bash"]
+	if !ok {
+		t.Fatal("missing bash binding")
+	}
+	if !reflect.DeepEqual(binding.SkillNames, []string{"active"}) {
+		t.Fatalf("SkillNames = %v, want [active]", binding.SkillNames)
+	}
+}
+
 func TestLoadSkillsFromDir_ParsesToolsFromFrontmatter(t *testing.T) {
 	tmpDir := t.TempDir()
 	skillDir := filepath.Join(tmpDir, "my-exec")
@@ -214,5 +288,81 @@ func TestBuildWorkspaceSkillSnapshot_PreloadedEntries(t *testing.T) {
 	}
 	if snap.Version == nil || *snap.Version != 42 {
 		t.Error("version not set")
+	}
+}
+
+func TestLoadSkillsFromRoots_CategorizedSkillsDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	screenSkillDir := filepath.Join(tmpDir, "tools", "argus-screen-reading")
+	if err := os.MkdirAll(screenSkillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(screenSkillDir, "SKILL.md"), []byte("---\ndescription: read screen\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	providerSkillDir := filepath.Join(tmpDir, "providers", "openai")
+	if err := os.MkdirAll(providerSkillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(providerSkillDir, "SKILL.md"), []byte("---\ndescription: provider\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries := loadSkillsFromRoots(tmpDir)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries from categorized skills dir, got %d", len(entries))
+	}
+}
+
+func TestLoadSkillsFromRoots_DeepCategorizedSkillsDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	canvasSkillDir := filepath.Join(tmpDir, "tools", "ui", "canvas")
+	if err := os.MkdirAll(canvasSkillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(canvasSkillDir, "SKILL.md"), []byte("---\ndescription: canvas\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	webFetchSkillDir := filepath.Join(tmpDir, "tools", "web", "web-fetch")
+	if err := os.MkdirAll(webFetchSkillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(webFetchSkillDir, "SKILL.md"), []byte("---\ndescription: fetch\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries := loadSkillsFromRoots(tmpDir)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries from deep categorized skills dir, got %d", len(entries))
+	}
+}
+
+func TestResolveDocsSkillsDir_EnvOverrideSupportsCategorizedRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	skillDir := filepath.Join(tmpDir, "tools", "argus-screen-reading")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\ndescription: read screen\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := os.Getenv("OPENACOSMI_DOCS_SKILLS_DIR")
+	if err := os.Setenv("OPENACOSMI_DOCS_SKILLS_DIR", tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if prev == "" {
+			_ = os.Unsetenv("OPENACOSMI_DOCS_SKILLS_DIR")
+			return
+		}
+		_ = os.Setenv("OPENACOSMI_DOCS_SKILLS_DIR", prev)
+	}()
+
+	got := ResolveDocsSkillsDir("")
+	if got != tmpDir {
+		t.Fatalf("expected env override docs skills dir %q, got %q", tmpDir, got)
 	}
 }

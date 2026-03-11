@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/capabilities"
+	"github.com/Acosmi/ClawAcosmi/internal/agents/configtools"
 )
 
 // TestTreeToolSummariesAlignWithRegistry 确保 TreeToolSummaries 中的主链路工具名
@@ -87,6 +88,20 @@ func TestBuildToolingSectionIncludesSendMediaDelegationHint(t *testing.T) {
 	}
 }
 
+func TestBuildToolingSectionIncludesSpecializedRuntimeExtras(t *testing.T) {
+	summaries := capabilities.TreeToolSummaries()
+	for name, summary := range configtools.ToolSummaries() {
+		summaries[name] = summary
+	}
+	output := buildToolingSection([]string{"gateway", "browser_config", "media_config"}, summaries)
+	if !contains(output, "- browser_config: Read or update browser configuration via dedicated gateway actions") {
+		t.Fatalf("tooling section should include browser_config summary, got: %q", output)
+	}
+	if !contains(output, "- media_config: Read or update media-agent configuration via dedicated gateway actions") {
+		t.Fatalf("tooling section should include media_config summary, got: %q", output)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }
@@ -150,12 +165,25 @@ func TestBuildToolingSectionOrderMatchesTree(t *testing.T) {
 	treeSummaries := capabilities.TreeToolSummaries()
 	output := buildToolingSection(treeOrder, treeSummaries)
 
-	// Find positions of each tool in the output
+	positions := make(map[string]int)
+	index := 0
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		name := strings.TrimPrefix(line, "- ")
+		if cut := strings.Index(name, ": "); cut >= 0 {
+			name = name[:cut]
+		}
+		positions[name] = index
+		index++
+	}
+
 	lastPos := -1
 	for _, tool := range treeOrder {
-		pos := strings.Index(output, "- "+tool)
-		if pos < 0 {
-			continue // tool may have been filtered
+		pos, ok := positions[tool]
+		if !ok {
+			continue
 		}
 		if pos < lastPos {
 			t.Errorf("tool %q appears before previous tool in output (order violation)", tool)

@@ -388,7 +388,7 @@ func (m *PlanConfirmationManager) PendingCount() int {
 type ApprovalRequirement struct {
 	Type            string   `json:"type"`                      // plan_confirm/exec_escalation/mount_access/data_export
 	RequestedLevel  string   `json:"requestedLevel,omitempty"`  // exec_escalation
-	TTLMinutes      int      `json:"ttlMinutes"`                // 默认/上限由 ValidateApprovalScope 归一化
+	TTLMinutes      int      `json:"ttlMinutes"`                // exec/data_export 使用 TTL；mount_access 固定为 0（本任务）
 	MountMode       string   `json:"mountMode,omitempty"`       // mount_access
 	MountPath       string   `json:"mountPath,omitempty"`       // mount_access
 	NeedsOriginator bool     `json:"needsOriginator,omitempty"` // data_export
@@ -405,7 +405,7 @@ type ApprovalScope struct {
 	AdditionalApprovals []ApprovalRequirement `json:"additionalApprovals,omitempty"`
 	Type                string                `json:"type"`            // 向后兼容：PrimaryApproval.Type
 	RequestedLevel      string                `json:"requestedLevel"`  // From EscalationHints.DefaultRequestedLevel
-	TTLMinutes          int                   `json:"ttlMinutes"`      // From EscalationHints.DefaultTTLMinutes
+	TTLMinutes          int                   `json:"ttlMinutes"`      // From EscalationHints.DefaultTTLMinutes; mount_access 固定为 0（本任务）
 	MountMode           string                `json:"mountMode"`       // From EscalationHints.DefaultMountMode
 	MountPath           string                `json:"mountPath"`       // 从 targets 推导的挂载路径
 	NeedsOriginator     bool                  `json:"needsOriginator"` // From EscalationHints.NeedsOriginator
@@ -496,7 +496,9 @@ func DeriveApprovalScope(analysis IntentAnalysis, tree *capabilities.CapabilityT
 	if scope.Type == "" {
 		scope.Type = "plan_confirm"
 	}
-	if scope.Type == "exec_escalation" && scope.RequestedLevel == "full" {
+	if scope.Type == "mount_access" {
+		scope.TTLMinutes = 0
+	} else if scope.Type == "exec_escalation" && scope.RequestedLevel == "full" {
 		scope.TTLMinutes = 0
 	} else if scope.TTLMinutes == 0 {
 		scope.TTLMinutes = 30
@@ -519,7 +521,7 @@ func DeriveApprovalScope(analysis IntentAnalysis, tree *capabilities.CapabilityT
 	if hasMountAccessApprovalRequirement(analysis, tree) && scope.MountPath != "" {
 		mountApproval := ApprovalRequirement{
 			Type:       "mount_access",
-			TTLMinutes: scope.TTLMinutes,
+			TTLMinutes: 0,
 			MountMode:  scope.MountMode,
 			MountPath:  scope.MountPath,
 		}
@@ -537,7 +539,7 @@ func DeriveApprovalScope(analysis IntentAnalysis, tree *capabilities.CapabilityT
 //  1. 审批类型必须是四种有效类型之一
 //  2. exec_escalation 必须有 RequestedLevel
 //  3. mount_access 必须有 MountMode
-//  4. TTL 在合理范围 (1-480 分钟)
+//  4. exec/data_export 的 TTL 在合理范围 (1-480 分钟)，mount_access 固定为当前任务
 func ValidateApprovalScope(scope ApprovalScope, tree *capabilities.CapabilityTree) (ApprovalScope, error) {
 	switch scope.Type {
 	case "plan_confirm", "exec_escalation", "mount_access", "data_export":
@@ -554,15 +556,14 @@ func ValidateApprovalScope(scope ApprovalScope, tree *capabilities.CapabilityTre
 		scope.MountMode = "ro"
 	}
 
-	if scope.Type == "exec_escalation" && scope.RequestedLevel == "full" {
+	if scope.Type == "mount_access" {
 		scope.TTLMinutes = 0
-		return scope, nil
-	}
-
-	if scope.TTLMinutes <= 0 {
+	} else if scope.Type == "exec_escalation" && scope.RequestedLevel == "full" {
+		scope.TTLMinutes = 0
+	} else if scope.TTLMinutes <= 0 {
 		scope.TTLMinutes = 30
 	}
-	if scope.TTLMinutes > 480 {
+	if scope.Type != "mount_access" && scope.TTLMinutes > 480 {
 		scope.TTLMinutes = 480
 	}
 
@@ -634,7 +635,9 @@ func mergeApprovalRequirement(base, extra ApprovalRequirement) ApprovalRequireme
 	if requestedLevelPriority(extra.RequestedLevel) > requestedLevelPriority(base.RequestedLevel) {
 		base.RequestedLevel = extra.RequestedLevel
 	}
-	if extra.TTLMinutes > base.TTLMinutes {
+	if base.Type == "mount_access" || extra.Type == "mount_access" {
+		base.TTLMinutes = 0
+	} else if extra.TTLMinutes > base.TTLMinutes {
 		base.TTLMinutes = extra.TTLMinutes
 	}
 	if mountModePriority(extra.MountMode) > mountModePriority(base.MountMode) {
@@ -666,6 +669,10 @@ func normalizeApprovalRequirement(req ApprovalRequirement) (ApprovalRequirement,
 	}
 	if req.Type == "mount_access" && req.MountMode == "" {
 		req.MountMode = "ro"
+	}
+	if req.Type == "mount_access" {
+		req.TTLMinutes = 0
+		return req, nil
 	}
 	if req.Type == "exec_escalation" && req.RequestedLevel == "full" {
 		req.TTLMinutes = 0
@@ -706,11 +713,11 @@ func approvalRequirementSummary(req ApprovalRequirement, conditional bool) strin
 		}
 		if req.MountPath != "" {
 			if conditional {
-				return fmt.Sprintf("mount_access（如超出当前作用域，%s 挂载 %s）", mode, req.MountPath)
+				return fmt.Sprintf("mount_access（如超出当前作用域，本任务 %s 挂载 %s）", mode, req.MountPath)
 			}
-			return fmt.Sprintf("mount_access（%s 挂载 %s）", mode, req.MountPath)
+			return fmt.Sprintf("mount_access（本任务 %s 挂载 %s）", mode, req.MountPath)
 		}
-		return fmt.Sprintf("mount_access（%s）", mode)
+		return fmt.Sprintf("mount_access（本任务 %s）", mode)
 	case "exec_escalation":
 		level := req.RequestedLevel
 		if level == "" {

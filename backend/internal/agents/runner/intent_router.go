@@ -33,16 +33,21 @@ const (
 )
 
 // classifyIntent 根据用户 prompt 快速分类意图（六级）。
-// 优先级: greeting > question > task_delete > task_multimodal > task_write > task_light
 //
-// Stage 1 纯规则路由（零 LLM 成本，<1ms）。
+// 架构 v2 (2026-03-10): 多信号加权评分替代硬级联短路。
+// 疑问形式不再一票否决 — 工具目标、动作动词、祈使标记等正向信号可以对冲。
+//
+// 硬规则 (安全优先): greeting / task_delete / task_multimodal
+// 多信号评分: question vs task_light vs task_write
+//
+// Stage 1 纯规则+多信号评分（零 LLM 成本，<1ms）。
 // Stage 2 轻量 LLM 分类（预留接口，当前未启用）。
 func classifyIntent(prompt string) intentTier {
 	trimmed := strings.TrimSpace(prompt)
 	runes := []rune(trimmed)
 	lower := strings.ToLower(trimmed)
 
-	// ── 1. Greeting: 短文本 + 匹配问候词 ──
+	// ── 1. Greeting: 短文本 + 匹配问候词 (硬规则) ──
 	if len(runes) <= 10 {
 		greetings := []string{
 			"你好", "hi", "hello", "嗨", "hey",
@@ -57,35 +62,124 @@ func classifyIntent(prompt string) intentTier {
 		}
 	}
 
-	// ── 2. Question: 疑问标记 + 无祈使前缀 + 无动作动词 ──
-	// 核心设计: 先检测提问再检测任务，避免 "代码是谁写的？" 被误判为 task_write
-	// Bug#11 修复: 动作动词兜底 — 即使句式是疑问且无祈使前缀，包含诊断/执行类动词也应归类为任务
-	if isInterrogative(lower) && !hasImperativePrefix(lower) {
-		if !containsActionVerb(lower) {
-			return intentQuestion
-		}
-		// 包含动作动词 → 跳过 question，继续走关键词匹配
-	}
-
-	// ── 3. Task Delete: 破坏性操作关键词 ──
-	// 高安全优先级，确保删除类意图被正确捕获
+	// ── 2. Task Delete: 破坏性操作关键词 (安全硬规则) ──
 	if containsAnyKeyword(lower, deleteKeywords) {
 		return intentTaskDelete
 	}
 
-	// ── 4. Task Multimodal: 视觉/浏览器交互关键词 ──
+	// ── 3. Task Multimodal: 视觉/浏览器交互关键词 (硬规则) ──
 	if containsAnyKeyword(lower, multimodalKeywords) {
 		return intentTaskMultimodal
 	}
 
-	// ── 5. Task Write: 创建/修改关键词 ──
-	if containsAnyKeyword(lower, writeKeywords) {
-		return intentTaskWrite
+	// ── 4. Multi-signal scoring: question vs task_light vs task_write ──
+	// 多信号加权评分 — 正值倾向任务，负值倾向提问。
+	// 设计: docs/claude/goujia/arch-intent-classification-v2.md §2.1
+	score := computeIntentScore(lower, trimmed)
+
+	if score >= 0 {
+		// 净分非负 → 任务类。检查 writeKeywords 决定是 task_write 还是 task_light。
+		if containsAnyKeyword(lower, writeKeywords) {
+			return intentTaskWrite
+		}
+		return intentTaskLight
 	}
 
-	// ── 6. Default: Task Light ──
-	// 比旧架构的 intentChat 更安全 — 提供 bash + 读取工具，不会陷入死循环
-	return intentTaskLight
+	// 净分为负 → 所有正向信号不足以对冲疑问信号 → 信息查询
+	return intentQuestion
+}
+
+// computeIntentScore 多信号加权评分。
+//
+// 信号维度:
+//
+//	S1 语言形式: isInterrogative (-0.3), hasImperativePrefix (+0.5), containsActionVerb (+0.4)
+//	S2 工具目标: hasFileSystemTarget (+0.6), hasURLTarget (+0.6), hasConfigTarget (+0.4)
+//
+// 行业对标: Semantic Router 多信号融合, Rasa DIET 多任务联合分类
+func computeIntentScore(lower, original string) float64 {
+	score := 0.0
+
+	// S1: 语言形式信号
+	if isInterrogative(lower) {
+		score -= 0.3 // 弱负向: 疑问形式 ≠ 信息查询意图
+	}
+	if hasImperativePrefix(lower) {
+		score += 0.5 // 强正向: 祈使标记明确表示任务委托
+	}
+	if containsActionVerb(lower) {
+		score += 0.4 // 中正向: 动作动词暗示执行意图
+	}
+
+	// S2: 工具目标信号 — prompt 包含执行目标则强烈暗示任务请求
+	if hasFileSystemTarget(lower, original) {
+		score += 0.6 // 强正向: 文件/目录目标
+	}
+	if hasURLTarget(original) {
+		score += 0.6 // 强正向: URL 目标
+	}
+	if hasConfigTarget(lower) {
+		score += 0.4 // 中正向: 配置目标
+	}
+
+	return score
+}
+
+// hasFileSystemTarget 检测 prompt 是否包含文件系统操作目标。
+// 不包含孤立的 "文件" 一词 (避免 "什么是文件描述符" 误匹配)。
+func hasFileSystemTarget(lower, original string) bool {
+	// 1. 目录/位置别名 — 几乎总是隐含具体 FS 操作
+	// 注: "文档" 已移除 — 歧义词（Documents 文件夹 vs 文档/documentation 概念）。
+	// 用户说 "文档目录"/"文档文件夹" 时由 "目录"/"文件夹" 捕获。
+	dirAliases := []string{
+		"桌面", "desktop", "下载", "downloads", "documents",
+		"目录", "文件夹", "当前目录", "工作目录", "根目录",
+	}
+	for _, alias := range dirAliases {
+		if strings.Contains(lower, alias) {
+			return true
+		}
+	}
+
+	// 2. 文件上下文关键词 — 强任务信号
+	fileContextKeywords := []string{
+		"日志", "log文件", "配置文件",
+	}
+	for _, kw := range fileContextKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+
+	// 3. 绝对文件路径 (复用 intent_analysis.go 的包级正则)
+	if reAbsFilePath.MatchString(original) {
+		return true
+	}
+
+	// 4. 裸文件名引用 (filename.ext)
+	if reBareFile.MatchString(original) {
+		return true
+	}
+
+	return false
+}
+
+// hasURLTarget 检测 prompt 是否包含 URL。
+func hasURLTarget(original string) bool {
+	return reURL.MatchString(original)
+}
+
+// hasConfigTarget 检测 prompt 是否包含配置相关目标。
+func hasConfigTarget(lower string) bool {
+	configKeywords := []string{
+		"配置", "config", "设置", "settings",
+	}
+	for _, kw := range configKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------- 关键词集 ----------
@@ -244,6 +338,94 @@ func filterToolsByIntent(tools []llmclient.ToolDef, tier intentTier) []llmclient
 	return filtered
 }
 
+// promoteBrowserContinuation upgrades lightweight/question tiers back to
+// task_multimodal when the recent conversation is clearly continuing an active
+// browser workflow. This keeps browser follow-up turns from losing the browser
+// tool after the first multimodal step.
+func promoteBrowserContinuation(analysis IntentAnalysis, prompt string, priorMessages []llmclient.ChatMessage) IntentAnalysis {
+	if analysis.Tier == intentTaskMultimodal {
+		return analysis
+	}
+	if !hasRecentBrowserActivity(priorMessages) {
+		return analysis
+	}
+	if !looksLikeBrowserContinuationPrompt(prompt) {
+		return analysis
+	}
+	return rebuildIntentAnalysisWithTier(prompt, intentTaskMultimodal)
+}
+
+func hasRecentBrowserActivity(messages []llmclient.ChatMessage) bool {
+	if len(messages) == 0 {
+		return false
+	}
+	start := len(messages) - 8
+	if start < 0 {
+		start = 0
+	}
+	for _, msg := range messages[start:] {
+		for _, block := range msg.Content {
+			if block.Type == "tool_use" && block.Name == "browser" {
+				return true
+			}
+			if block.Type == "tool_result" {
+				if strings.Contains(block.ResultText, "[Browser ") ||
+					strings.Contains(block.ResultText, "ARIA Accessibility Tree") ||
+					strings.Contains(block.ResultText, "Screenshot captured") {
+					return true
+				}
+				for _, rb := range block.ResultBlocks {
+					if rb.Type == "text" && strings.Contains(rb.Text, "ARIA Accessibility Tree") {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func looksLikeBrowserContinuationPrompt(prompt string) bool {
+	lower := strings.ToLower(strings.TrimSpace(prompt))
+	if lower == "" {
+		return false
+	}
+
+	browserCues := []string{
+		"browser", "browse", "tab", "screenshot", "page", "web page", "extension",
+		"浏览器", "浏览器自动化", "网页", "页面", "当前页", "这个页面", "这页", "标签页", "截图", "扩展", "自动化", "二维码", "表单", "按钮",
+	}
+	for _, cue := range browserCues {
+		if strings.Contains(lower, cue) {
+			return true
+		}
+	}
+
+	if len([]rune(lower)) > 16 {
+		return false
+	}
+	shortContinuationCues := []string{"继续", "下一步", "接着", "然后呢", "继续吧", "往下", "继续操作"}
+	for _, cue := range shortContinuationCues {
+		if strings.Contains(lower, cue) {
+			return true
+		}
+	}
+	return false
+}
+
+func rebuildIntentAnalysisWithTier(prompt string, tier intentTier) IntentAnalysis {
+	tree := capabilities.DefaultTree()
+	targets := extractTargets(prompt)
+	actions := inferActions(tier, targets, prompt, tree)
+	risks := assessRisks(actions, targets, tree)
+	return IntentAnalysis{
+		Tier:            tier,
+		RequiredActions: actions,
+		Targets:         targets,
+		RiskHints:       risks,
+	}
+}
+
 // P1-7: tierToolAllowlist deleted. Allowlists now derived from capability tree (D3).
 
 // ---------- 历史裁剪 ----------
@@ -299,7 +481,8 @@ This is an informational question, NOT a task execution request.
 - Answer from conversation history and memory FIRST — do not call tools to verify known information.
 - If the answer exists in prior messages, respond directly without tool calls.
 - Only use search tools if the history is truly insufficient.
-- Keep responses concise (under 200 chars for simple factual questions).`
+- Keep responses concise (under 200 chars for simple factual questions).
+- NEVER claim you lack capabilities you actually have. If your current tool set seems insufficient for the user's intent, say "this request may need task-level tools — please rephrase as a task" instead of "I cannot do X".`
 	case intentTaskLight:
 		return `## Intent Guidance (Light Task Mode)
 This is a read/check operation.
@@ -307,6 +490,7 @@ This is a read/check operation.
 - Use known file paths from history — avoid broad searches like 'find ~'.
 - Prefer read_file/list_dir for direct access over bash for file operations.
 - For sending/sharing an existing local file or image whose path/name is already known, use 'send_media' directly. Do NOT delegate to 'spawn_argus_agent' just to transmit an already-known file.
+- In L0-L2, 'send_media' requires data_export approval; in L2 sandbox mode, if the path is outside the current accessible scope, a mount/path approval may happen before export. L3 bypasses these approvals.
 - If a file must be located first, do the minimal file discovery needed, then call 'send_media' once the path is known.
 - If the user is checking status, provide a brief summary.
 - When the user's request matches a known skill topic (e.g., system diagnostics, deployment, debugging, monitoring), use search_skills first to leverage specialized knowledge and best practices.
@@ -336,12 +520,14 @@ This task involves visual or browser interaction.
 - For opening web pages / URLs: ALWAYS use 'browser' tool with 'navigate' action. NEVER use bash 'open' command for URLs.
 - For web page screenshots: use 'browser' tool with 'screenshot' action (NOT argus_capture_screen).
 - For web page interaction (click, type, scroll): use 'browser' tool with CSS selectors or ARIA refs.
+- For browser result verification after state changes: call 'observe' or 'screenshot' explicitly. Do NOT assume browser actions will attach screenshots automatically.
 - For complex multi-step web tasks: use 'browser' tool with 'ai_browse' action.
 - For sending an existing local file or screenshot to a channel, use 'send_media'. Only use 'spawn_argus_agent' if the file must first be discovered or produced through native desktop interaction.
+- In L0-L2, 'send_media' requires data_export approval; in L2 sandbox mode, if the file path is outside current scope, mount/path approval may happen first. L3 bypasses these approvals.
 - For desktop application interaction (native apps, not web): use 'spawn_argus_agent' to delegate to 灵瞳 sub-agent.
 - For full desktop screenshots (not web): use 'argus_capture_screen' directly.
 - Rule: if the target is a URL or web page, use 'browser'. Only use argus for native desktop apps.
-- If the browser tool returns 'not available', tell the user to visit the browser extension setup guide at /browser-extension/ on the Gateway to install the Chrome extension. Include the full URL in your reply.
+- If the browser tool returns 'not available', tell the user to visit the browser extension setup guide at /browser-extension/ on the Gateway and then check Automation -> Browser Management if the extension still does not connect. Include the full URL in your reply.
 - Complex multimodal tasks may go through plan confirmation — wait for user approval before executing.`
 	default:
 		return ""
@@ -375,6 +561,12 @@ var actionVerbs = []string{
 	// 执行类
 	"执行", "运行", "启动", "停止", "重启", "部署", "安装", "卸载",
 	"execute", "restart",
+	// 查询/查看类 — 2026-03-10 多信号分类器 S0-6
+	"查询", "查看", "查一下", "看看", "列出", "列一下", "打开",
+	"look at", "show me", "list",
+	// 配置类疑问句模式
+	"怎么改", "如何改", "怎么配置", "如何配置", "怎么设置", "如何设置", "怎么调整", "如何调整",
+	"how to configure", "how to change", "how to update", "how to set",
 }
 
 // containsActionVerb 检测消息是否包含动作动词。

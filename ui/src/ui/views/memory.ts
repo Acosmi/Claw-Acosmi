@@ -138,6 +138,7 @@ function renderLLMConfigPanel(props: MemoryProps) {
   const cfg = props.llmConfig;
   const providers = cfg?.providers ?? [];
   const hasOwnApiKey = cfg?.hasOwnApiKey ?? false;
+  const inherited = cfg?.inherited ?? false;
 
   ensureLLMDraft(cfg);
   const draft = _llmDraft!;
@@ -173,6 +174,7 @@ function renderLLMConfigPanel(props: MemoryProps) {
     if (ok) {
       _llmSaveStatus = "saved";
       draft.apiKey = ""; // reset apiKey field after successful save
+      _llmDraft = null;
       // Clear the password input
       const apiKeyEl = document.getElementById("uhms-llm-apikey") as HTMLInputElement | null;
       if (apiKeyEl) apiKeyEl.value = "";
@@ -188,6 +190,20 @@ function renderLLMConfigPanel(props: MemoryProps) {
     _llmSaveStatus = "saving";
     const ok = await props.onLLMConfigSave(draft.provider, draft.model, draft.baseUrl, "");
     _llmSaveStatus = ok ? "saved" : "error";
+    if (ok) {
+      _llmDraft = null;
+    }
+    if (_llmSaveTimer) clearTimeout(_llmSaveTimer);
+    _llmSaveTimer = setTimeout(() => { _llmSaveStatus = "idle"; _llmSaveTimer = null; }, 3000);
+  };
+
+  const handleUsePrimaryModel = async () => {
+    _llmSaveStatus = "saving";
+    const ok = await props.onLLMConfigSave("", "", "", "");
+    _llmSaveStatus = ok ? "saved" : "error";
+    if (ok) {
+      _llmDraft = null;
+    }
     if (_llmSaveTimer) clearTimeout(_llmSaveTimer);
     _llmSaveTimer = setTimeout(() => { _llmSaveStatus = "idle"; _llmSaveTimer = null; }, 3000);
   };
@@ -214,6 +230,11 @@ function renderLLMConfigPanel(props: MemoryProps) {
       border-radius: 8px;
     ">
       <div style="font-weight:600; margin-bottom:0.75rem; font-size:0.9rem">${t("memory.llmModel")} ${t("memory.llmConfig")}</div>
+      ${inherited ? html`
+        <div style="margin-bottom:0.75rem; font-size:0.82rem; color:#495057;">
+          ${t("memory.llmSharedWithPrimary")}
+        </div>
+      ` : nothing}
 
       <div style="display:grid; grid-template-columns:auto 1fr; gap:8px 12px; align-items:center">
           <label style="font-size:0.85rem">${t("memory.llmProvider")}</label>
@@ -255,8 +276,15 @@ function renderLLMConfigPanel(props: MemoryProps) {
 
       <div style="margin-top:0.75rem; display:flex; align-items:center; justify-content:flex-end; gap:8px">
         ${statusBadge}
+        ${!inherited && cfg?.provider ? html`
+          <button class="btn btn--sm"
+            ?disabled=${_llmSaveStatus === "saving"}
+            @click=${handleUsePrimaryModel}>
+            ${t("memory.llmUsePrimary")}
+          </button>
+        ` : nothing}
         <button class="btn btn--sm btn--primary"
-          ?disabled=${!draft.provider || _llmSaveStatus === "saving"}
+          ?disabled=${!draft.provider || !hasChanges || _llmSaveStatus === "saving"}
           @click=${handleSave}>
           ${_llmSaveStatus === "saving" ? t("memory.llmSaving") : t("memory.llmSave")}
         </button>

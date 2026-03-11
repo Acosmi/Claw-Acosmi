@@ -6,7 +6,7 @@ export function getTabGroups() {
     {
       label: t("nav.group.agent"),
       hideLabel: true,
-      tabs: ["chat", "tasks", "agents", "nodes", "media"] as const,
+      tabs: ["chat", "tasks", "agents", "nodes", "automation"] as const,
     },
     {
       label: t("nav.group.control"),
@@ -18,6 +18,7 @@ export function getTabGroups() {
 
 export type Tab =
   | "agents"
+  | "automation"
   | "overview"
   | "channels"
   | "plugins"
@@ -39,6 +40,7 @@ export type Tab =
 
 const TAB_PATHS: Record<Tab, string> = {
   agents: "/agents",
+  automation: "/automation",
   overview: "/overview",
   channels: "/channels",
   plugins: "/plugins",
@@ -60,6 +62,10 @@ const TAB_PATHS: Record<Tab, string> = {
 };
 
 const PATH_TO_TAB = new Map(Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as Tab]));
+const AUTOMATION_PANEL_PATHS = {
+  hub: TAB_PATHS.automation,
+  email: `${TAB_PATHS.automation}/email`,
+} as const;
 
 export function normalizeBasePath(basePath: string): string {
   if (!basePath) {
@@ -98,6 +104,20 @@ export function pathForTab(tab: Tab, basePath = ""): string {
   return base ? `${base}${path}` : path;
 }
 
+export function pathForAutomationPanel(panel: "hub" | "email", basePath = ""): string {
+  const base = normalizeBasePath(basePath);
+  const path = AUTOMATION_PANEL_PATHS[panel] ?? AUTOMATION_PANEL_PATHS.hub;
+  return base ? `${base}${path}` : path;
+}
+
+function isAutomationPath(path: string): boolean {
+  return path === TAB_PATHS.automation || path.startsWith(`${TAB_PATHS.automation}/`);
+}
+
+function isRecognizedTabPath(path: string): boolean {
+  return PATH_TO_TAB.has(path) || path === "/sessions" || isAutomationPath(path);
+}
+
 export function tabFromPath(pathname: string, basePath = ""): Tab | null {
   const base = normalizeBasePath(basePath);
   let path = pathname || "/";
@@ -123,7 +143,27 @@ export function tabFromPath(pathname: string, basePath = ""): Tab | null {
   if (normalized === "/subagents") {
     return "agents";
   }
+  if (isAutomationPath(normalized)) {
+    return "automation";
+  }
   return PATH_TO_TAB.get(normalized) ?? null;
+}
+
+export function automationPanelFromPath(pathname: string, basePath = ""): "hub" | "email" {
+  const base = normalizeBasePath(basePath);
+  let path = pathname || "/";
+  if (base) {
+    if (path === base) {
+      path = "/";
+    } else if (path.startsWith(`${base}/`)) {
+      path = path.slice(base.length);
+    }
+  }
+  const normalized = normalizePath(path).toLowerCase();
+  if (normalized === AUTOMATION_PANEL_PATHS.email) {
+    return "email";
+  }
+  return "hub";
 }
 
 export function inferBasePathFromPathname(pathname: string): string {
@@ -141,7 +181,7 @@ export function inferBasePathFromPathname(pathname: string): string {
   for (let i = 0; i < segments.length; i++) {
     const candidate = `/${segments.slice(i).join("/")}`.toLowerCase();
     // Legacy path: /sessions is now served by /memory
-    if (PATH_TO_TAB.has(candidate) || candidate === "/sessions") {
+    if (isRecognizedTabPath(candidate)) {
       const prefix = segments.slice(0, i);
       return prefix.length ? `/${prefix.join("/")}` : "";
     }
@@ -153,6 +193,8 @@ export function iconForTab(tab: Tab): IconName {
   switch (tab) {
     case "agents":
       return "agentSwarm";
+    case "automation":
+      return "automationHub";
     case "chat":
       return "chatSpark";
     case "overview":

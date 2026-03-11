@@ -67,21 +67,21 @@ export function renderChannelConfigModal(
 
         <div class="channel-config-modal__body">
           ${props.configSchemaLoading
-      ? html`<div class="muted">${t("channels.loadingSchema")}</div>`
-      : renderChannelConfigForm({
-        channelId,
-        configValue: props.configForm,
-        schema: props.configSchema,
-        uiHints: props.configUiHints,
-        disabled,
-        onPatch: props.onConfigPatch,
-      })}
+            ? html`<div class="muted">${t("channels.loadingSchema")}</div>`
+            : renderChannelConfigForm({
+              channelId,
+              configValue: props.configForm,
+              schema: props.configSchema,
+              uiHints: props.configUiHints,
+              disabled,
+              onPatch: props.onConfigPatch,
+            })}
         </div>
 
         <div class="channel-config-modal__footer">
           ${props.lastError
-      ? html`<div class="callout danger" style="margin-bottom: 8px; width: 100%;">${props.lastError}</div>`
-      : nothing}
+            ? html`<div class="callout danger channel-config-modal__error">${props.lastError}</div>`
+            : nothing}
           <button class="btn" ?disabled=${disabled} @click=${onClose}>
             ${t("wizard.close")}
           </button>
@@ -96,13 +96,13 @@ export function renderChannelConfigModal(
             class="btn primary"
             ?disabled=${disabled || !props.configFormDirty}
             @click=${async () => {
-      const ok = await props.onConfigSave();
-      if (ok) onClose();
-    }}
+              const ok = await props.onConfigSave();
+              if (ok) onClose();
+            }}
           >
             ${props.configSaving
-      ? t("channels.saving")
-      : t("channels.save")}
+              ? t("channels.saving")
+              : t("channels.save")}
           </button>
         </div>
       </div>

@@ -1,0 +1,3 @@
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/openacosmi/_deprecated_providers
+/Users/fushihua/Desktop/CrabClaw/backend/Makefile
+/Users/fushihua/Desktop/CrabClaw/docker-compose.yml

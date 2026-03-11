@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 var (
@@ -94,9 +96,7 @@ func ResolveGatewayStateDir(env map[string]string) (string, error) {
 func ResolveGatewayLogPaths(env map[string]string) (stdoutPath, stderrPath string) {
 	stateDir, err := ResolveGatewayStateDir(env)
 	if err != nil {
-		// 回退到默认位置
-		home, _ := os.UserHomeDir()
-		stateDir = filepath.Join(home, ".openacosmi")
+		stateDir = fallbackGatewayStateDir(env)
 	}
 	logDir := filepath.Join(stateDir, "logs")
 
@@ -114,4 +114,16 @@ func ResolveGatewayLogPaths(env map[string]string) (stdoutPath, stderrPath strin
 		stderrPath = filepath.Join(logDir, prefix+".stderr.log")
 	}
 	return
+}
+
+func fallbackGatewayStateDir(env map[string]string) string {
+	home, err := ResolveHomeDir(env)
+	if err != nil {
+		home, _ = os.UserHomeDir()
+	}
+	if strings.TrimSpace(home) == "" {
+		home = "."
+	}
+	suffix := ResolveGatewayProfileSuffix(env["OPENACOSMI_PROFILE"])
+	return filepath.Join(home, config.NewStateDirname+suffix)
 }

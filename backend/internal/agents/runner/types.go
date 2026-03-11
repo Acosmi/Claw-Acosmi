@@ -170,6 +170,7 @@ type RunEmbeddedPiAgentParams struct {
 	TimeoutMs           int64                   `json:"timeoutMs"`
 	RunID               string                  `json:"runId"`
 	ExtraSystemPrompt   string                  `json:"extraSystemPrompt,omitempty"`
+	SkillFilter         []string                `json:"skillFilter,omitempty"`
 	Config              *types.OpenAcosmiConfig `json:"-"`
 	ThinkLevel          string                  `json:"thinkLevel,omitempty"`
 	AuthProfileID       string                  `json:"authProfileId,omitempty"`
@@ -185,7 +186,7 @@ type RunEmbeddedPiAgentParams struct {
 	SecurityLevelFunc func() string `json:"-"`
 	// MountRequestsFunc 动态获取活跃 grant 的临时挂载请求（由 server.go 注入）。
 	// Phase 3.4: escalation grant → ToolExecParams.MountRequests → CLI --mount。
-	MountRequestsFunc func() []MountRequestForSandbox `json:"-"`
+	MountRequestsFunc func(runID string) []MountRequestForSandbox `json:"-"`
 	// DelegationContract 子 agent 委托合约（可选）——传递到 AttemptParams → ToolExecParams。
 	// nil = 主 agent 无合约限制。
 	DelegationContract *DelegationContract `json:"-"`

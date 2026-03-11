@@ -33,6 +33,29 @@ func TestResolveSessionTranscriptCandidates_WithStorePath(t *testing.T) {
 	}
 }
 
+func TestResolveSessionTranscriptCandidates_UsesResolvedStateDir(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRABCLAW_STATE_DIR", stateDir)
+	t.Setenv("OPENACOSMI_STATE_DIR", "")
+
+	candidates := ResolveSessionTranscriptCandidates("sess1", "", "", "agent-a")
+	wantAgent := filepath.Join(stateDir, "agents", "agent-a", "sessions", "sess1.jsonl")
+	wantGlobal := filepath.Join(stateDir, "sessions", "sess1.jsonl")
+	foundAgent := false
+	foundGlobal := false
+	for _, candidate := range candidates {
+		if candidate == wantAgent {
+			foundAgent = true
+		}
+		if candidate == wantGlobal {
+			foundGlobal = true
+		}
+	}
+	if !foundAgent || !foundGlobal {
+		t.Fatalf("candidates = %v, want %q and %q", candidates, wantAgent, wantGlobal)
+	}
+}
+
 // ---------- ReadFirstUserMessageFromTranscript ----------
 
 func TestReadFirstUserMessageFromTranscript(t *testing.T) {

@@ -121,15 +121,30 @@ type RestartSentinelWriter interface {
 
 // GatewayRestartResult 重启调度结果。
 type GatewayRestartResult struct {
-	Scheduled bool   `json:"scheduled"`
-	DelayMs   int    `json:"delayMs,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Scheduled     bool   `json:"scheduled"`
+	DelayMs       int    `json:"delayMs,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Transactional bool   `json:"transactional,omitempty"`
+}
+
+// GatewayConfigRollback 网关重启失败时的配置回滚信息。
+type GatewayConfigRollback struct {
+	ConfigPath       string `json:"-"`
+	PreviousRaw      []byte `json:"-"`
+	DeleteOnRollback bool   `json:"-"`
+}
+
+// GatewayRestartPlan 网关重启计划。
+type GatewayRestartPlan struct {
+	DelayMs  *int
+	Reason   string
+	Rollback *GatewayConfigRollback
 }
 
 // GatewayRestarter 网关重启调度器。
 // 对应 TS: scheduleGatewaySigusr1Restart() (infra/restart.ts)
 type GatewayRestarter interface {
-	ScheduleRestart(delayMs *int, reason string) *GatewayRestartResult
+	ScheduleRestart(plan GatewayRestartPlan) *GatewayRestartResult
 }
 
 // ---------- Legacy Migration ----------

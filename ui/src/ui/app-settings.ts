@@ -11,6 +11,8 @@ import { scheduleChatScroll, scheduleLogsScroll } from "./app-scroll.ts";
 import { loadAgentIdentities, loadAgentIdentity } from "./controllers/agent-identity.ts";
 import { loadAgentSkills } from "./controllers/agent-skills.ts";
 import { loadAgents } from "./controllers/agents.ts";
+import { loadAutomationHub, loadEmailAutomationDetail } from "./controllers/automation.ts";
+import { loadChatModels } from "./controllers/chat.ts";
 import { loadChannels } from "./controllers/channels.ts";
 import { loadConfig, loadConfigSchema } from "./controllers/config.ts";
 import { loadCronJobs, loadCronStatus } from "./controllers/cron.ts";
@@ -29,9 +31,11 @@ import { loadSubAgents } from "./controllers/subagents.ts";
 import { loadUsage } from "./controllers/usage.ts";
 import { loadPlugins, loadTools, loadBrowserToolConfig } from "./controllers/plugins.ts";
 import {
+  automationPanelFromPath,
   inferBasePathFromPathname,
   normalizeBasePath,
   normalizePath,
+  pathForAutomationPanel,
   pathForTab,
   tabFromPath,
   type Tab,
@@ -49,6 +53,7 @@ type SettingsHost = {
   applySessionKey: string;
   sessionKey: string;
   tab: Tab;
+  automationPanel?: "hub" | "email";
   overviewPanel?: "dashboard" | "instances" | "usage";
   connected: boolean;
   chatHasAutoScrolled: boolean;
@@ -68,7 +73,7 @@ type SettingsHost = {
 export function applySettings(host: SettingsHost, next: UiSettings) {
   const normalized = {
     ...next,
-    chatUxMode: next.chatUxMode ?? host.settings.chatUxMode ?? "classic",
+    chatUxMode: next.chatUxMode ?? host.settings.chatUxMode ?? "codex-readonly",
     lastActiveSessionKey: next.lastActiveSessionKey?.trim() || next.sessionKey.trim() || "main",
   };
   host.settings = normalized;
@@ -89,14 +94,11 @@ export function setLastActiveSessionKey(host: SettingsHost, next: string) {
     return;
   }
 
-  // Update lastSessionByChannel map for cross-channel navigation
-  const newLastSessionByChannel = { ...(host.settings.lastSessionByChannel || {}) };
-  const prefixMatch = trimmed.match(/^([a-z]+):/);
-  const prefix = (prefixMatch && prefixMatch[1] !== "global" && prefixMatch[1] !== "unknown")
-    ? prefixMatch[1]
-    : "user";
-
-  newLastSessionByChannel[prefix] = trimmed;
+  const prefix = resolveSessionChannelPrefix(trimmed);
+  const newLastSessionByChannel = {
+    ...(host.settings.lastSessionByChannel || {}),
+    [prefix]: trimmed,
+  };
 
   if (host.settings.lastActiveSessionKey === trimmed &&
     host.settings.lastSessionByChannel?.[prefix] === trimmed) {
@@ -107,6 +109,31 @@ export function setLastActiveSessionKey(host: SettingsHost, next: string) {
     lastActiveSessionKey: trimmed,
     lastSessionByChannel: newLastSessionByChannel
   });
+}
+
+export function rememberSessionKeyForChannel(host: SettingsHost, next: string) {
+  const trimmed = next.trim();
+  if (!trimmed) {
+    return;
+  }
+  const prefix = resolveSessionChannelPrefix(trimmed);
+  if (host.settings.lastSessionByChannel?.[prefix] === trimmed) {
+    return;
+  }
+  applySettings(host, {
+    ...host.settings,
+    lastSessionByChannel: {
+      ...(host.settings.lastSessionByChannel || {}),
+      [prefix]: trimmed,
+    },
+  });
+}
+
+function resolveSessionChannelPrefix(sessionKey: string): string {
+  const prefixMatch = sessionKey.match(/^([a-z]+):/);
+  return (prefixMatch && prefixMatch[1] !== "global" && prefixMatch[1] !== "unknown")
+    ? prefixMatch[1]
+    : "user";
 }
 
 export function applySettingsFromUrl(host: SettingsHost) {
@@ -135,10 +162,6 @@ export function applySettingsFromUrl(host: SettingsHost) {
   }
 
   if (passwordRaw != null) {
-    const password = passwordRaw.trim();
-    if (password) {
-      (host as { password: string }).password = password;
-    }
     params.delete("password");
     hashParams.delete("password");
     shouldCleanUrl = true;
@@ -170,7 +193,7 @@ export function applySettingsFromUrl(host: SettingsHost) {
     const normalizedChatUx =
       chatUxRaw.trim() === "codex" || chatUxRaw.trim() === "codex-readonly"
         ? "codex-readonly"
-        : "classic";
+        : "codex-readonly";
     if (normalizedChatUx !== host.settings.chatUxMode) {
       applySettings(host, { ...host.settings, chatUxMode: normalizedChatUx });
     }
@@ -236,6 +259,13 @@ export async function refreshActiveTab(host: SettingsHost) {
   }
   if (host.tab === "channels") {
     await loadChannelsTab(host);
+  }
+  if (host.tab === "automation") {
+    if (host.automationPanel === "email") {
+      await loadEmailAutomationDetail(host as unknown as OpenAcosmiApp);
+    } else {
+      await loadAutomationHub(host as unknown as OpenAcosmiApp);
+    }
   }
   if (host.tab === "instances") {
     await loadPresence(host as unknown as OpenAcosmiApp);
@@ -317,7 +347,10 @@ export async function refreshActiveTab(host: SettingsHost) {
     }
   }
   if (host.tab === "chat") {
-    await refreshChat(host as unknown as Parameters<typeof refreshChat>[0]);
+    await Promise.all([
+      refreshChat(host as unknown as Parameters<typeof refreshChat>[0]),
+      loadChatModels(host as unknown as Parameters<typeof loadChatModels>[0]),
+    ]);
     scheduleChatScroll(
       host as unknown as Parameters<typeof scheduleChatScroll>[0],
       !host.chatHasAutoScrolled,
@@ -412,6 +445,9 @@ export function syncTabWithLocation(host: SettingsHost, replace: boolean) {
     return;
   }
   const resolved = tabFromPath(window.location.pathname, host.basePath) ?? "chat";
+  host.automationPanel = resolved === "automation"
+    ? automationPanelFromPath(window.location.pathname, host.basePath)
+    : "hub";
   setTabFromRoute(host, resolved);
   syncUrlWithTab(host, resolved, replace);
 }
@@ -424,6 +460,9 @@ export function onPopState(host: SettingsHost) {
   if (!resolved) {
     return;
   }
+  host.automationPanel = resolved === "automation"
+    ? automationPanelFromPath(window.location.pathname, host.basePath)
+    : "hub";
 
   const url = new URL(window.location.href);
   const session = url.searchParams.get("session")?.trim();
@@ -465,7 +504,11 @@ export function syncUrlWithTab(host: SettingsHost, tab: Tab, replace: boolean) {
   if (typeof window === "undefined") {
     return;
   }
-  const targetPath = normalizePath(pathForTab(tab, host.basePath));
+  const targetPath = normalizePath(
+    tab === "automation"
+      ? pathForAutomationPanel(host.automationPanel ?? "hub", host.basePath)
+      : pathForTab(tab, host.basePath),
+  );
   const currentPath = normalizePath(window.location.pathname);
   const url = new URL(window.location.href);
 

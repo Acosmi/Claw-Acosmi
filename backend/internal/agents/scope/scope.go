@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Acosmi/ClawAcosmi/internal/statepaths"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 )
 
@@ -287,19 +288,10 @@ func resolveUserPath(p string) string {
 // resolveDefaultAgentWorkspaceDir 解析默认 Agent 的工作目录。
 // TS 参考: workspace.ts L10-19 (resolveDefaultAgentWorkspaceDir)
 func resolveDefaultAgentWorkspaceDir() string {
-	home, _ := os.UserHomeDir()
-	profile := strings.TrimSpace(os.Getenv("OPENACOSMI_PROFILE"))
-	if profile != "" && strings.ToLower(profile) != "default" {
-		return filepath.Join(home, ".openacosmi", "workspace-"+profile)
-	}
-	return filepath.Join(home, ".openacosmi", "workspace")
+	return filepath.Join(resolveStateDir(), "workspace")
 }
 
 // resolveStateDir 解析状态目录。
 func resolveStateDir() string {
-	if dir := os.Getenv("OPENACOSMI_STATE_DIR"); dir != "" {
-		return dir
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "openacosmi")
+	return statepaths.ResolveStateDir()
 }

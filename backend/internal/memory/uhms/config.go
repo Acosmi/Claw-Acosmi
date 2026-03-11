@@ -3,6 +3,9 @@ package uhms
 import (
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // ============================================================================
@@ -210,27 +213,23 @@ func (c *UHMSConfig) ResolvedBootFilePath() string {
 // ---------- helpers ----------
 
 func defaultDBPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "/tmp/openacosmi-memory/uhms.db"
-	}
-	return filepath.Join(home, ".openacosmi", "memory", "uhms.db")
+	return filepath.Join(defaultMemoryRoot(), "uhms.db")
 }
 
 func defaultVFSPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "/tmp/openacosmi-memory/vfs"
-	}
-	return filepath.Join(home, ".openacosmi", "memory", "vfs")
+	return filepath.Join(defaultMemoryRoot(), "vfs")
 }
 
 func defaultBootFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "/tmp/openacosmi-memory/boot.json"
+	return filepath.Join(defaultMemoryRoot(), "boot.json")
+}
+
+func defaultMemoryRoot() string {
+	stateDir := strings.TrimSpace(config.ResolveStateDir())
+	if stateDir == "" || stateDir == "." {
+		return filepath.Join(os.TempDir(), "openacosmi-memory")
 	}
-	return filepath.Join(home, ".openacosmi", "memory", "boot.json")
+	return filepath.Join(stateDir, "memory")
 }
 
 func expandHome(path string) string {

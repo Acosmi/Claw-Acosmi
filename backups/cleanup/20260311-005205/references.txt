@@ -1,0 +1,4 @@
+/Users/fushihua/Desktop/CrabClaw/backups/cleanup/20260311-005205/candidate-files.txt:1:/Users/fushihua/Desktop/CrabClaw/backend/cmd/openacosmi/_deprecated_providers
+/Users/fushihua/Desktop/CrabClaw/docker-compose.yml:35:  gateway-legacy:
+/Users/fushihua/Desktop/CrabClaw/backend/Makefile:15:        gateway-dev gateway-run test-rust install-cli build-go-cli-deprecated gateway-ffi \
+/Users/fushihua/Desktop/CrabClaw/backend/Makefile:109:build-go-cli-deprecated: fmt vet ## [已弃用] 编译 Go CLI

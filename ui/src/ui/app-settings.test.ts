@@ -1,13 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatUxMode } from "./chat/readonly-run-state.ts";
 import type { Tab } from "./navigation.ts";
-import { applySettings, applySettingsFromUrl, setTabFromRoute } from "./app-settings.ts";
+import { applySettings, applySettingsFromUrl, refreshActiveTab, setTabFromRoute } from "./app-settings.ts";
 
 type SettingsHost = Parameters<typeof setTabFromRoute>[0] & {
   logsPollInterval: number | null;
   debugPollInterval: number | null;
   chatUxMode?: ChatUxMode;
   pendingGatewayUrl?: string | null;
+  client?: { request: ReturnType<typeof vi.fn> } | null;
+  chatLoading?: boolean;
+  chatMessages?: unknown[];
+  chatThinkingLevel?: string | null;
+  chatModels?: Array<{ id: string; name: string; provider: string; source: string }>;
+  chatCurrentModel?: string | null;
+  debugModels?: unknown[];
+  sessionsResult?: unknown;
+  chatAvatarUrl?: string | null;
+  updateComplete?: Promise<unknown>;
+  querySelector?: (selectors: string) => Element | null;
+  style?: CSSStyleDeclaration;
+  chatScrollFrame?: number | null;
+  chatScrollTimeout?: number | null;
+  chatUserNearBottom?: boolean;
+  chatNewMessagesBelow?: boolean;
+  logsScrollFrame?: number | null;
+  hello?: unknown;
 };
 
 const createHost = (tab: Tab): SettingsHost => ({
@@ -40,18 +58,36 @@ const createHost = (tab: Tab): SettingsHost => ({
   themeMediaHandler: null,
   logsPollInterval: null,
   debugPollInterval: null,
+  client: null,
+  chatLoading: false,
+  chatMessages: [],
+  chatThinkingLevel: null,
+  chatModels: [],
+  chatCurrentModel: null,
+  debugModels: [],
+  sessionsResult: null,
+  chatAvatarUrl: null,
+  updateComplete: Promise.resolve(),
+  querySelector: () => null,
+  style: document.documentElement.style,
+  chatScrollFrame: null,
+  chatScrollTimeout: null,
+  chatUserNearBottom: true,
+  chatNewMessagesBelow: false,
+  logsScrollFrame: null,
+  hello: null,
 });
 
 describe("setTabFromRoute", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.stubGlobal("window", globalThis);
     vi.stubGlobal("localStorage", {
       getItem: vi.fn(() => null),
       setItem: vi.fn(),
       removeItem: vi.fn(),
       clear: vi.fn(),
     });
+    window.history.replaceState({}, "", "/chat");
   });
 
   afterEach(() => {
@@ -97,15 +133,8 @@ describe("setTabFromRoute", () => {
   it("reads chat ux mode from the url and strips the query param", () => {
     const host = createHost("chat");
     host.chatUxMode = "classic";
-    const replaceState = vi.fn();
-    const location = new URL("https://example.test/chat?chatUx=codex");
-    vi.stubGlobal("window", {
-      ...globalThis,
-      location,
-      history: {
-        replaceState,
-      },
-    });
+    window.history.replaceState({}, "", "/chat?chatUx=codex");
+    const replaceState = vi.spyOn(window.history, "replaceState");
 
     applySettingsFromUrl(host);
 
@@ -113,5 +142,34 @@ describe("setTabFromRoute", () => {
     expect(host.chatUxMode).toBe("codex-readonly");
     expect(replaceState).toHaveBeenCalledTimes(1);
     expect(String(replaceState.mock.calls[0]?.[2] ?? "")).not.toContain("chatUx");
+  });
+
+  it("refreshes chat models when entering the chat tab", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false,
+      json: async () => ({}),
+    })));
+    const request = vi.fn(async (method: string) => {
+      if (method === "chat.history") return { messages: [], thinkingLevel: null };
+      if (method === "sessions.list") return { sessions: [], count: 0 };
+      if (method === "assistant.identity.get") return {};
+      if (method === "models.list") {
+        return { models: [{ id: "gpt-4.1", name: "GPT-4.1", provider: "openai", source: "managed" }] };
+      }
+      if (method === "models.default.get") return { model: "openai/gpt-4.1" };
+      if (method === "config.get") {
+        return { config: { agents: { defaults: { model: { primary: "openai/gpt-4.1" } } } } };
+      }
+      throw new Error(`unexpected method ${method}`);
+    });
+    const host = createHost("chat");
+    host.connected = true;
+    host.client = { request };
+
+    await refreshActiveTab(host);
+
+    expect(request).toHaveBeenCalledWith("models.list", {});
+    expect(request).toHaveBeenCalledWith("models.default.get", {});
+    expect(host.chatCurrentModel).toBe("openai/gpt-4.1");
   });
 });

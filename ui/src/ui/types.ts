@@ -839,10 +839,18 @@ export type SkillStatusEntry = {
   distributedAt?: string;   // 分级时间 ISO string
 };
 
+export type SkillToolBindingEntry = {
+  toolName: string;
+  primarySkill?: string;
+  skills: string[];
+  guidance?: string;
+};
+
 export type SkillStatusReport = {
   workspaceDir: string;
   managedSkillsDir: string;
   skills: SkillStatusEntry[];
+  toolBindings?: SkillToolBindingEntry[];
 };
 
 export type StatusSummary = Record<string, unknown>;

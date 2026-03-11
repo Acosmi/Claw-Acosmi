@@ -21,9 +21,9 @@ import (
 // CollectAttackSurfaceSummaryFindings 汇总攻击面。
 // TS 对照: audit-extra.ts collectAttackSurfaceSummaryFindings()
 func CollectAttackSurfaceSummaryFindings(opts SecurityAuditOptions) []SecurityAuditFinding {
-	elevated := true
+	elevated := false
 	hooksEnabled := false
-	browserEnabled := true
+	browserEnabled := false
 
 	if opts.ElevatedConfig != nil {
 		elevated = opts.ElevatedConfig.Enabled

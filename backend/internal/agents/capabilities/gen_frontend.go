@@ -332,9 +332,9 @@ func GenerateToolSections(tree *CapabilityTree) []ToolSectionEntry {
 
 // WizardSkillGroup represents a skill group in wizard-v2.
 type WizardSkillGroup struct {
-	Key       string
-	DefaultOn bool
-	Tools     []string // Tool names (for display)
+	Key       string   `json:"key"`
+	DefaultOn bool     `json:"defaultOn"`
+	Tools     []string `json:"tools"` // Tool names (for display)
 }
 
 // GenerateWizardSkillGroups produces wizard skill group definitions from the tree.
@@ -353,8 +353,9 @@ func GenerateWizardSkillGroups(tree *CapabilityTree) []WizardSkillGroup {
 		{"web", true},
 		{"memory", true},
 		{"sessions", true},
-		{"system", false}, // maps to "automation" in current frontend
-		{"messaging", false},
+		{"ai", true},
+		{"system", true},
+		{"messaging", true},
 	}
 
 	// Check if nodes wizard group exists

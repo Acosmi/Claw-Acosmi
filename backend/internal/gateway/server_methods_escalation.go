@@ -69,10 +69,19 @@ func handleEscalationRequest(ctx *MethodHandlerContext) {
 		return
 	}
 
+	status := mgr.GetStatus()
+	resolvedTTL := ttlMinutes
+	taskScoped := false
+	if status.Pending != nil && status.Pending.ID == id {
+		resolvedTTL = status.Pending.TTLMinutes
+		taskScoped = status.Pending.TaskScoped
+	}
+
 	ctx.Respond(true, map[string]interface{}{
 		"id":             id,
 		"requestedLevel": level,
-		"ttlMinutes":     ttlMinutes,
+		"ttlMinutes":     resolvedTTL,
+		"taskScoped":     taskScoped,
 		"mountRequests":  mountRequests,
 		"status":         "pending",
 	}, nil)

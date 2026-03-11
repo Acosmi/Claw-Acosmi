@@ -1,0 +1,362 @@
+/* popup.css — CrabClaw Extension Popup */
+
+:root {
+  --cc-orange: #FF4500;
+  --cc-orange-dark: #E63E00;
+  --cc-blue: #0066CC;
+  --cc-green: #00AA00;
+  --cc-red: #dc3545;
+  --cc-gray: #888;
+  --cc-bg: #fafafa;
+  --cc-border: #e8e8e8;
+  --cc-text: #333;
+  --cc-text-dim: #999;
+  --cc-radius: 6px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  width: 360px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--cc-text);
+  background: var(--cc-bg);
+}
+
+/* ---- Header / Status Bar ---- */
+.header {
+  background: linear-gradient(135deg, #FF4500, #FF6B35);
+  color: white;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header h1 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.header .version {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.status-bar {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.status-badge.native { background: rgba(0,102,204,0.3); }
+.status-badge.websocket { background: rgba(0,200,0,0.3); }
+.status-badge.off { background: rgba(255,255,255,0.15); }
+
+.status-counts {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+/* ---- Panels / Sections ---- */
+.panel {
+  border-bottom: 1px solid var(--cc-border);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.panel-header:hover {
+  background: #f0f0f0;
+}
+
+.panel-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--cc-gray);
+  letter-spacing: 0.5px;
+  flex: 1;
+}
+
+.panel-toggle {
+  font-size: 10px;
+  color: var(--cc-gray);
+  transition: transform 0.2s;
+}
+
+.panel-toggle.collapsed {
+  transform: rotate(-90deg);
+}
+
+.panel-body {
+  padding: 0 14px 10px;
+}
+
+.panel-body.collapsed {
+  display: none;
+}
+
+/* ---- Tab Search ---- */
+.tab-search {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius);
+  font-size: 12px;
+  outline: none;
+  margin-bottom: 6px;
+}
+
+.tab-search:focus {
+  border-color: var(--cc-orange);
+}
+
+/* ---- Tab List ---- */
+.tab-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.tab-group-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--cc-gray);
+  padding: 4px 0 2px;
+  letter-spacing: 0.3px;
+}
+
+.tab-item {
+  display: flex;
+  align-items: center;
+  padding: 5px 0;
+  gap: 6px;
+  border-bottom: 1px solid #f4f4f4;
+  cursor: pointer;
+}
+
+.tab-item:last-child {
+  border-bottom: none;
+}
+
+.tab-item:hover {
+  background: #f5f5f5;
+}
+
+.tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tab-dot.attached { background: var(--cc-green); }
+.tab-dot.active { background: var(--cc-blue); }
+.tab-dot.cs { background: #9b59b6; }
+.tab-dot.inactive { background: #ccc; }
+
+.tab-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tab-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.tab-url {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  color: var(--cc-text-dim);
+}
+
+.tab-badges {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.tab-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.tab-badge.cdp { background: #e8f5e9; color: #2e7d32; }
+.tab-badge.cs { background: #f3e5f5; color: #7b1fa2; }
+
+/* ---- Buttons ---- */
+.btn {
+  padding: 5px 10px;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-primary { background: var(--cc-orange); color: white; }
+.btn-primary:hover:not(:disabled) { background: var(--cc-orange-dark); }
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--cc-border);
+  color: var(--cc-text);
+}
+.btn-outline:hover:not(:disabled) { background: #f0f0f0; }
+.btn-danger { background: var(--cc-red); color: white; }
+.btn-danger:hover:not(:disabled) { background: #c82333; }
+
+.btn-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px;
+  justify-content: center;
+  border-bottom: 1px solid var(--cc-border);
+}
+
+/* ---- Log ---- */
+.log-list {
+  max-height: 150px;
+  overflow-y: auto;
+  font-family: 'SF Mono', Menlo, Monaco, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.log-item {
+  padding: 2px 0;
+  border-bottom: 1px solid #f8f8f8;
+  display: flex;
+  gap: 4px;
+}
+
+.log-time {
+  color: var(--cc-text-dim);
+  flex-shrink: 0;
+}
+
+.log-type {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.log-type.in { color: var(--cc-blue); }
+.log-type.out { color: var(--cc-green); }
+.log-type.err { color: var(--cc-red); }
+
+.log-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* ---- Settings ---- */
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.settings-row label {
+  font-size: 11px;
+  color: var(--cc-gray);
+  min-width: 70px;
+}
+
+.settings-row input[type="text"] {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--cc-border);
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+}
+
+.settings-row input[type="text"]:focus {
+  border-color: var(--cc-orange);
+}
+
+.toggle-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  background: #ccc;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.toggle.on {
+  background: var(--cc-green);
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: left 0.2s;
+}
+
+.toggle.on::after {
+  left: 18px;
+}
+
+/* ---- Empty ---- */
+.empty {
+  text-align: center;
+  color: var(--cc-text-dim);
+  padding: 12px;
+  font-size: 12px;
+}
+
+/* ---- Footer ---- */
+.footer {
+  padding: 6px 14px;
+  text-align: center;
+  font-size: 10px;
+  color: #ccc;
+}

@@ -353,17 +353,7 @@ func handleToolsList(ctx *MethodHandlerContext) {
 
 // ---------- tools.browser.get / tools.browser.set ----------
 
-func handleToolsBrowserGet(ctx *MethodHandlerContext) {
-	var cfg *types.OpenAcosmiConfig
-	if loader := ctx.Context.ConfigLoader; loader != nil {
-		if loaded, err := loader.LoadConfig(); err == nil {
-			cfg = loaded
-		}
-	}
-	if cfg == nil {
-		cfg = ctx.Context.Config
-	}
-
+func buildBrowserConfigPayload(cfg *types.OpenAcosmiConfig) map[string]interface{} {
 	enabled := true
 	evaluateEnabled := true
 	headless := false
@@ -383,61 +373,66 @@ func handleToolsBrowserGet(ctx *MethodHandlerContext) {
 		cdpUrl = b.CdpURL
 	}
 
-	configured := enabled && cdpUrl != ""
+	// 桌面端支持缺省 auto-discovery / auto-launch，未显式填写 cdpUrl 不应再被视为“未配置”。
+	configured := enabled
 
-	ctx.Respond(true, map[string]interface{}{
+	return map[string]interface{}{
 		"enabled":         enabled,
 		"cdpUrl":          cdpUrl,
 		"evaluateEnabled": evaluateEnabled,
 		"headless":        headless,
 		"configured":      configured,
-	}, nil)
+	}
+}
+
+func handleToolsBrowserGet(ctx *MethodHandlerContext) {
+	var cfg *types.OpenAcosmiConfig
+	if loader := ctx.Context.ConfigLoader; loader != nil {
+		if loaded, err := loader.LoadConfig(); err == nil {
+			cfg = loaded
+		}
+	}
+	if cfg == nil {
+		cfg = ctx.Context.Config
+	}
+
+	result := buildBrowserConfigPayload(cfg)
+	attachConfigHash(ctx.Context.ConfigLoader, result)
+	ctx.Respond(true, result, nil)
 }
 
 func handleToolsBrowserSet(ctx *MethodHandlerContext) {
-	loader := ctx.Context.ConfigLoader
-	if loader == nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "config loader not available"))
-		return
-	}
+	executeConfigMutation(ctx, configMutationOptions{
+		Action: "tools.browser.set",
+		Mutate: func(cfg *types.OpenAcosmiConfig) error {
+			if cfg.Browser == nil {
+				cfg.Browser = &types.BrowserConfig{}
+			}
 
-	cfg, err := loader.LoadConfig()
-	if err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to load config: "+err.Error()))
-		return
-	}
-
-	if cfg.Browser == nil {
-		cfg.Browser = &types.BrowserConfig{}
-	}
-
-	// 读取各字段
-	if v, ok := ctx.Params["enabled"]; ok {
-		b := toBool(v)
-		cfg.Browser.Enabled = &b
-	}
-	if v, ok := ctx.Params["cdpUrl"]; ok {
-		if s, ok := v.(string); ok {
-			cfg.Browser.CdpURL = strings.TrimSpace(s)
-		}
-	}
-	if v, ok := ctx.Params["evaluateEnabled"]; ok {
-		b := toBool(v)
-		cfg.Browser.EvaluateEnabled = &b
-	}
-	if v, ok := ctx.Params["headless"]; ok {
-		b := toBool(v)
-		cfg.Browser.Headless = &b
-	}
-
-	if err := loader.WriteConfigFile(cfg); err != nil {
-		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to save config: "+err.Error()))
-		return
-	}
-	loader.ClearCache()
-
-	slog.Info("tools.browser.set: saved")
-	ctx.Respond(true, map[string]interface{}{"ok": true}, nil)
+			if v, ok := ctx.Params["enabled"]; ok {
+				b := toBool(v)
+				cfg.Browser.Enabled = &b
+			}
+			if s, ok := readTrimmedStringParam(ctx.Params, "cdpUrl"); ok {
+				cfg.Browser.CdpURL = s
+			}
+			if v, ok := ctx.Params["evaluateEnabled"]; ok {
+				b := toBool(v)
+				cfg.Browser.EvaluateEnabled = &b
+			}
+			if v, ok := ctx.Params["headless"]; ok {
+				b := toBool(v)
+				cfg.Browser.Headless = &b
+			}
+			return nil
+		},
+		AfterWrite: func(_ *MethodHandlerContext, cfg *types.OpenAcosmiConfig) map[string]interface{} {
+			slog.Info("tools.browser.set: saved")
+			return map[string]interface{}{
+				"browser": buildBrowserConfigPayload(cfg),
+			}
+		},
+	})
 }
 
 // toBool 将 interface{} 转换为 bool。

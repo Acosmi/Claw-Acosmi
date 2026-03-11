@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 	"github.com/Acosmi/ClawAcosmi/pkg/types"
 	"github.com/Acosmi/ClawAcosmi/pkg/utils"
 )
@@ -50,8 +51,7 @@ func HandleReset(scope ResetScope, workspaceDir string) error {
 	}
 
 	// 删除凭证和会话
-	home, _ := os.UserHomeDir()
-	configDir := filepath.Join(home, ".openacosmi")
+	configDir := config.ResolveStateDir()
 	credentialsPath := filepath.Join(configDir, "credentials")
 	sessionsDir := resolveSessionsDir()
 

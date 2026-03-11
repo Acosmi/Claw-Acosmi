@@ -201,6 +201,9 @@ function shouldPersistReadonlyRun(run: ChatReadonlyRunState | null | undefined):
   if (!isPersistableReadonlyRunPhase(run.phase)) {
     return false;
   }
+  if (isTerminalReadonlyRunPhase(run.phase) && !hasReadonlyRunAnchor(run)) {
+    return false;
+  }
   if (
     (run.phase === "starting" || run.phase === "working" || run.phase === "drafting" || run.phase === "finalizing") &&
     !run.runId
@@ -390,7 +393,7 @@ export function isReadonlyRunVisible(
   if (run.phase === "idle") {
     return false;
   }
-  return run.runId !== null || run.phase === "complete" || run.phase === "aborted" || run.phase === "error";
+  return run.runId !== null || hasReadonlyRunAnchor(run);
 }
 
 export function isReadonlyRunActive(run: ChatReadonlyRunState | null | undefined): boolean {
@@ -409,7 +412,7 @@ export function isReadonlyRunActive(run: ChatReadonlyRunState | null | undefined
 }
 
 function archiveReadonlyRun(host: ChatReadonlyRunHost, run: ChatReadonlyRunState) {
-  if (!isReadonlyRunTerminal(run)) {
+  if (!isReadonlyRunTerminal(run) || !hasReadonlyRunAnchor(run)) {
     return;
   }
   host.chatReadonlyRunHistory = mergeReadonlyRunHistory([
@@ -466,6 +469,19 @@ export function startChatReadonlyRun(
     finalMessageTimestamp: null,
     finalMessageText: null,
   };
+}
+
+function hasReadonlyRunAnchor(run: ChatReadonlyRunState | null | undefined): boolean {
+  if (!run) {
+    return false;
+  }
+  if (run.finalMessageId?.trim()) {
+    return true;
+  }
+  if (typeof run.finalMessageTimestamp === "number") {
+    return true;
+  }
+  return normalizeReadonlyRunAnchorText(run.finalMessageText) !== null;
 }
 
 export function rebindChatReadonlyRun(

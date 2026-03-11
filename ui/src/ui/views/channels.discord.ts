@@ -14,7 +14,7 @@ export function renderDiscordCard(params: {
   return html`
     ${accountCountLabel}
 
-    <div class="status-list" style="margin-top: 8px;">
+    <div class="status-list">
       <div>
         <span class="label">${t("channels.configured")}</span>
         <span>${discord?.configured ? t("channels.yes") : t("channels.no")}</span>
@@ -34,21 +34,21 @@ export function renderDiscordCard(params: {
     </div>
 
     ${discord?.lastError
-      ? html`<div class="callout danger" style="margin-top: 12px;">
+      ? html`<div class="callout danger">
           ${discord.lastError}
         </div>`
       : nothing
     }
 
     ${discord?.probe
-      ? html`<div class="callout" style="margin-top: 12px;">
+      ? html`<div class="callout">
           Probe ${discord.probe.ok ? "ok" : "failed"} ·
           ${discord.probe.status ?? ""} ${discord.probe.error ?? ""}
         </div>`
       : nothing
     }
 
-    <div class="row" style="margin-top: 12px;">
+    <div class="row channel-card__action-row">
       <button class="btn" @click=${() => props.onRefresh(true)}>
         Probe
       </button>

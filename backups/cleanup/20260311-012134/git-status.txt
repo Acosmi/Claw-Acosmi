@@ -1,0 +1,555 @@
+ M Makefile
+ M README.md
+ M STARTUP.md
+ M backend/Makefile
+ M backend/cmd/desktop/build/Taskfile.yml
+ M backend/cmd/desktop/build/darwin/Info.plist
+ M backend/cmd/desktop/build/darwin/Taskfile.yml
+ M backend/cmd/desktop/runtime.go
+ M backend/cmd/desktop/runtime_test.go
+ M backend/cmd/desktop/wails_app.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_anthropic.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_deepseek.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_doubao.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_google.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_kimi.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_minimax.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_ollama.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_openai.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_openai_compat.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_qwen.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_xai.go
+ D backend/cmd/openacosmi/_deprecated_providers/provider_zhipu.go
+ M backend/cmd/openacosmi/cmd_setup.go
+ M backend/cmd/openacosmi/setup_helpers.go
+ M backend/cmd/openacosmi/setup_skills.go
+ M backend/internal/agents/bash/cache_trace.go
+ M backend/internal/agents/capabilities/capability_tree_test.go
+ M backend/internal/agents/capabilities/gen_frontend.go
+ M backend/internal/agents/capabilities/gen_frontend_test.go
+ M backend/internal/agents/capabilities/manage_tool_test.go
+ M backend/internal/agents/capabilities/registry.go
+ M backend/internal/agents/capabilities/tree_migrate.go
+ M backend/internal/agents/llmclient/anthropic.go
+ M backend/internal/agents/llmclient/client_test.go
+ M backend/internal/agents/llmclient/openai.go
+ M backend/internal/agents/llmclient/types.go
+ M backend/internal/agents/models/selection.go
+ M backend/internal/agents/models/selection_managed_test.go
+ M backend/internal/agents/models/selection_test.go
+ M backend/internal/agents/prompt/prompt.go
+ M backend/internal/agents/prompt/prompt_contract_test.go
+ M backend/internal/agents/prompt/prompt_sections.go
+ M backend/internal/agents/prompt/prompt_test.go
+ M backend/internal/agents/runner/approval_workflow.go
+ M backend/internal/agents/runner/attempt_runner.go
+ M backend/internal/agents/runner/attempt_runner_test.go
+ M backend/internal/agents/runner/intent_router.go
+ M backend/internal/agents/runner/intent_router_test.go
+ M backend/internal/agents/runner/persist_transcript_attachment_test.go
+ M backend/internal/agents/runner/plan_confirmation.go
+ M backend/internal/agents/runner/plan_confirmation_test.go
+ M backend/internal/agents/runner/result_approval.go
+ M backend/internal/agents/runner/run.go
+ M backend/internal/agents/runner/run_attempt.go
+ M backend/internal/agents/runner/spawn_argus_agent.go
+ M backend/internal/agents/runner/spawn_coder_agent.go
+ M backend/internal/agents/runner/tool_executor.go
+ M backend/internal/agents/runner/tool_executor_test.go
+ M backend/internal/agents/runner/types.go
+ M backend/internal/agents/scope/scope.go
+ M backend/internal/agents/scope/scope_test.go
+ M backend/internal/agents/session/manager.go
+ M backend/internal/agents/skills/bundled_context.go
+ M backend/internal/agents/skills/bundled_dir.go
+ M backend/internal/agents/skills/frontmatter.go
+ M backend/internal/agents/skills/workspace_skills.go
+ M backend/internal/agents/skills/workspace_skills_test.go
+ M backend/internal/agents/tools/browser_tool.go
+ M backend/internal/agents/tools/common_test.go
+ M backend/internal/agents/tools/display.go
+ M backend/internal/agents/tools/gateway.go
+ M backend/internal/agents/tools/send_media_tool.go
+ M backend/internal/agents/tools/sessions_helpers.go
+ M backend/internal/argus/codesign_darwin.go
+ M backend/internal/argus/codesign_other.go
+ M backend/internal/argus/codesign_test.go
+ M backend/internal/argus/install.go
+ M backend/internal/argus/install_test.go
+ M backend/internal/argus/tcc_darwin.go
+ M backend/internal/argus/tcc_other.go
+ M backend/internal/argus/tcc_test.go
+ M backend/internal/autoreply/reply/followup_runner.go
+ M backend/internal/autoreply/reply/get_reply_run.go
+ M backend/internal/autoreply/reply/model_fallback_executor.go
+ M backend/internal/autoreply/reply/model_fallback_executor_test.go
+ M backend/internal/browser/chrome.go
+ M backend/internal/browser/extension_relay.go
+ M backend/internal/browser/nativemsg/install.go
+ M backend/internal/browser/pw_tools_cdp.go
+ M backend/internal/channels/feishu/handler.go
+ M backend/internal/channels/telegram/update_offset_store.go
+ M backend/internal/channels/xiaohongshu/playwright_adapter.go
+ M backend/internal/channels/xiaohongshu/plugin.go
+ M backend/internal/channels/xiaohongshu/rpa_client.go
+ M backend/internal/cli/dotenv.go
+ M backend/internal/cli/dotenv_test.go
+ M backend/internal/cli/utils.go
+ M backend/internal/config/config_test.go
+ M backend/internal/config/defaults.go
+ M backend/internal/config/defaults_test.go
+ M backend/internal/config/loader.go
+ M backend/internal/config/paths.go
+ M backend/internal/config/portdefaults.go
+ M backend/internal/daemon/launchd_darwin.go
+ M backend/internal/daemon/paths.go
+ M backend/internal/daemon/paths_test.go
+ M backend/internal/gateway/auth.go
+ M backend/internal/gateway/boot.go
+ M backend/internal/gateway/channel_deps_adapter.go
+ M backend/internal/gateway/escalation_audit.go
+ M backend/internal/gateway/permission_escalation.go
+ M backend/internal/gateway/remote_approval.go
+ M backend/internal/gateway/remote_approval_callback_verify.go
+ M backend/internal/gateway/remote_approval_feishu.go
+ M backend/internal/gateway/remote_approval_feishu_test.go
+ M backend/internal/gateway/remote_chat_payloads.go
+ M backend/internal/gateway/remote_chat_payloads_test.go
+ M backend/internal/gateway/server.go
+ M backend/internal/gateway/server_browser_extension.go
+ M backend/internal/gateway/server_browser_extension_test.go
+ M backend/internal/gateway/server_feishu_escalation_action_test.go
+ M backend/internal/gateway/server_http.go
+ M backend/internal/gateway/server_methods.go
+ M backend/internal/gateway/server_methods_agent_rpc.go
+ M backend/internal/gateway/server_methods_argus.go
+ M backend/internal/gateway/server_methods_batch_a_test.go
+ M backend/internal/gateway/server_methods_browser.go
+ M backend/internal/gateway/server_methods_channels.go
+ M backend/internal/gateway/server_methods_chat.go
+ M backend/internal/gateway/server_methods_config.go
+ M backend/internal/gateway/server_methods_docconv.go
+ M backend/internal/gateway/server_methods_escalation.go
+ M backend/internal/gateway/server_methods_escalation_test.go
+ M backend/internal/gateway/server_methods_exec_approvals.go
+ M backend/internal/gateway/server_methods_image.go
+ M backend/internal/gateway/server_methods_interfaces.go
+ M backend/internal/gateway/server_methods_media.go
+ M backend/internal/gateway/server_methods_media_test.go
+ M backend/internal/gateway/server_methods_plugins.go
+ M backend/internal/gateway/server_methods_remote_approval.go
+ M backend/internal/gateway/server_methods_rules.go
+ M backend/internal/gateway/server_methods_sandbox.go
+ M backend/internal/gateway/server_methods_security.go
+ M backend/internal/gateway/server_methods_sessions.go
+ M backend/internal/gateway/server_methods_skills.go
+ M backend/internal/gateway/server_methods_skills_test.go
+ M backend/internal/gateway/server_methods_stt.go
+ M backend/internal/gateway/server_methods_subagent.go
+ M backend/internal/gateway/server_methods_subagent_test.go
+ M backend/internal/gateway/server_methods_system.go
+ M backend/internal/gateway/server_methods_tasks.go
+ M backend/internal/gateway/server_methods_tasks_test.go
+ M backend/internal/gateway/server_methods_test.go
+ M backend/internal/gateway/server_methods_uhms.go
+ M backend/internal/gateway/server_methods_usage.go
+ M backend/internal/gateway/server_methods_usage_test.go
+ M backend/internal/gateway/server_methods_wizard_v2.go
+ M backend/internal/gateway/server_methods_wizard_v2_test.go
+ M backend/internal/gateway/session_utils_fs.go
+ M backend/internal/gateway/session_utils_fs_test.go
+ M backend/internal/gateway/sessions.go
+ M backend/internal/gateway/task_preset_permissions.go
+ M backend/internal/gateway/transcript.go
+ M backend/internal/gateway/ws_server.go
+ M backend/internal/goproviders/bridge/bridge.go
+ M backend/internal/goproviders/bridge/bridge_test.go
+ M backend/internal/goproviders/common/paths.go
+ M backend/internal/goproviders/common/provider_normalize.go
+ M backend/internal/goproviders/onboard/credentials.go
+ M backend/internal/infra/exec_approvals.go
+ M backend/internal/infra/exec_approvals_ops.go
+ M backend/internal/media/bootstrap.go
+ M backend/internal/media/image_ops.go
+ M backend/internal/media/trending.go
+ M backend/internal/memory/uhms/config.go
+ M backend/internal/nodehost/allowlist_eval.go
+ M backend/internal/nodehost/allowlist_resolve.go
+ M backend/internal/nodehost/runner.go
+ M backend/internal/security/audit_extra.go
+ M backend/internal/security/external_content.go
+ M backend/internal/security/fix.go
+ M backend/internal/security/ssrf.go
+ M backend/pkg/i18n/i18n_onboarding_en.go
+ M backend/pkg/i18n/i18n_onboarding_zh.go
+ M backend/pkg/log/file.go
+ M backend/pkg/log/log_test.go
+ M backend/pkg/mcpinstall/bridge.go
+ M backend/pkg/mcpinstall/store.go
+ M backend/pkg/mcpinstall/store_test.go
+ M backend/pkg/types/types_openacosmi.go
+ M backend/pkg/types/types_website.go
+ M backend/pkg/types/types_wechat_mp.go
+ M backend/pkg/types/types_xiaohongshu.go
+ M browser-extension/background.js
+ M browser-extension/manifest.json
+ M browser-extension/popup.html
+ M browser-extension/popup.js
+ M docker-compose.yml
+ D docs/skills/_archived/README.md
+ D docs/skills/_archived/brave-search/SKILL.md
+ D docs/skills/_archived/claude-max-api-proxy/SKILL.md
+ D docs/skills/_archived/perplexity/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/claude/code-audit/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/claude/doc-standard/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/claude/sop-workflow/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/claude/workspace-governance/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/acosmi-intro/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/brave-search/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/date-time/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/logging/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/network/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/perplexity/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/pi-dev/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/pi/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/prose/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/tts/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/general/vps/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/media/ARCHITECTURE.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/media/media-trending/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/media/wechat-mp-ops/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/media/xiaohongshu-ops/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/algorithmic-art/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/algorithmic-art/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/algorithmic-art/templates/generator_template.js
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/algorithmic-art/templates/viewer.html
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/brand-guidelines/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/brand-guidelines/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/ArsenalSC-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/BigShoulders-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/Boldonse-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/BricolageGrotesque-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/CrimsonPro-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/DMMono-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/EricaOne-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/GeistMono-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/Gloock-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/IBMPlexMono-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/InstrumentSans-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/Italiana-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/JetBrainsMono-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/Jura-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/LibreBaskerville-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/Lora-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/NationalPark-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/NothingYouCouldDo-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/Outfit-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/PixelifySans-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/PoiretOne-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/RedHatMono-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/Silkscreen-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/SmoochSans-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/Tektur-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/WorkSans-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/canvas-design/canvas-fonts/YoungSerif-OFL.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/doc-coauthoring/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/docx/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/docx/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/docx/scripts/templates/comments.xml
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/docx/scripts/templates/commentsExtended.xml
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/docx/scripts/templates/commentsExtensible.xml
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/docx/scripts/templates/commentsIds.xml
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/docx/scripts/templates/people.xml
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/frontend-design/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/frontend-design/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/internal-comms/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/internal-comms/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/internal-comms/examples/3p-updates.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/internal-comms/examples/company-newsletter.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/internal-comms/examples/faq-answers.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/internal-comms/examples/general-comms.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/mcp-builder/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/mcp-builder/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/mcp-builder/reference/evaluation.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/mcp-builder/reference/mcp_best_practices.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/mcp-builder/reference/node_mcp_server.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/mcp-builder/reference/python_mcp_server.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/mcp-builder/scripts/example_evaluation.xml
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/mcp-builder/scripts/requirements.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/pdf/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/pdf/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/pdf/forms.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/pdf/reference.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/pptx/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/pptx/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/pptx/editing.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/pptx/pptxgenjs.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/skill-creator/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/skill-creator/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/skill-creator/references/output-patterns.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/skill-creator/references/workflows.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/slack-gif-creator/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/slack-gif-creator/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/slack-gif-creator/requirements.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/arctic-frost.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/botanical-garden.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/desert-rose.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/forest-canopy.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/golden-hour.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/midnight-galaxy.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/modern-minimalist.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/ocean-depths.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/sunset-boulevard.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/theme-factory/themes/tech-innovation.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/web-artifacts-builder/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/web-artifacts-builder/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/web-artifacts-builder/scripts/bundle-artifact.sh
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/web-artifacts-builder/scripts/init-artifact.sh
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/webapp-testing/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/webapp-testing/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/xlsx/LICENSE.txt
+ D docs/skills/_archived/pre-rebuild-2026-03-09/official/xlsx/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/anthropic/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/bedrock/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/claude-max-api-proxy/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/cloudflare-ai-gateway/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/deepgram/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/github-copilot/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/glm/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/minimax/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/moonshot/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/ollama/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/openacosmi/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/openai/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/openrouter/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/qianfan/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/qwen/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/synthetic/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/venice/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/vercel-ai-gateway/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/xiaomi/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/providers/zai/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/agent-send/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/apply-patch/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/argus-app-launch/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/argus-high-risk/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/argus-screen-reading/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/argus-target-locate/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/argus-ui-actions/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/argus-verify-retry/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/argus-visual/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/browser-linux-troubleshooting/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/browser-login/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/browser/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/capability-governance/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/channels-ops/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/chat-sessions/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/chrome-extension/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/config-governance/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/contracts-audit/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/creating-skills/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/cron-ops/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/docconv-ops/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/elevated/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/email/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/exec-approvals/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/exec/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/firecrawl/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/hooks-agent/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/image-ops/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/llm-task/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/lobster/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/mcp-remote-ops/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/media-agent/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/media-control/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/memory-uhms/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/multi-agent-sandbox-tools/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/node-device-ops/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/plugin/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/progress-reporting/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/reactions/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/security-governance/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/send-media/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/skills-config/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/skills/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/slash-commands/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/stt-ops/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/system-observability/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/task-kanban/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/usage-analytics/SKILL.md
+ D docs/skills/_archived/pre-rebuild-2026-03-09/tools/web/SKILL.md
+ D docs/skills/_archived/slash-commands/SKILL.md
+ D docs/skills/_archived/subagents/SKILL.md
+ D docs/skills/_archived/thinking/SKILL.md
+ M docs/skills/operations/system-config/SKILL.md
+ M docs/skills/subsystems/media/SKILL.md
+ M docs/skills/tools/media/send-media/SKILL.md
+ M docs/skills/tools/system/gateway/SKILL.md
+ M docs/skills/tools/ui/browser/SKILL.md
+ D scripts/start.sh
+ D start.bat
+ D start.command
+ M ui/index.html
+ M ui/public/providers/xai.svg
+ M ui/src/styles.css
+ M ui/src/styles/channels-cards.css
+ M ui/src/styles/chat/layout.css
+ M ui/src/styles/chat/readonly-run.css
+ M ui/src/styles/components.css
+ D ui/src/styles/permission-popup.css
+ M ui/src/ui/app-chat.ts
+ M ui/src/ui/app-gateway.test.ts
+ M ui/src/ui/app-gateway.ts
+ M ui/src/ui/app-render.helpers.test.ts
+ M ui/src/ui/app-render.helpers.ts
+ M ui/src/ui/app-render.ts
+ M ui/src/ui/app-settings.test.ts
+ M ui/src/ui/app-settings.ts
+ M ui/src/ui/app-view-state.ts
+ M ui/src/ui/app.ts
+ M ui/src/ui/chat/readonly-run-state.test.ts
+ M ui/src/ui/chat/readonly-run-state.ts
+ M ui/src/ui/controllers/chat.test.ts
+ M ui/src/ui/controllers/chat.ts
+ M ui/src/ui/controllers/coder-confirmation.ts
+ M ui/src/ui/controllers/media-dashboard.ts
+ M ui/src/ui/controllers/memory.ts
+ M ui/src/ui/controllers/sessions.ts
+ M ui/src/ui/controllers/subagents.ts
+ M ui/src/ui/focus-mode.browser.test.ts
+ M ui/src/ui/icons.ts
+ M ui/src/ui/locales/en.ts
+ M ui/src/ui/locales/zh.ts
+ M ui/src/ui/navigation.browser.test.ts
+ M ui/src/ui/navigation.test.ts
+ M ui/src/ui/navigation.ts
+ M ui/src/ui/storage.ts
+ M ui/src/ui/types.ts
+ M ui/src/ui/views/channel-config-modal.ts
+ M ui/src/ui/views/channels.dingtalk.ts
+ M ui/src/ui/views/channels.discord.ts
+ M ui/src/ui/views/channels.feishu.ts
+ M ui/src/ui/views/channels.googlechat.ts
+ M ui/src/ui/views/channels.imessage.ts
+ M ui/src/ui/views/channels.signal.ts
+ M ui/src/ui/views/channels.slack.ts
+ M ui/src/ui/views/channels.telegram.ts
+ M ui/src/ui/views/channels.ts
+ M ui/src/ui/views/channels.wecom.ts
+ M ui/src/ui/views/channels.whatsapp.ts
+ M ui/src/ui/views/chat.test.ts
+ M ui/src/ui/views/chat.ts
+ M ui/src/ui/views/coder-confirm.ts
+ M ui/src/ui/views/media-dashboard.ts
+ M ui/src/ui/views/media-manage.ts
+ M ui/src/ui/views/memory.ts
+ M ui/src/ui/views/notification-center.ts
+ M ui/src/ui/views/permission-popup.ts
+ M ui/src/ui/views/plugins.browser.test.ts
+ M ui/src/ui/views/plugins.ts
+ M ui/src/ui/views/skills.ts
+ M ui/src/ui/views/usage.ts
+ M ui/src/ui/views/wizard-v2-providers.ts
+ M ui/src/ui/views/wizard-v2.ts
+?? .gitattributes
+?? backend/cmd/desktop/build/skills-package-manifest.txt
+?? backend/cmd/desktop/build/tools/stage_skills/
+?? backend/cmd/desktop/internal/release/skills_bundle.go
+?? backend/cmd/desktop/internal/release/skills_bundle_test.go
+?? backend/cmd/openacosmi/cmd_setup_test.go
+?? backend/desktop
+?? backend/internal/agents/bash/cache_trace_test.go
+?? backend/internal/agents/browserdef/
+?? backend/internal/agents/capabilities/specialized_config.go
+?? backend/internal/agents/configtools/
+?? backend/internal/agents/gatewayclient/
+?? backend/internal/agents/llmclient/anthropic_test.go
+?? backend/internal/agents/runner/browser_test_helpers_test.go
+?? backend/internal/agents/runner/gateway_tool_test.go
+?? backend/internal/agents/runner/persist_transcript_terminal_reply_test.go
+?? backend/internal/agents/runner/run_test.go
+?? backend/internal/agents/runner/testmain_test.go
+?? backend/internal/agents/skills/frontmatter_test.go
+?? backend/internal/agents/tools/gateway_test.go
+?? backend/internal/browser/chrome_test.go
+?? backend/internal/browser/nativemsg/install_windows.go
+?? backend/internal/browser/nativemsg/install_windows_stub.go
+?? backend/internal/browser/pw_tools_cdp_test.go
+?? backend/internal/channels/feishu/handler_test.go
+?? backend/internal/channels/telegram/update_offset_store_test.go
+?? backend/internal/channels/xiaohongshu/login_executor.go
+?? backend/internal/channels/xiaohongshu/login_executor_test.go
+?? backend/internal/config/provider_repairs.go
+?? backend/internal/daemon/launchd_darwin_test.go
+?? backend/internal/gateway/config_contract_helpers.go
+?? backend/internal/gateway/config_restart_transaction.go
+?? backend/internal/gateway/orphan_scan.go
+?? backend/internal/gateway/orphan_scan_test.go
+?? backend/internal/gateway/public_usage_http.go
+?? backend/internal/gateway/public_usage_http_test.go
+?? backend/internal/gateway/runtime_restart.go
+?? backend/internal/gateway/runtime_restart_test.go
+?? backend/internal/gateway/security_runtime.go
+?? backend/internal/gateway/security_runtime_test.go
+?? backend/internal/gateway/server_methods_config_contract_test.go
+?? backend/internal/gateway/server_methods_config_restart_test.go
+?? backend/internal/gateway/server_methods_specialized_config_contract_test.go
+?? backend/internal/gateway/server_methods_wizard_v2_paths_test.go
+?? backend/internal/gateway/state_paths_test.go
+?? backend/internal/gateway/store_sqlite.go
+?? backend/internal/gateway/store_sqlite_test.go
+?? backend/internal/gateway/task_store.go
+?? backend/internal/gateway/transcript_test.go
+?? backend/internal/gateway/uhms_llm_config.go
+?? backend/internal/gateway/uhms_llm_config_test.go
+?? backend/internal/gateway/ws_server_restart_test.go
+?? backend/internal/goproviders/common/paths_test.go
+?? backend/internal/goproviders/common/provider_normalize_test.go
+?? backend/internal/infra/exec_approvals_ops_test.go
+?? backend/internal/media/trending_source_bocha.go
+?? backend/internal/media/trending_source_bocha_test.go
+?? backend/internal/media/trending_source_custom_openai.go
+?? backend/internal/media/trending_source_custom_openai_test.go
+?? backend/internal/media/trending_sources_registry.go
+?? backend/internal/memory/uhms/config_test.go
+?? backend/internal/nodehost/allowlist_resolve_test.go
+?? backend/internal/statepaths/
+?? backups/
+?? browser-extension/content.css
+?? browser-extension/content.js
+?? browser-extension/popup.css
+?? browser-extension/sidepanel-dist/
+?? browser-extension/sidepanel-ui/
+?? browser-extension/sidepanel.css
+?? browser-extension/sidepanel.html
+?? browser-extension/sidepanel.js
+?? docs/skills/media/
+?? docs/skills/tools/system/browser-config/
+?? docs/skills/tools/system/docconv-config/
+?? docs/skills/tools/system/image-config/
+?? docs/skills/tools/system/media-config/
+?? docs/skills/tools/system/remote-approval-config/
+?? docs/skills/tools/system/stt-config/
+?? scripts/desktop/prepare_darwin_runtime.sh
+?? scripts/desktop/sign_darwin_bundle.sh
+?? scripts/desktop/stage_openviking_framework.sh
+?? ui/src/ui/app-chat.test.ts
+?? ui/src/ui/controllers/automation.ts
+?? ui/src/ui/controllers/sessions.test.ts
+?? ui/src/ui/controllers/subagents.test.ts
+?? ui/src/ui/event-store.test.ts
+?? ui/src/ui/event-store.ts
+?? ui/src/ui/storage.test.ts
+?? ui/src/ui/views/automation.browser.test.ts
+?? ui/src/ui/views/automation.email.ts
+?? ui/src/ui/views/automation.ts
+?? ui/src/ui/views/channels.browser.test.ts
+?? ui/src/ui/views/media-manage.test.ts
+?? ui/src/ui/views/skills.browser.test.ts
+?? ui/src/ui/views/usage.test.ts
+?? ui/src/ui/views/wizard-v2.test.ts
+?? "\344\270\200\351\224\256\351\203\250\347\275\262\350\204\232\346\234\254/"

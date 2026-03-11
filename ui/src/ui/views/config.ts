@@ -1,7 +1,9 @@
 import { html, nothing } from "lit";
+import { needsInitialSetup } from "../controllers/config.ts";
 import { t } from "../i18n.ts";
 import type { DesktopUpdateStatus } from "../controllers/config.ts";
-import type { ConfigUiHints } from "../types.ts";
+import type { Tab } from "../navigation.ts";
+import type { ConfigSnapshot, ConfigUiHints } from "../types.ts";
 import { hintForPath, humanize, localizeSchemaLabel, schemaType, type JsonSchema } from "./config-form.shared.ts";
 import { analyzeConfigSchema, renderConfigForm, SECTION_META } from "./config-form.ts";
 
@@ -16,6 +18,7 @@ export type ConfigProps = {
   updating: boolean;
   rollingBack: boolean;
   updateStatus: DesktopUpdateStatus | null;
+  snapshot: ConfigSnapshot | null;
   connected: boolean;
   schema: unknown;
   schemaLoading: boolean;
@@ -32,6 +35,8 @@ export type ConfigProps = {
   onSearchChange: (query: string) => void;
   onSectionChange: (section: string | null) => void;
   onSubsectionChange: (section: string | null) => void;
+  onOpenTab: (tab: Tab) => void;
+  onStartWizard: () => void;
   onReload: () => void;
   onSave: () => void;
   onApply: () => void;
@@ -473,6 +478,213 @@ function truncateValue(value: unknown, maxLen = 40): string {
   return str.slice(0, maxLen - 3) + "...";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveWizardLastRun(snapshot: ConfigSnapshot | null): string | null {
+  if (!snapshot || !isRecord(snapshot.config)) {
+    return null;
+  }
+  const wizard = isRecord(snapshot.config.wizard) ? snapshot.config.wizard : null;
+  const lastRunAt = wizard?.lastRunAt;
+  if (typeof lastRunAt !== "string" || lastRunAt.trim().length === 0) {
+    return null;
+  }
+  const parsed = new Date(lastRunAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return lastRunAt;
+  }
+  return parsed.toLocaleString();
+}
+
+function resolveStartupRecoverySummary(snapshot: ConfigSnapshot | null) {
+  if (!snapshot) {
+    return {
+      tone: "neutral",
+      badge: t("config.startup.status.unavailable"),
+      title: t("config.startup.unavailable.title"),
+      description: t("config.startup.unavailable.desc"),
+    } as const;
+  }
+  if (snapshot.exists === false) {
+    return {
+      tone: "info",
+      badge: t("config.startup.status.firstLaunch"),
+      title: t("config.startup.firstLaunch.title"),
+      description: t("config.startup.firstLaunch.desc"),
+    } as const;
+  }
+  if (snapshot.valid === false) {
+    return {
+      tone: "danger",
+      badge: t("config.startup.status.recovery"),
+      title: t("config.startup.recovery.title"),
+      description: t("config.startup.recovery.desc"),
+    } as const;
+  }
+  if (needsInitialSetup(snapshot)) {
+    return {
+      tone: "warn",
+      badge: t("config.startup.status.setupRecommended"),
+      title: t("config.startup.setup.title"),
+      description: t("config.startup.setup.desc"),
+    } as const;
+  }
+  return {
+    tone: "ok",
+    badge: t("config.startup.status.ready"),
+    title: t("config.startup.ready.title"),
+    description: t("config.startup.ready.desc"),
+  } as const;
+}
+
+function renderStartupRecoveryPanel(props: ConfigProps) {
+  const summary = resolveStartupRecoverySummary(props.snapshot);
+  const issues = Array.isArray(props.snapshot?.issues) ? props.snapshot?.issues ?? [] : [];
+  const configPath = typeof props.snapshot?.path === "string" && props.snapshot.path.trim().length > 0
+    ? props.snapshot.path
+    : null;
+  const lastRunAt = resolveWizardLastRun(props.snapshot);
+  return html`
+    <section class="config-startup-panel">
+      <div class="config-startup-panel__header">
+        <div>
+          <span class="config-startup-panel__badge config-startup-panel__badge--${summary.tone}">
+            ${summary.badge}
+          </span>
+          <h3 class="config-startup-panel__title">${summary.title}</h3>
+          <p class="config-startup-panel__desc">${summary.description}</p>
+        </div>
+      </div>
+
+      <div class="config-startup-panel__meta">
+        <div class="config-startup-panel__meta-item">
+          <span class="config-startup-panel__meta-label">${t("config.startup.meta.wizard")}</span>
+          <span class="config-startup-panel__meta-value">
+            ${lastRunAt ?? t("config.startup.meta.never")}
+          </span>
+        </div>
+        <div class="config-startup-panel__meta-item">
+          <span class="config-startup-panel__meta-label">${t("config.startup.meta.configPath")}</span>
+          <span class="config-startup-panel__meta-value">
+            ${configPath ?? t("config.startup.meta.notCreated")}
+          </span>
+        </div>
+        <div class="config-startup-panel__meta-item">
+          <span class="config-startup-panel__meta-label">${t("config.startup.meta.detectedIssues")}</span>
+          <span class="config-startup-panel__meta-value">${issues.length}</span>
+        </div>
+      </div>
+
+      <div class="config-startup-panel__actions">
+        <button class="btn btn--sm primary" @click=${props.onStartWizard}>
+          ${t("config.startup.action.openWizard")}
+        </button>
+        <button class="btn btn--sm" @click=${() => props.onOpenTab("security")}>
+          ${t("config.startup.action.openSecurity")}
+        </button>
+        <button class="btn btn--sm" @click=${() => props.onSectionChange("models")}>
+          ${t("config.startup.action.openModels")}
+        </button>
+      </div>
+
+      <div class="config-startup-panel__notes">
+        <div class="config-startup-panel__note">
+          ${t("config.startup.note.recovery")}
+        </div>
+        <div class="config-startup-panel__note">
+          ${t("config.startup.note.security")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderSettingsHub(props: ConfigProps, updateStatusText: string | null) {
+  const cards = [
+    {
+      key: "startup",
+      title: t("config.hub.startup.title"),
+      description: t("config.hub.startup.desc"),
+      actionLabel: t("config.hub.startup.action"),
+      icon: sidebarIcons.wizard,
+      onClick: () => props.onSectionChange("wizard"),
+    },
+    {
+      key: "security",
+      title: t("config.hub.security.title"),
+      description: t("config.hub.security.desc"),
+      actionLabel: t("config.hub.security.action"),
+      icon: sidebarIcons.auth,
+      onClick: () => props.onOpenTab("security"),
+    },
+    {
+      key: "update",
+      title: t("config.hub.update.title"),
+      description: updateStatusText || t("config.hub.update.desc"),
+      actionLabel: t("config.hub.update.action"),
+      icon: sidebarIcons.update,
+      onClick: () => props.onSectionChange("update"),
+    },
+    {
+      key: "models",
+      title: t("config.hub.models.title"),
+      description: t("config.hub.models.desc"),
+      actionLabel: t("config.hub.models.action"),
+      icon: sidebarIcons.models,
+      onClick: () => props.onSectionChange("models"),
+    },
+    {
+      key: "agents",
+      title: t("config.hub.agents.title"),
+      description: t("config.hub.agents.desc"),
+      actionLabel: t("config.hub.agents.action"),
+      icon: sidebarIcons.agents,
+      onClick: () => props.onOpenTab("agents"),
+    },
+    {
+      key: "automation",
+      title: t("config.hub.automation.title"),
+      description: t("config.hub.automation.desc"),
+      actionLabel: t("config.hub.automation.action"),
+      icon: sidebarIcons.cron,
+      onClick: () => props.onOpenTab("automation"),
+    },
+    {
+      key: "advanced",
+      title: t("config.hub.advanced.title"),
+      description: t("config.hub.advanced.desc"),
+      actionLabel: t("config.hub.advanced.action"),
+      icon: sidebarIcons.meta,
+      onClick: () => props.onFormModeChange("raw"),
+    },
+  ];
+
+  return html`
+    <section class="config-hub">
+      <div class="config-hub__header">
+        <div>
+          <h2 class="config-hub__title">${t("config.hub.title")}</h2>
+          <p class="config-hub__subtitle">${t("config.hub.subtitle")}</p>
+        </div>
+      </div>
+      <div class="config-hub__grid">
+        ${cards.map((card) => html`
+          <button class="config-hub-card" @click=${card.onClick}>
+            <div class="config-hub-card__header">
+              <span class="config-hub-card__icon">${card.icon}</span>
+              <span class="config-hub-card__title">${card.title}</span>
+            </div>
+            <p class="config-hub-card__desc">${card.description}</p>
+            <span class="config-hub-card__action">${card.actionLabel}</span>
+          </button>
+        `)}
+      </div>
+    </section>
+  `;
+}
+
 export function renderConfig(props: ConfigProps) {
   const validity = props.valid == null ? "unknown" : props.valid ? "valid" : "invalid";
   const analysis = analyzeConfigSchema(props.schema);
@@ -542,6 +754,11 @@ export function renderConfig(props: ConfigProps) {
     !props.rollingBack &&
     Boolean(props.updateStatus?.rollbackAvailable);
   const updateStatusText = resolveUpdateStatusText(props.updateStatus);
+  const showSettingsHub =
+    props.formMode === "form" &&
+    !props.searchQuery &&
+    props.activeSection === null &&
+    props.activeSubsection === null;
 
   return html`
     <div class="config-layout">
@@ -700,6 +917,8 @@ export function renderConfig(props: ConfigProps) {
             `
       : nothing}
 
+        ${showSettingsHub ? renderSettingsHub(props, updateStatusText) : nothing}
+
         <!-- Diff panel (form mode only - raw mode doesn't have granular diff) -->
         ${hasChanges && props.formMode === "form"
       ? html`
@@ -761,6 +980,9 @@ export function renderConfig(props: ConfigProps) {
             `
       : nothing
     }
+        ${props.formMode === "form" && props.activeSection === "wizard"
+      ? renderStartupRecoveryPanel(props)
+      : nothing}
         ${allowSubnav
       ? html`
               <div class="config-subnav">

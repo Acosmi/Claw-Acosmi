@@ -50,6 +50,7 @@ export type MemoryLLMConfig = {
   baseUrl: string;
   hasApiKey: boolean;
   hasOwnApiKey: boolean;
+  inherited: boolean;
   providers: { id: string; label: string; hasApiKey: boolean; defaultModel: string; defaultBaseUrl: string }[];
 };
 

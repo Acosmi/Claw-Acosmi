@@ -136,6 +136,7 @@ export class OpenAcosmiApp extends LitElement {
   @state() settings: UiSettings = loadSettings();
   @state() password = "";
   @state() tab: Tab = "chat";
+  @state() automationPanel: "hub" | "email" = "hub";
   @state() overviewPanel: "dashboard" | "instances" | "usage" = "dashboard";
   @state() onboarding = resolveOnboardingMode();
   @state() wizardV2Open = false;
@@ -506,6 +507,7 @@ export class OpenAcosmiApp extends LitElement {
 
   // Media Dashboard
   @state() mediaTrendingTopics: import("./controllers/media-dashboard.js").TrendingTopic[] = [];
+  @state() mediaTrendingErrors: import("./controllers/media-dashboard.js").TrendingFetchError[] = [];
   @state() mediaTrendingSources: string[] = [];
   @state() mediaTrendingLoading = false;
   @state() mediaTrendingSelectedSource = "";

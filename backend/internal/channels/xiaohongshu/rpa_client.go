@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Acosmi/ClawAcosmi/internal/browser"
 	"github.com/Acosmi/ClawAcosmi/internal/media"
 )
 
@@ -48,6 +49,12 @@ type XHSRPAClient struct {
 	lastAction time.Time
 	errShotDir string
 	browser    BrowserDriver // Phase 6A: 注入的浏览器驱动
+	pwTools    browser.PlaywrightTools
+	cdpURL     string
+
+	browserResolver BrowserRuntimeResolver
+	onBrowserLaunch BrowserLaunchHook
+	loginSession    *LoginSessionState
 }
 
 // NewXHSRPAClient 创建 RPA 客户端。
@@ -93,20 +100,7 @@ func (c *XHSRPAClient) LoadCookies() error {
 func (c *XHSRPAClient) CheckCookieValid() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	if len(c.cookies) == 0 {
-		return false
-	}
-
-	now := time.Now().Unix()
-	for _, cookie := range c.cookies {
-		if cookie.Expires > 0 && cookie.Expires < now {
-			slog.Warn("xiaohongshu cookie expired",
-				"name", cookie.Name)
-			return false
-		}
-	}
-	return true
+	return cookieEntriesValid(c.cookies)
 }
 
 // ---------- 发布笔记 ----------
@@ -119,6 +113,14 @@ func (c *XHSRPAClient) Publish(
 ) (*media.PublishResult, error) {
 	if draft == nil {
 		return nil, fmt.Errorf("draft is nil")
+	}
+	if err := c.ensureBrowserRuntime(ctx); err != nil {
+		return nil, err
+	}
+	if len(c.cookies) == 0 {
+		if err := c.LoadCookiesIfAvailable(); err != nil {
+			slog.Warn("xhs publish: lazy cookie load failed", "error", err)
+		}
 	}
 
 	c.mu.Lock()

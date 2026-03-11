@@ -39,6 +39,11 @@ func handleChannelsSave(ctx *MethodHandlerContext) {
 		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "config loader not available"))
 		return
 	}
+	rollback, rollbackErr := captureGatewayConfigRollback(loader)
+	if rollbackErr != nil {
+		ctx.Respond(false, nil, NewErrorShape(ErrCodeInternalError, "failed to snapshot config rollback: "+rollbackErr.Error()))
+		return
+	}
 
 	channelID := readString(ctx.Params, "channelId")
 	if channelID == "" {
@@ -126,11 +131,20 @@ func handleChannelsSave(ctx *MethodHandlerContext) {
 	// 若配置时插件未注册（即首次配置），无法热重载，需调度 Gateway 重启。
 	// 若插件已注册，通过 ReloadChannel 注入新凭证后 Stop+Start，无需全量重启。
 	needsRestart := false
+	var restartResult *GatewayRestartResult
 	if mgr := ctx.Context.ChannelMgr; mgr != nil {
 		if mgr.HasPlugin(channels.ChannelID(channelID)) {
 			// 插件已注册（曾经配置过）：注入新凭证 → Stop → Start，实现真正的凭证热重载。
 			if err := mgr.ReloadChannel(channels.ChannelID(channelID), cfg, "default"); err != nil {
 				slog.Warn("channels.save: hot reload failed", "channel", channelID, "error", err)
+				needsRestart = true
+				if gr := ctx.Context.GatewayRestarter; gr != nil {
+					restartResult = gr.ScheduleRestart(GatewayRestartPlan{
+						Reason:   "channels.save: hot reload fallback restart",
+						Rollback: rollback,
+					})
+					slog.Info("channels.save: scheduling gateway restart after hot reload failure", "channel", channelID)
+				}
 			} else {
 				slog.Info("channels.save: hot reload succeeded", "channel", channelID)
 			}
@@ -138,7 +152,10 @@ func handleChannelsSave(ctx *MethodHandlerContext) {
 			// 插件未注册（首次配置），热重载无法工作，需全量重启
 			needsRestart = true
 			if gr := ctx.Context.GatewayRestarter; gr != nil {
-				gr.ScheduleRestart(nil, "channels.save: new channel plugin requires gateway restart")
+				restartResult = gr.ScheduleRestart(GatewayRestartPlan{
+					Reason:   "channels.save: new channel plugin requires gateway restart",
+					Rollback: rollback,
+				})
 				slog.Info("channels.save: scheduling gateway restart for new channel", "channel", channelID)
 			}
 		}
@@ -154,6 +171,7 @@ func handleChannelsSave(ctx *MethodHandlerContext) {
 		"channel":         channelID,
 		"message":         msg,
 		"requiresRestart": needsRestart,
+		"restart":         restartResult,
 	}, nil)
 }
 

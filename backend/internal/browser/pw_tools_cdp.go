@@ -791,7 +791,7 @@ func (t *CDPPlaywrightTools) WaitNextDownload(ctx context.Context, opts PWDownlo
 
 	outputDir := strings.TrimSpace(opts.OutputDir)
 	if outputDir == "" {
-		outputDir = "/tmp/openacosmi/downloads"
+		outputDir = defaultDownloadDir()
 	}
 	// Ensure download directory exists.
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
@@ -862,6 +862,10 @@ func (t *CDPPlaywrightTools) WaitNextDownload(ctx context.Context, opts PWDownlo
 			}
 		}
 	}
+}
+
+func defaultDownloadDir() string {
+	return filepath.Join(os.TempDir(), "openacosmi", "downloads")
 }
 
 // listDirFiles returns a set of filenames in a directory.

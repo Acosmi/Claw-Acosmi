@@ -6,10 +6,18 @@ import { html, nothing } from "lit";
 import { t } from "../i18n.ts";
 
 /** 权限拒绝事件数据 */
+export interface PermissionDeniedMountRequest {
+    hostPath: string;
+    mountMode: string;
+}
+
 export interface PermissionDeniedEvent {
     tool: string;
     detail: string;
     level: string;
+    requestedLevel?: string;
+    approvalType?: string;
+    mountRequests?: PermissionDeniedMountRequest[];
     runId?: string;
 }
 
@@ -20,7 +28,7 @@ export interface PermissionPopupCallbacks {
     /** 临时授权（会话级） */
     onAllowSession: (event: PermissionDeniedEvent) => void;
     /** 永久授权（修改配置） */
-    onAllowPermanent: (event: PermissionDeniedEvent, confirmText: string) => void;
+    onAllowPermanent: (event: PermissionDeniedEvent) => void;
     /** 拒绝 */
     onDeny: () => void;
 }
@@ -43,11 +51,6 @@ export function hidePermissionPopup(): void {
     _state = null;
 }
 
-/** 是否显示中 */
-export function isPermissionPopupVisible(): boolean {
-    return _state !== null;
-}
-
 /** 获取工具描述 */
 function toolLabel(tool: string): string {
     switch (tool) {
@@ -55,6 +58,8 @@ function toolLabel(tool: string): string {
             return "bash — " + t("permission.popup.toolBash");
         case "write_file":
             return "write_file — " + t("permission.popup.toolWriteFile");
+        case "send_media":
+            return "send_media — Data Export";
         default:
             return tool;
     }
@@ -76,6 +81,23 @@ function levelLabel(level: string): string {
     }
 }
 
+function requestedApprovalLabel(event: PermissionDeniedEvent): string {
+    if (event.approvalType === "mount_access") {
+        const mount = event.mountRequests?.[0];
+        const mode = (mount?.mountMode ?? "ro").toUpperCase();
+        const target = mount?.hostPath || event.detail;
+        return `Mount ${mode} — ${target}`;
+    }
+    return levelLabel(event.requestedLevel ?? event.level);
+}
+
+function renderMetaRow(label: string, value?: string | null) {
+    if (!value) {
+        return nothing;
+    }
+    return html`<div class="exec-approval-meta-row"><span>${label}</span><span>${value}</span></div>`;
+}
+
 /** 渲染权限弹窗 */
 export function renderPermissionPopup(
     callbacks: PermissionPopupCallbacks,
@@ -87,7 +109,9 @@ export function renderPermissionPopup(
 
     const state = _state;
     const ev = state.event;
-    const permanentOnly = ev.level === "full";
+    const isMountAccess = ev.approvalType === "mount_access";
+    const allowPermanent = ev.approvalType !== "mount_access" && (ev.requestedLevel ?? ev.level) === "full";
+    const permanentOnly = allowPermanent;
 
     const handleAllowOnce = () => {
         callbacks.onAllowOnce(ev);
@@ -111,7 +135,7 @@ export function renderPermissionPopup(
         if (state.confirmInput.trim().toUpperCase() !== "CONFIRM") {
             return;
         }
-        callbacks.onAllowPermanent(ev, state.confirmInput);
+        callbacks.onAllowPermanent(ev);
         hidePermissionPopup();
         requestUpdate();
     };
@@ -123,107 +147,107 @@ export function renderPermissionPopup(
     };
 
     const handleOverlayClick = (e: Event) => {
-        if ((e.target as HTMLElement).classList.contains("permission-popup-overlay")) {
+        if ((e.target as HTMLElement).classList.contains("exec-approval-overlay")) {
             handleDeny();
         }
     };
 
     return html`
-    <div class="permission-popup-overlay" @click=${handleOverlayClick}></div>
-    <div class="permission-popup" role="alertdialog" aria-modal="true">
-      <div class="permission-popup__header">
-        <span class="permission-popup__icon">🚫</span>
-        <h3 class="permission-popup__title">${t("permission.popup.title")}</h3>
-      </div>
-
-      <div class="permission-popup__body">
-        <div class="permission-popup__detail">
-          <div class="permission-popup__row">
-            <span class="permission-popup__label">${t("permission.popup.tool")}</span>
-            <span class="permission-popup__value">${toolLabel(ev.tool)}</span>
-          </div>
-          <div class="permission-popup__row">
-            <span class="permission-popup__label">${t("permission.popup.target")}</span>
-            <span class="permission-popup__value" title=${ev.detail}>${ev.detail}</span>
-          </div>
-          <div class="permission-popup__row">
-            <span class="permission-popup__label">${t("permission.popup.level")}</span>
-            <span class="permission-popup__level">${levelLabel(ev.level)}</span>
+    <div class="exec-approval-overlay" role="alertdialog" aria-modal="true" aria-live="polite" @click=${handleOverlayClick}>
+      <div class="exec-approval-card" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="exec-approval-header">
+          <div>
+            <div class="exec-approval-title">${t("permission.popup.title")}</div>
+            <div class="exec-approval-sub">${requestedApprovalLabel(ev)}</div>
           </div>
         </div>
-      </div>
+        <div class="exec-approval-command mono">${ev.detail}</div>
+        <div class="exec-approval-meta">
+          ${renderMetaRow(t("permission.popup.tool"), toolLabel(ev.tool))}
+          ${renderMetaRow(t("permission.popup.target"), ev.detail)}
+          ${renderMetaRow(t("permission.popup.level"), requestedApprovalLabel(ev))}
+        </div>
 
-      ${state.showConfirm
+        ${state.showConfirm
             ? html`
-            <div class="permission-popup__confirm-section">
-              <p class="permission-popup__confirm-warn">
-                ⚠️ ${t("permission.popup.permanentWarn")}
-              </p>
-              <input
-                class="permission-popup__confirm-input"
-                type="text"
-                placeholder='${t("permission.popup.typeConfirm")}'
-                .value=${state.confirmInput}
-                @input=${(e: Event) => {
-                    state.confirmInput = (e.target as HTMLInputElement).value;
-                    requestUpdate();
-                }}
-                @keydown=${(e: KeyboardEvent) => {
-                    if (e.key === "Enter") {
-                        handleConfirmPermanent();
-                    }
-                }}
-              />
-              <div class="permission-popup__confirm-actions">
+            <div class="exec-approval-confirm">
+              <div class="callout danger">${t("permission.popup.permanentWarn")}</div>
+              <label class="field">
+                <span>${t("permission.popup.typeConfirm")}</span>
+                <input
+                  class="exec-approval-confirm-input"
+                  type="text"
+                  placeholder="CONFIRM"
+                  .value=${state.confirmInput}
+                  @input=${(e: Event) => {
+                      state.confirmInput = (e.target as HTMLInputElement).value;
+                      requestUpdate();
+                  }}
+                  @keydown=${(e: KeyboardEvent) => {
+                      if (e.key === "Enter") {
+                          handleConfirmPermanent();
+                      }
+                  }}
+                />
+              </label>
+            </div>
+          `
+            : nothing}
+
+        <div class="exec-approval-actions">
+          ${state.showConfirm
+            ? html`
                 <button
-                  class="permission-popup__btn permission-popup__btn--permanent"
+                  class="btn danger"
                   ?disabled=${state.confirmInput.trim().toUpperCase() !== "CONFIRM"}
                   @click=${handleConfirmPermanent}
                 >
                   ${t("permission.popup.confirmPermanent")}
                 </button>
                 <button
-                  class="permission-popup__btn permission-popup__btn--deny"
+                  class="btn"
                   @click=${() => {
-                    state.showConfirm = false;
-                    requestUpdate();
-                }}
+                      state.showConfirm = false;
+                      requestUpdate();
+                  }}
                 >
                   ${t("permission.popup.cancel")}
                 </button>
-              </div>
-            </div>
-          `
+              `
             : html`
-            <div class="permission-popup__actions">
               ${permanentOnly ? nothing : html`
                 <button
-                  class="permission-popup__btn permission-popup__btn--once"
+                  class="btn primary"
                   @click=${handleAllowOnce}
                 >
-                  ${t("permission.popup.allowOnce")}
+                  ${isMountAccess ? t("permission.popup.allowTaskMount") : t("permission.popup.allowOnce")}
                 </button>
-                <button
-                  class="permission-popup__btn permission-popup__btn--session"
-                  @click=${handleAllowSession}
-                >
-                  ${t("permission.popup.allowSession")}
-                </button>
+                ${isMountAccess ? nothing : html`
+                  <button
+                    class="btn"
+                    @click=${handleAllowSession}
+                  >
+                    ${t("permission.popup.allowSession")}
+                  </button>
+                `}
               `}
+              ${allowPermanent ? html`
+                <button
+                  class="btn"
+                  @click=${handleShowConfirm}
+                >
+                  ${t("permission.popup.allowPermanent")}
+                </button>
+              ` : nothing}
               <button
-                class="permission-popup__btn permission-popup__btn--permanent"
-                @click=${handleShowConfirm}
-              >
-                ${t("permission.popup.allowPermanent")}
-              </button>
-              <button
-                class="permission-popup__btn permission-popup__btn--deny"
+                class="btn danger"
                 @click=${handleDeny}
               >
                 ${t("permission.popup.deny")}
               </button>
-            </div>
-          `}
+            `}
+        </div>
+      </div>
     </div>
   `;
 }

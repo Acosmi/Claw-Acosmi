@@ -1,4 +1,5 @@
 import type { GatewayBrowserClient } from "../gateway.ts";
+import { clearArgusPostAuthNewChat, markArgusPostAuthNewChat } from "../storage.ts";
 
 // ---------- SubAgents Controller ----------
 
@@ -23,6 +24,18 @@ export type SubAgentsState = {
     subagentsError: string | null;
     subagentsBusyKey: string | null;
 };
+
+function isSubAgentEnabled(agentId: string, status: SubAgentEntry["status"]): boolean {
+    if (agentId === "argus-screen") {
+        return status === "running" || status === "degraded" || status === "starting";
+    }
+    return (
+        status === "running" ||
+        status === "degraded" ||
+        status === "starting" ||
+        status === "available"
+    );
+}
 
 function defaultSubAgents(): SubAgentEntry[] {
     return [
@@ -67,11 +80,7 @@ export async function loadSubAgents(state: SubAgentsState) {
                 label: a.label,
                 status: a.status as SubAgentEntry["status"],
                 error: a.error,
-                enabled:
-                    a.status === "running" ||
-                    a.status === "degraded" ||
-                    a.status === "starting" ||
-                    a.status === "available",
+                enabled: isSubAgentEnabled(a.id, a.status as SubAgentEntry["status"]),
                 model: a.model || old?.model || "none",
                 intervalMs: old?.intervalMs ?? (a.id === "argus-screen" ? 1000 : 0),
                 goal: old?.goal ?? "",
@@ -79,6 +88,10 @@ export async function loadSubAgents(state: SubAgentsState) {
                 configured: a.configured ?? false,
             };
         });
+        const argus = state.subagentsList.find((entry) => entry.id === "argus-screen");
+        if (argus && argus.enabled) {
+            clearArgusPostAuthNewChat();
+        }
     } catch (err) {
         state.subagentsError = err instanceof Error ? err.message : String(err);
         if (state.subagentsList.length === 0) {
@@ -93,17 +106,25 @@ export async function toggleSubAgent(state: SubAgentsState, agentId: string, ena
     if (!state.client || !state.connected) return;
     state.subagentsBusyKey = agentId;
     state.subagentsError = null;
+    if (agentId === "argus-screen") {
+        if (enabled) {
+            markArgusPostAuthNewChat();
+        } else {
+            clearArgusPostAuthNewChat();
+        }
+    }
     try {
         await state.client.request("subagent.ctl", {
             agent_id: agentId,
             action: "set_enabled",
             value: enabled,
         });
-        // 更新本地状态
-        const entry = state.subagentsList.find((e) => e.id === agentId);
-        if (entry) {
-            entry.enabled = enabled;
-            entry.status = enabled ? "running" : "stopped";
+        await loadSubAgents(state);
+        if (agentId === "argus-screen" && enabled) {
+            const argus = state.subagentsList.find((entry) => entry.id === "argus-screen");
+            if (argus?.enabled) {
+                clearArgusPostAuthNewChat();
+            }
         }
     } catch (err: any) {
         // 优先展示结构化恢复指引（来自 ArgusStartError.recovery）

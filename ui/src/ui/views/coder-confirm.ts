@@ -25,6 +25,8 @@ export function renderCoderConfirmPrompt(state: AppViewState) {
       ? "Coder Edit"
       : active.toolName === "write"
         ? "Coder Write"
+        : active.toolName === "send_media"
+          ? "Data Export"
         : "Coder Bash";
 
   return html`
@@ -38,6 +40,7 @@ export function renderCoderConfirmPrompt(state: AppViewState) {
         ${active.toolName === "edit" ? renderEditPreview(preview) : nothing}
         ${active.toolName === "write" ? renderWritePreview(preview) : nothing}
         ${active.toolName === "bash" ? renderBashPreview(preview) : nothing}
+        ${active.toolName === "send_media" ? renderSendMediaPreview(preview) : nothing}
       </div>
 
       <div class="coder-confirm-actions">
@@ -86,5 +89,13 @@ function renderWritePreview(preview: AppViewState["coderConfirmQueue"][0]["previ
 function renderBashPreview(preview: AppViewState["coderConfirmQueue"][0]["preview"]) {
   return html`
     ${preview.command ? html`<div class="coder-command-mono mono">${preview.command}</div>` : nothing}
+  `;
+}
+
+function renderSendMediaPreview(preview: AppViewState["coderConfirmQueue"][0]["preview"]) {
+  return html`
+    ${preview.filePath ? html`<div class="coder-file-header mono">${preview.filePath}</div>` : nothing}
+    ${preview.command ? html`<div class="coder-command-mono mono">${preview.command}</div>` : nothing}
+    ${preview.content ? html`<div class="coder-command-mono mono">${preview.content}</div>` : nothing}
   `;
 }

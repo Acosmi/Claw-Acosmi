@@ -3,8 +3,11 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/Acosmi/ClawAcosmi/internal/config"
 )
 
 // 对应 TS src/cli/cli-utils.ts — 通用 CLI 工具函数
@@ -80,14 +83,15 @@ func ResolveStateDir(profile string) string {
 	if envDir := envValueCompat("CRABCLAW_STATE_DIR", "OPENACOSMI_STATE_DIR"); envDir != "" {
 		return envDir
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
+	home := config.ResolveHomeDir()
+	if strings.TrimSpace(home) == "" {
 		home = "."
 	}
-	if profile != "" {
-		return fmt.Sprintf("%s/.openacosmi-%s", home, profile)
+	trimmed := strings.TrimSpace(profile)
+	if trimmed != "" && !strings.EqualFold(trimmed, "default") {
+		return filepath.Join(home, config.NewStateDirname+"-"+trimmed)
 	}
-	return fmt.Sprintf("%s/.openacosmi", home)
+	return filepath.Join(home, config.NewStateDirname)
 }
 
 // coreChannelOrder 核心频道名称列表（与 TS CHAT_CHANNEL_ORDER 对应）

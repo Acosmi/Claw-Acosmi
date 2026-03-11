@@ -1,10 +1,14 @@
 const KEY = "openacosmi.control.settings.v1";
+const ARGUS_POST_AUTH_NEW_CHAT_KEY = "openacosmi.argus.post_auth_new_chat";
+export const UI_SETTINGS_VERSION = 2;
 
 import type { Locale } from "./i18n.js";
 import type { ChatUxMode } from "./chat/readonly-run-state.ts";
 import type { ThemeMode } from "./theme.js";
+import { generateUUID } from "./uuid.ts";
 
 export type UiSettings = {
+  settingsVersion?: number;
   gatewayUrl: string;
   token: string;
   sessionKey: string;
@@ -20,6 +24,14 @@ export type UiSettings = {
   lastSessionByChannel?: Record<string, string>; // History for cross-channel navigation
 };
 
+export function markArgusPostAuthNewChat() {
+  localStorage.setItem(ARGUS_POST_AUTH_NEW_CHAT_KEY, "1");
+}
+
+export function clearArgusPostAuthNewChat() {
+  localStorage.removeItem(ARGUS_POST_AUTH_NEW_CHAT_KEY);
+}
+
 export function loadSettings(): UiSettings {
   const defaultUrl = (() => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -29,6 +41,7 @@ export function loadSettings(): UiSettings {
   })();
 
   const defaults: UiSettings = {
+    settingsVersion: UI_SETTINGS_VERSION,
     gatewayUrl: defaultUrl,
     token: "",
     sessionKey: "main",
@@ -37,19 +50,44 @@ export function loadSettings(): UiSettings {
     locale: "zh",
     chatFocusMode: false,
     chatShowThinking: true,
-    chatUxMode: "classic",
+    chatUxMode: "codex-readonly",
     splitRatio: 0.6,
     navCollapsed: false,
     navGroupsCollapsed: {},
   };
 
   try {
+    const needsFreshChatAfterArgusAuth =
+      localStorage.getItem(ARGUS_POST_AUTH_NEW_CHAT_KEY) === "1";
     const raw = localStorage.getItem(KEY);
     if (!raw) {
-      return defaults;
+      if (!needsFreshChatAfterArgusAuth) {
+        return defaults;
+      }
+      clearArgusPostAuthNewChat();
+      // P2 身份收敛: 同步上下文无法调用 sessions.create API，
+      // 保留本地生成，chat.send auto-create 会在首次对话时注册。
+      const freshSessionKey = `user:${generateUUID()}`;
+      return {
+        ...defaults,
+        sessionKey: freshSessionKey,
+        lastActiveSessionKey: freshSessionKey,
+        lastSessionByChannel: {},
+      };
     }
     const parsed = JSON.parse(raw) as Partial<UiSettings>;
-    return {
+    const storedVersion =
+      typeof parsed.settingsVersion === "number" && Number.isFinite(parsed.settingsVersion)
+        ? parsed.settingsVersion
+        : 0;
+    const migratedChatUxMode =
+      storedVersion < UI_SETTINGS_VERSION
+        ? defaults.chatUxMode
+        : parsed.chatUxMode === "classic" || parsed.chatUxMode === "codex-readonly"
+          ? parsed.chatUxMode
+          : defaults.chatUxMode;
+    const loaded = {
+      settingsVersion: UI_SETTINGS_VERSION,
       gatewayUrl:
         typeof parsed.gatewayUrl === "string" && parsed.gatewayUrl.trim()
           ? parsed.gatewayUrl.trim()
@@ -78,10 +116,7 @@ export function loadSettings(): UiSettings {
         typeof parsed.chatShowThinking === "boolean"
           ? parsed.chatShowThinking
           : defaults.chatShowThinking,
-      chatUxMode:
-        parsed.chatUxMode === "classic" || parsed.chatUxMode === "codex-readonly"
-          ? parsed.chatUxMode
-          : defaults.chatUxMode,
+      chatUxMode: migratedChatUxMode,
       splitRatio:
         typeof parsed.splitRatio === "number" &&
           parsed.splitRatio >= 0.4 &&
@@ -99,11 +134,37 @@ export function loadSettings(): UiSettings {
           ? parsed.lastSessionByChannel
           : {},
     };
+    if (!needsFreshChatAfterArgusAuth) {
+      return loaded;
+    }
+    clearArgusPostAuthNewChat();
+    // P2 身份收敛: 同步上下文 — 本地生成 session key，待 WS 连接后由网关注册
+    const freshSessionKey = `user:${generateUUID()}`;
+    return {
+      ...loaded,
+      sessionKey: freshSessionKey,
+      lastActiveSessionKey: freshSessionKey,
+      lastSessionByChannel: {},
+    };
   } catch {
+    if (localStorage.getItem(ARGUS_POST_AUTH_NEW_CHAT_KEY) === "1") {
+      clearArgusPostAuthNewChat();
+      // P2 身份收敛: 同步上下文 — 本地生成 session key，待 WS 连接后由网关注册
+      const freshSessionKey = `user:${generateUUID()}`;
+      return {
+        ...defaults,
+        sessionKey: freshSessionKey,
+        lastActiveSessionKey: freshSessionKey,
+        lastSessionByChannel: {},
+      };
+    }
     return defaults;
   }
 }
 
 export function saveSettings(next: UiSettings) {
-  localStorage.setItem(KEY, JSON.stringify(next));
+  localStorage.setItem(KEY, JSON.stringify({
+    ...next,
+    settingsVersion: UI_SETTINGS_VERSION,
+  }));
 }

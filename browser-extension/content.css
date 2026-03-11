@@ -1,0 +1,35 @@
+/* content.css — CrabClaw Content Script Styles
+   SOM annotations, highlights, and visual overlays.
+   Injected alongside content.js into all pages. */
+
+.__crabclaw_som_label {
+  position: fixed;
+  background-color: #ff6600;
+  color: #fff;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 1px 4px;
+  border-radius: 3px;
+  z-index: 2147483647;
+  pointer-events: none;
+  font-family: monospace;
+  line-height: 12px;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.__crabclaw_som_outline {
+  position: fixed;
+  border: 1px solid rgba(255, 102, 0, 0.5);
+  pointer-events: none;
+  z-index: 2147483646;
+  border-radius: 2px;
+}
+
+.__crabclaw_highlight {
+  position: fixed;
+  pointer-events: none;
+  z-index: 2147483647;
+  border-radius: 3px;
+  transition: opacity 0.3s;
+}

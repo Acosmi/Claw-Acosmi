@@ -7,7 +7,6 @@ package bridge
 import (
 	"strings"
 
-	"github.com/Acosmi/ClawAcosmi/internal/goproviders/common"
 	"github.com/Acosmi/ClawAcosmi/internal/goproviders/onboard"
 	gptypes "github.com/Acosmi/ClawAcosmi/internal/goproviders/types"
 	pkgtypes "github.com/Acosmi/ClawAcosmi/pkg/types"
@@ -37,7 +36,7 @@ var providerRegistry = map[string]providerApplyFunc{
 		return onboard.ApplyMoonshotProviderConfig(cfg)
 	},
 	"minimax": func(cfg onboard.OpenClawConfig) onboard.OpenClawConfig {
-		return onboard.ApplyMinimaxProviderConfig(cfg)
+		return onboard.ApplyMinimaxHostedProviderConfig(cfg, "")
 	},
 	"xai": func(cfg onboard.OpenClawConfig) onboard.OpenClawConfig {
 		return onboard.ApplyXaiProviderConfig(cfg)
@@ -86,7 +85,7 @@ var providerWithDefaultRegistry = map[string]providerApplyFunc{
 		return onboard.ApplyMoonshotConfig(cfg)
 	},
 	"minimax": func(cfg onboard.OpenClawConfig) onboard.OpenClawConfig {
-		return onboard.ApplyMinimaxConfig(cfg)
+		return onboard.ApplyMinimaxHostedConfig(cfg, "")
 	},
 	"xai": func(cfg onboard.OpenClawConfig) onboard.OpenClawConfig {
 		return onboard.ApplyXaiConfig(cfg)
@@ -325,19 +324,21 @@ var defaultModelRefs = map[string]struct {
 	},
 }
 
-// NormalizeProviderID 规范化前端 provider ID 到后端存储 ID。
-// 包装 common.NormalizeProviderId 并增加 wizard-v2 特有映射。
+// NormalizeProviderID 规范化前端 provider ID 到运行时 provider ID。
+// 这里保留 qwen/minimax 等运行时 provider，不提前切换到 portal auth provider。
 func NormalizeProviderID(frontendID string) string {
 	id := strings.TrimSpace(strings.ToLower(frontendID))
 	switch id {
-	case "zhipu":
+	case "z.ai", "z-ai", "zhipu":
 		return "zai"
-	case "doubao":
+	case "bytedance", "doubao":
 		return "volcengine"
+	case "kimi-code":
+		return "kimi-coding"
 	case "gemini-cli":
 		return "google-gemini-cli"
 	default:
-		return common.NormalizeProviderId(id)
+		return id
 	}
 }
 
@@ -465,6 +466,11 @@ func applyViaOnboard(providerID string, applyFn providerApplyFunc, cfg *pkgtypes
 
 	// 5. 设置 API key 和自定义 BaseURL（Apply 函数不处理 API key）
 	if provCfg, ok := cfg.Models.Providers[providerID]; ok {
+		// MiniMax hosted scaffold uses "minimax" as a placeholder API key.
+		// In OAuth/device-code mode we must not persist that placeholder as a real secret.
+		if opts.APIKey == "" && providerID == "minimax" && provCfg.APIKey == "minimax" {
+			provCfg.APIKey = ""
+		}
 		if opts.APIKey != "" {
 			provCfg.APIKey = opts.APIKey
 		}

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   createChatReadonlyRunState,
   isReadonlyRunActive,
+  isReadonlyRunVisible,
   loadPersistedChatReadonlyRunHistory,
   loadPersistedChatReadonlyRun,
   persistChatReadonlyRun,
@@ -163,6 +164,24 @@ describe("readonly run state", () => {
     expect(host.chatReadonlyRun.lastError).toBe("disconnected (1006): no reason");
     expect(isReadonlyRunActive(host.chatReadonlyRun)).toBe(false);
     expect(host.chatReadonlyRun.activity.at(-1)?.kind).toBe("error");
+  });
+
+  it("does not archive or persist failed workflows without a final reply anchor", () => {
+    const host = createHost();
+    startChatReadonlyRun(host, "run-err", 100, "main");
+
+    setChatReadonlyRunTerminal(host, "error", {
+      sessionKey: "main",
+      ts: 180,
+      errorMessage: "upstream unavailable",
+    });
+
+    expect(host.chatReadonlyRunHistory).toHaveLength(0);
+    expect(isReadonlyRunVisible(host.chatReadonlyRun, "main")).toBe(false);
+
+    persistChatReadonlyRun(host.chatReadonlyRun, "main", host.chatReadonlyRunHistory);
+    expect(loadPersistedChatReadonlyRun("main")).toBeNull();
+    expect(loadPersistedChatReadonlyRunHistory("main")).toEqual([]);
   });
 
   it("records a finalizing phase in the activity feed when lifecycle ends", () => {

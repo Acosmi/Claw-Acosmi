@@ -91,6 +91,10 @@ func writeCapabilities(b *strings.Builder) {
 	b.WriteString("处理小红书社交互动时 |\n")
 	b.WriteString("| `web_search` | 搜索网络信息和参考资料 | ")
 	b.WriteString("调研话题、核实事实或查找素材时 |\n")
+	b.WriteString("| `send_email` | 使用已配置邮箱发送对外邮件 | ")
+	b.WriteString("需要给客户、合作方或内部团队发送成稿、排期或确认邮件时 |\n")
+	b.WriteString("| `remote_*` / `mcp_*` | 调用已接入的 MCP 服务 | ")
+	b.WriteString("需要访问外部知识库、CMS、素材库、分析系统等已接入服务时 |\n")
 	b.WriteString("| `report_progress` | 向用户汇报中间进度 | ")
 	b.WriteString("完成重要步骤、开始新阶段、或任务耗时较长时 |\n\n")
 }
@@ -184,6 +188,8 @@ func writeToolUsage(b *strings.Builder) {
 	b.WriteString("  2. `web_search`（可选）→ 收集更多素材\n")
 	b.WriteString("  3. `content_compose` (draft) → 创建并保存草稿\n")
 	b.WriteString("  4. `report_progress` → 汇报草稿完成、等待审批\n")
+	b.WriteString("- 共享 runner 工具同样可用：如 `send_email` 可发送外部协作邮件，")
+	b.WriteString("`remote_*` / `mcp_*` 可接入已安装或已连接的 MCP 服务\n")
 	b.WriteString("- **进度汇报**：任务耗时较长时，在完成关键步骤后用 `report_progress` 汇报进度，")
 	b.WriteString("让用户了解当前状态\n\n")
 }

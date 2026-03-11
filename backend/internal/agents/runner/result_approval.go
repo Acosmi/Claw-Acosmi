@@ -35,6 +35,7 @@ type ResultApprovalRequest struct {
 	Result        string            `json:"result"`
 	Artifacts     *ThoughtArtifacts `json:"artifacts,omitempty"`
 	ReviewSummary string            `json:"reviewSummary,omitempty"`
+	HighRisk      bool              `json:"highRisk,omitempty"` // 高风险任务（涉及删除/系统配置/提权），超时时自动拒绝而非批准
 	CreatedAtMs   int64             `json:"createdAtMs"`
 	ExpiresAtMs   int64             `json:"expiresAtMs"`
 	Workflow      ApprovalWorkflow  `json:"workflow,omitempty"`
@@ -142,16 +143,29 @@ func (m *ResultApprovalManager) RequestResultApprovalWithSessionKey(ctx context.
 	case decision = <-ch:
 		// 用户已决策
 	case <-timer.C:
-		// 超时自动批准（与 Phase 1 方案确认的超时拒绝不同 —
-		// 结果签收超时意味着用户未响应，默认接受结果更合理）
-		decision = ResultApprovalDecision{Action: "approve", Feedback: "timeout_auto_approved"}
-		slog.Info("result approval timed out, auto-approving",
-			"id", req.ID,
-		)
+		// 超时行为按风险等级区分：
+		// - 高风险（涉及删除/系统配置）：超时自动拒绝，防止未审查的危险操作被应用
+		// - 低风险：超时自动批准（用户未响应，默认接受结果更合理）
+		if req.HighRisk {
+			decision = ResultApprovalDecision{Action: "reject", Feedback: "timeout_auto_rejected_high_risk"}
+			slog.Warn("result approval timed out for high-risk task, auto-rejecting",
+				"id", req.ID,
+			)
+		} else {
+			decision = ResultApprovalDecision{Action: "approve", Feedback: "timeout_auto_approved"}
+			slog.Info("result approval timed out, auto-approving",
+				"id", req.ID,
+			)
+		}
 	case <-ctx.Done():
-		decision = ResultApprovalDecision{Action: "approve", Feedback: "context_cancelled"}
+		if req.HighRisk {
+			decision = ResultApprovalDecision{Action: "reject", Feedback: "context_cancelled_high_risk"}
+		} else {
+			decision = ResultApprovalDecision{Action: "approve", Feedback: "context_cancelled"}
+		}
 		slog.Debug("result approval cancelled by context",
 			"id", req.ID,
+			"highRisk", req.HighRisk,
 		)
 	}
 
@@ -263,10 +277,16 @@ func (m *ResultApprovalManager) cleanupExpired() {
 		if now.Before(entry.expiresAt) {
 			continue // 未过期，跳过
 		}
-		// 过期 — auto-approve
+		// 过期 — 按风险等级区分
+		var ttlDecision ResultApprovalDecision
+		if entry.req.HighRisk {
+			ttlDecision = ResultApprovalDecision{Action: "reject", Feedback: "ttl_expired_high_risk"}
+		} else {
+			ttlDecision = ResultApprovalDecision{Action: "approve", Feedback: "ttl_expired"}
+		}
 		select {
-		case entry.ch <- ResultApprovalDecision{Action: "approve", Feedback: "ttl_expired"}:
-			slog.Debug("result approval TTL expired, auto-approved", "id", id)
+		case entry.ch <- ttlDecision:
+			slog.Debug("result approval TTL expired", "id", id, "action", ttlDecision.Action)
 		default:
 			// channel 已有决策（timer 先触发），只清理 map
 		}

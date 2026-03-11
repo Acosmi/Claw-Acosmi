@@ -1,7 +1,7 @@
 // tree_migrate.go builds the initial CapabilityTree from four source-of-truth
 // locations (P0-3 through P0-14):
 //
-//  1. Static Registry   (registry.go)         — 31 registered tools
+//  1. Static Registry   (registry.go)         — registered tools and subagent entries
 //  2. Runtime Definitions (tool_email.go)      — send_email (not in Registry)
 //  3. Skills Frontmatter  (SKILL.md files)     — skill binding data
 //  4. Bridge Contracts    (Argus/MCP bridges)  — dynamic tool groups
@@ -133,7 +133,7 @@ func groupDefs() []*CapabilityNode {
 // ---------------------------------------------------------------------------
 
 func staticToolNodes() []*CapabilityNode {
-	return []*CapabilityNode{
+	nodes := []*CapabilityNode{
 		// ── runtime/ ──
 		{
 			ID: "runtime/bash", Name: "bash", Kind: NodeKindTool, Parent: "runtime",
@@ -249,8 +249,8 @@ func staticToolNodes() []*CapabilityNode {
 				ExcludeFrom: []string{"task_delete"},
 				// P3-6: browser keywords → IntentPriority 20 classifies as task_multimodal
 				IntentKeywords: IntentKeywords{
-					ZH: []string{"浏览器", "网页", "打开网站", "打开官网", "打开页面", "访问网站", "访问官网"},
-					EN: []string{"browser", "open website", "open page", "visit site"},
+					ZH: []string{"浏览器自动化", "浏览器打开", "网页", "打开网站", "打开官网", "打开页面", "访问网站", "访问官网", "页面点击", "填写表单"},
+					EN: []string{"browser automation", "browser open", "open website", "open page", "visit site", "fill form", "click button"},
 				},
 				IntentPriority: 20,
 			},
@@ -313,16 +313,8 @@ func staticToolNodes() []*CapabilityNode {
 		{
 			ID: "system/gateway", Name: "gateway", Kind: NodeKindTool, Parent: "system",
 			Runtime: &NodeRuntime{Owner: "attempt_runner", EnabledWhen: "always"},
-			Prompt:  &NodePrompt{Summary: "Restart, apply config or run updates", SortOrder: 12},
-			Routing: &NodeRouting{
-				MinTier: "task_multimodal",
-				// P3-6: deploy/config keywords → IntentPriority 10 classifies as task_write
-				IntentKeywords: IntentKeywords{
-					ZH: []string{"部署", "配置", "安装", "升级"},
-					EN: []string{"deploy", "configure", "install", "upgrade"},
-				},
-				IntentPriority: 10,
-			},
+			Prompt:  &NodePrompt{Summary: "Inspect schema, patch/apply config, restart, or run updates", SortOrder: 12},
+			Routing: &NodeRouting{MinTier: "task_multimodal"},
 			Perms: &NodePermissions{
 				MinSecurityLevel: "full", FileAccess: "none",
 				ApprovalType: "exec_escalation", ScopeCheck: "none",
@@ -570,13 +562,15 @@ func staticToolNodes() []*CapabilityNode {
 			ID: "meta/capability_manage", Name: "capability_manage", Kind: NodeKindTool, Parent: "meta",
 			Runtime: &NodeRuntime{Owner: "attempt_runner", EnabledWhen: "always"},
 			Prompt:  &NodePrompt{Summary: "Inspect, diagnose, and manage the capability tree", SortOrder: 30},
-			Routing: &NodeRouting{MinTier: "question"},
+			Routing: &NodeRouting{MinTier: "task_light"}, // S2: 从 question 提升到 task_light，避免误分流时暴露元工具
 			Perms:   &NodePermissions{MinSecurityLevel: "allowlist", FileAccess: "none", ApprovalType: "none", ScopeCheck: "none"},
 			Skills:  &NodeSkillBinding{Bindable: false},
 			Display: &NodeDisplay{Icon: "🌳", Title: "Capability Manage", Verb: "Inspect"},
 			Policy:  &NodePolicy{PolicyGroups: []string{"group:system"}, Profiles: []string{"full"}},
 		},
 	}
+	nodes = append(nodes, specializedConfigToolNodes()...)
+	return nodes
 }
 
 // ---------------------------------------------------------------------------

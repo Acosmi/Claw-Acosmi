@@ -1,0 +1,8 @@
+/Users/fushihua/Desktop/CrabClaw/dist
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/desktop/bin
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/desktop/frontend/dist
+/Users/fushihua/Desktop/CrabClaw/cli-rust/target
+/Users/fushihua/Desktop/CrabClaw/Argus/build
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/desktop/build/appicon.png
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/desktop/build/darwin/icons.icns
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/desktop/build/windows/icon.ico

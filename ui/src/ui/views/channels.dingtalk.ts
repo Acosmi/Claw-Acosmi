@@ -13,7 +13,7 @@ export function renderDingTalkCard(params: {
   return html`
     ${accountCountLabel}
 
-    <div class="status-list" style="margin-top: 8px;">
+    <div class="status-list">
       <div>
         <span class="label">${t("channels.configured")}</span>
         <span>${configured ? t("channels.yes") : t("channels.no")}</span>
@@ -37,7 +37,7 @@ export function renderDingTalkCard(params: {
     </div>
 
     ${dingtalk?.lastError
-      ? html`<div class="callout danger" style="margin-top: 12px;">${dingtalk.lastError}</div>`
+      ? html`<div class="callout danger">${dingtalk.lastError}</div>`
       : nothing
     }
   `;

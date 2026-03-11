@@ -1,0 +1,59 @@
+# 桌面 App 技能打包白名单
+# 依据：
+# 1. docs/claude/goujia/arch-capability-tree-skill-binding.md
+# 2. docs/claude/audit/audit-2026-03-09-skill-rebuild-stage1-4.md
+#
+# 规则：
+# - 仅包含审计通过的活跃技能
+# - 不包含 docs/skills/_archived/**
+# - 不包含顶层 docs/skills/media/**（不在 Stage 1-4 活跃技能基线中）
+#
+# 24 tools
+tools/ai/image
+tools/fs/apply-patch
+tools/fs/list-dir
+tools/fs/read-file
+tools/fs/write-file
+tools/media/send-email
+tools/media/send-media
+tools/memory/memory-get
+tools/memory/memory-search
+tools/messaging/message
+tools/runtime/bash
+tools/sessions/agents-list
+tools/sessions/session-status
+tools/sessions/sessions-history
+tools/sessions/sessions-list
+tools/sessions/sessions-send
+tools/sessions/sessions-spawn
+tools/system/cron
+tools/system/gateway
+tools/system/nodes
+tools/ui/browser
+tools/ui/canvas
+tools/web/web-fetch
+tools/web/web-search
+
+# 8 operations
+operations/autonomous-planning
+operations/email-automation
+operations/hooks-automation
+operations/mcp-automation
+operations/memory-management
+operations/progress-reporting
+operations/scheduled-tasks
+operations/system-config
+
+# 2 meta
+meta/capability-governance
+meta/skill-creator
+
+# 2 subsystems
+subsystems/argus
+subsystems/media
+
+# 4 claude internal skills
+claude/code-audit
+claude/doc-standard
+claude/sop-workflow
+claude/workspace-governance

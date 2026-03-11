@@ -1,0 +1,5 @@
+/Users/fushihua/Desktop/CrabClaw/backups/cleanup/20260311-005021/candidate-files.txt:1:/Users/fushihua/Desktop/CrabClaw/docs/skills/_archived
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/desktop/build/skills-package-manifest.txt:8:# - 不包含 docs/skills/_archived/**
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/desktop/internal/release/skills_bundle_test.go:22:		if strings.HasPrefix(entry, "_archived/") {
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/desktop/internal/release/skills_bundle_test.go:53:	writeSkillDir("_archived/legacy")
+/Users/fushihua/Desktop/CrabClaw/backend/cmd/desktop/internal/release/skills_bundle.go:93:	case entry == "_archived", strings.HasPrefix(entry, "_archived/"):

@@ -1,6 +1,7 @@
 package argus
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -84,6 +85,18 @@ func TestTCCStatus_Recovery_Expiring(t *testing.T) {
 	}
 }
 
+func TestTCCStatus_Recovery_HelperAccessibilityUnknown(t *testing.T) {
+	s := TCCStatus{
+		ScreenRecording:   PermGranted,
+		Accessibility:     PermUnknown,
+		PermissionSubject: "helper_process",
+	}
+	r := s.Recovery()
+	if !contains(r, "Argus helper") {
+		t.Errorf("recovery should mention Argus helper: %q", r)
+	}
+}
+
 // ---------- Sequoia 过期计算测试 ----------
 
 func TestSequoiaExpiryDaysFromModTime_Fresh(t *testing.T) {
@@ -137,6 +150,30 @@ func TestCheckTCCPermissions_NoError(t *testing.T) {
 	}
 	if !validStates[status.Accessibility] {
 		t.Errorf("invalid accessibility state: %q", status.Accessibility)
+	}
+}
+
+func TestDetectPermissionSubject_CurrentProcess(t *testing.T) {
+	execPath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	subject, path := detectPermissionSubject(execPath)
+	if subject != "main_app" {
+		t.Fatalf("expected main_app, got %q", subject)
+	}
+	if path == "" {
+		t.Fatal("expected non-empty permission path")
+	}
+}
+
+func TestDetectPermissionSubject_HelperProcess(t *testing.T) {
+	subject, path := detectPermissionSubject("/tmp/argus-sensory")
+	if subject != "helper_process" {
+		t.Fatalf("expected helper_process, got %q", subject)
+	}
+	if path == "" {
+		t.Fatal("expected non-empty helper path")
 	}
 }
 

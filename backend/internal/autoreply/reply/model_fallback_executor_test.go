@@ -2,6 +2,7 @@ package reply
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/Acosmi/ClawAcosmi/internal/agents/models"
@@ -31,13 +32,15 @@ func (m *mockModelResolver) ResolveContextWindowInfo(cfg *types.OpenAcosmiConfig
 }
 
 type mockAttemptRunner struct {
-	callCount int
-	lastExtra string
+	callCount       int
+	lastExtra       string
+	lastSkillFilter []string
 }
 
 func (m *mockAttemptRunner) RunAttempt(_ context.Context, params runner.AttemptParams) (*runner.AttemptResult, error) {
 	m.callCount++
 	m.lastExtra = params.ExtraSystemPrompt
+	m.lastSkillFilter = append([]string(nil), params.SkillFilter...)
 	return &runner.AttemptResult{
 		AssistantTexts: []string{"hello from " + params.Provider + "/" + params.ModelID},
 		SessionIDUsed:  "sess-123",
@@ -138,6 +141,34 @@ func TestModelFallbackExecutor_OnModelSelected(t *testing.T) {
 	}
 	if selectedCtx.Provider != "anthropic" || selectedCtx.Model != "claude-3" {
 		t.Errorf("OnModelSelected not called correctly, got %+v", selectedCtx)
+	}
+}
+
+func TestModelFallbackExecutor_SkillFilterPassthrough(t *testing.T) {
+	attemptRunner := &mockAttemptRunner{}
+	executor := &ModelFallbackExecutor{
+		RunnerDeps: runner.EmbeddedRunDeps{
+			ModelResolver: &mockModelResolver{},
+			AttemptRunner: attemptRunner,
+		},
+	}
+
+	_, err := executor.RunTurn(context.Background(), AgentTurnParams{
+		FollowupRun: FollowupRun{
+			Run: FollowupRunParams{
+				Provider:    "anthropic",
+				Model:       "claude-3",
+				TimeoutMs:   10000,
+				SkillFilter: []string{"browser-ops"},
+			},
+		},
+		CommandBody: "test",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(attemptRunner.lastSkillFilter, []string{"browser-ops"}) {
+		t.Fatalf("SkillFilter = %v, want [browser-ops]", attemptRunner.lastSkillFilter)
 	}
 }
 
